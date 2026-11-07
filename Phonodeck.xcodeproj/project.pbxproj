@@ -1,0 +1,410 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1AD36DE5AC2FCCBB09CC2514 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = EF2BF89D1E478CD2AFD0C6E1 /* MLXLLM */; };
+		017C91E4C63CACD01442B05B /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 47E29CE04FFB1258D501B5BE /* MLXLMCommon */; };
+		B69BD93B8291C4481E3F693D /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 9D0FB357120DA3D087BA7FAF /* MLXHuggingFace */; };
+		02D69944A23C679CD3D05A71 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = 6B91F5ABEC36BC84BA846ACB /* MLX */; };
+		6DBC6B2A35601BE474ACFA29 /* MLXAudioCore in Frameworks */ = {isa = PBXBuildFile; productRef = D263645D6BAB327B41BA8443 /* MLXAudioCore */; };
+		8344A25BAC5913D3087A65B5 /* MLXAudioTTS in Frameworks */ = {isa = PBXBuildFile; productRef = 5F6955082AAEDB8AD75EB263 /* MLXAudioTTS */; };
+		5AFCAD63C1BA062F76325AAD /* MLXAudioSTT in Frameworks */ = {isa = PBXBuildFile; productRef = 5BCC0F473F29A0721C1106E1 /* MLXAudioSTT */; };
+		65BB8403A42EF6CC4195712A /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 4953606350CDC8DA669149E8 /* HuggingFace */; };
+		A516CAC1C59382856FB40ABA /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = B165ADD41F9C43CC41168893 /* Tokenizers */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		D2A57DC1D883FD21FB995169 /* Phonodeck.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Phonodeck.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		238243F2CAD1B7AD4D521E07 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		8A854F1F5A507C723E5AFCE8 /* Phonodeck.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Phonodeck.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		74C61EEF9C048939045A3EDA /* Phonodeck */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Phonodeck; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		4F6F5CC3FCCF73F75AE9CCF4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1AD36DE5AC2FCCBB09CC2514 /* MLXLLM in Frameworks */,
+				017C91E4C63CACD01442B05B /* MLXLMCommon in Frameworks */,
+				B69BD93B8291C4481E3F693D /* MLXHuggingFace in Frameworks */,
+				02D69944A23C679CD3D05A71 /* MLX in Frameworks */,
+				6DBC6B2A35601BE474ACFA29 /* MLXAudioCore in Frameworks */,
+				8344A25BAC5913D3087A65B5 /* MLXAudioTTS in Frameworks */,
+				5AFCAD63C1BA062F76325AAD /* MLXAudioSTT in Frameworks */,
+				65BB8403A42EF6CC4195712A /* HuggingFace in Frameworks */,
+				A516CAC1C59382856FB40ABA /* Tokenizers in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2B731CEFC6751AAE0EC69B98 = {
+			isa = PBXGroup;
+			children = (
+				74C61EEF9C048939045A3EDA /* Phonodeck */,
+				5386A2EAF0036C0154CF9012 /* Config */,
+				86024CAD1E83101D97359D73 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5386A2EAF0036C0154CF9012 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				238243F2CAD1B7AD4D521E07 /* Info.plist */,
+				8A854F1F5A507C723E5AFCE8 /* Phonodeck.entitlements */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		86024CAD1E83101D97359D73 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D2A57DC1D883FD21FB995169 /* Phonodeck.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		42AEFBAE01D2DFD981F7DA7D /* Phonodeck */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 84BD75DECF42B745CB4F39AA /* Build configuration list for PBXNativeTarget "Phonodeck" */;
+			buildPhases = (
+				F2AB5FB218DA8B84623F4557 /* Sources */,
+				4F6F5CC3FCCF73F75AE9CCF4 /* Frameworks */,
+				55B558C7EF820E6E00E5993B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				74C61EEF9C048939045A3EDA /* Phonodeck */,
+			);
+			name = Phonodeck;
+			packageProductDependencies = (
+				EF2BF89D1E478CD2AFD0C6E1 /* MLXLLM */,
+				47E29CE04FFB1258D501B5BE /* MLXLMCommon */,
+				9D0FB357120DA3D087BA7FAF /* MLXHuggingFace */,
+				6B91F5ABEC36BC84BA846ACB /* MLX */,
+				D263645D6BAB327B41BA8443 /* MLXAudioCore */,
+				5F6955082AAEDB8AD75EB263 /* MLXAudioTTS */,
+				5BCC0F473F29A0721C1106E1 /* MLXAudioSTT */,
+				4953606350CDC8DA669149E8 /* HuggingFace */,
+				B165ADD41F9C43CC41168893 /* Tokenizers */,
+			);
+			productName = Phonodeck;
+			productReference = D2A57DC1D883FD21FB995169 /* Phonodeck.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		46F86FAA6BBF9AC94A7E4595 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					42AEFBAE01D2DFD981F7DA7D = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = C33C66E28B3501D071CFB88C /* Build configuration list for PBXProject "Phonodeck" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 2B731CEFC6751AAE0EC69B98;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				11066BF1483FE44A430E4BAD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				039FFEA8679D80FC1B7C7F30 /* XCRemoteSwiftPackageReference "mlx-swift" */,
+				3FDD81C945EFDEB2ED1437B7 /* XCRemoteSwiftPackageReference "mlx-audio-swift" */,
+				BE33D065304EC4027EB7D2F5 /* XCRemoteSwiftPackageReference "swift-huggingface" */,
+				CCA8389949C5DD0D3D762447 /* XCRemoteSwiftPackageReference "swift-transformers" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 86024CAD1E83101D97359D73 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				42AEFBAE01D2DFD981F7DA7D /* Phonodeck */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		55B558C7EF820E6E00E5993B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F2AB5FB218DA8B84623F4557 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2D53B50AE2273FABAAF8B8FA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = ("DEBUG=1", "$(inherited)", );
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		D4B2141B77146EF47E948847 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		FA7C752E798F561D7D156D98 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Phonodeck;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to open your private chats and stories.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Phonodeck listens when you tap the microphone or play hands-free, so you can tell the story what you do.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Phonodeck turns your speech into text on this iPhone so you can play by voice.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.simbonk.phonodeck;
+				PRODUCT_NAME = Phonodeck;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		22F75101C717335ACF4089A0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Phonodeck;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.entertainment";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = NO;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to open your private chats and stories.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Phonodeck listens when you tap the microphone or play hands-free, so you can tell the story what you do.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Phonodeck turns your speech into text on this iPhone so you can play by voice.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIFileSharingEnabled = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.simbonk.phonodeck;
+				PRODUCT_NAME = Phonodeck;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		C33C66E28B3501D071CFB88C /* Build configuration list for PBXProject "Phonodeck" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2D53B50AE2273FABAAF8B8FA /* Debug */,
+				D4B2141B77146EF47E948847 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		84BD75DECF42B745CB4F39AA /* Build configuration list for PBXNativeTarget "Phonodeck" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA7C752E798F561D7D156D98 /* Debug */,
+				22F75101C717335ACF4089A0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		11066BF1483FE44A430E4BAD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				kind = exactVersion;
+				version = 3.32.3;
+			};
+		};
+		039FFEA8679D80FC1B7C7F30 /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.32.3;
+			};
+		};
+		3FDD81C945EFDEB2ED1437B7 /* XCRemoteSwiftPackageReference "mlx-audio-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Blaizzy/mlx-audio-swift";
+			requirement = {
+				kind = exactVersion;
+				version = 0.1.7;
+			};
+		};
+		BE33D065304EC4027EB7D2F5 /* XCRemoteSwiftPackageReference "swift-huggingface" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-huggingface";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
+		CCA8389949C5DD0D3D762447 /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-transformers";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.3.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		EF2BF89D1E478CD2AFD0C6E1 /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 11066BF1483FE44A430E4BAD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+		47E29CE04FFB1258D501B5BE /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 11066BF1483FE44A430E4BAD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
+		};
+		9D0FB357120DA3D087BA7FAF /* MLXHuggingFace */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 11066BF1483FE44A430E4BAD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXHuggingFace;
+		};
+		6B91F5ABEC36BC84BA846ACB /* MLX */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 039FFEA8679D80FC1B7C7F30 /* XCRemoteSwiftPackageReference "mlx-swift" */;
+			productName = MLX;
+		};
+		D263645D6BAB327B41BA8443 /* MLXAudioCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3FDD81C945EFDEB2ED1437B7 /* XCRemoteSwiftPackageReference "mlx-audio-swift" */;
+			productName = MLXAudioCore;
+		};
+		5F6955082AAEDB8AD75EB263 /* MLXAudioTTS */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3FDD81C945EFDEB2ED1437B7 /* XCRemoteSwiftPackageReference "mlx-audio-swift" */;
+			productName = MLXAudioTTS;
+		};
+		5BCC0F473F29A0721C1106E1 /* MLXAudioSTT */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3FDD81C945EFDEB2ED1437B7 /* XCRemoteSwiftPackageReference "mlx-audio-swift" */;
+			productName = MLXAudioSTT;
+		};
+		4953606350CDC8DA669149E8 /* HuggingFace */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BE33D065304EC4027EB7D2F5 /* XCRemoteSwiftPackageReference "swift-huggingface" */;
+			productName = HuggingFace;
+		};
+		B165ADD41F9C43CC41168893 /* Tokenizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CCA8389949C5DD0D3D762447 /* XCRemoteSwiftPackageReference "swift-transformers" */;
+			productName = Tokenizers;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 46F86FAA6BBF9AC94A7E4595 /* Project object */;
+}
