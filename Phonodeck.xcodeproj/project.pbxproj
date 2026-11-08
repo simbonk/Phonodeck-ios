@@ -16,6 +16,7 @@
 		5AFCAD63C1BA062F76325AAD /* MLXAudioSTT in Frameworks */ = {isa = PBXBuildFile; productRef = 5BCC0F473F29A0721C1106E1 /* MLXAudioSTT */; };
 		65BB8403A42EF6CC4195712A /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 4953606350CDC8DA669149E8 /* HuggingFace */; };
 		A516CAC1C59382856FB40ABA /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = B165ADD41F9C43CC41168893 /* Tokenizers */; };
+		C0FFEE01A1B2C3D4E5F60001 /* LlamaFramework in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE01A1B2C3D4E5F60002 /* LlamaFramework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +43,7 @@
 				5AFCAD63C1BA062F76325AAD /* MLXAudioSTT in Frameworks */,
 				65BB8403A42EF6CC4195712A /* HuggingFace in Frameworks */,
 				A516CAC1C59382856FB40ABA /* Tokenizers in Frameworks */,
+				C0FFEE01A1B2C3D4E5F60001 /* LlamaFramework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -94,6 +96,7 @@
 			);
 			name = Phonodeck;
 			packageProductDependencies = (
+				C0FFEE01A1B2C3D4E5F60002 /* LlamaFramework */,
 				EF2BF89D1E478CD2AFD0C6E1 /* MLXLLM */,
 				47E29CE04FFB1258D501B5BE /* MLXLMCommon */,
 				9D0FB357120DA3D087BA7FAF /* MLXHuggingFace */,
@@ -138,6 +141,7 @@
 				3FDD81C945EFDEB2ED1437B7 /* XCRemoteSwiftPackageReference "mlx-audio-swift" */,
 				BE33D065304EC4027EB7D2F5 /* XCRemoteSwiftPackageReference "swift-huggingface" */,
 				CCA8389949C5DD0D3D762447 /* XCRemoteSwiftPackageReference "swift-transformers" */,
+				C0FFEE01A1B2C3D4E5F60003 /* XCLocalSwiftPackageReference "Packages/LlamaFramework" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 86024CAD1E83101D97359D73 /* Products */;
@@ -315,6 +319,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C0FFEE01A1B2C3D4E5F60003 /* XCLocalSwiftPackageReference "Packages/LlamaFramework" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/LlamaFramework;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		11066BF1483FE44A430E4BAD /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -403,6 +414,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = CCA8389949C5DD0D3D762447 /* XCRemoteSwiftPackageReference "swift-transformers" */;
 			productName = Tokenizers;
+		};
+		C0FFEE01A1B2C3D4E5F60002 /* LlamaFramework */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE01A1B2C3D4E5F60003 /* XCLocalSwiftPackageReference "Packages/LlamaFramework" */;
+			productName = LlamaFramework;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -177,7 +177,7 @@ struct ModelsView: View {
                 Image(systemName: r.verdict.symbol).foregroundStyle(color(r.verdict))
                 Text(r.verdict.label).font(.caption.bold()).foregroundStyle(color(r.verdict))
                 Text("·").foregroundStyle(.secondary)
-                Text(String(format: "%.1f GB", store.facts[e.id]?.gb ?? e.approxGB)).font(.caption).foregroundStyle(.secondary)
+                Text(String(format: "%.1f GB", store.downloadGB(e))).font(.caption).foregroundStyle(.secondary)
             }
             Text(r.detail).font(.caption).foregroundStyle(.secondary)
 

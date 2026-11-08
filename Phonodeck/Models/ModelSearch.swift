@@ -101,12 +101,12 @@ struct ModelSearchSection: View {
             }
             .onChange(of: kind) { if !text.isEmpty { Task { await run() } } }
             if let message { Text(message).font(.footnote).foregroundStyle(.secondary) }
-            ForEach(shown) { HitRow(hit: $0, kind: kind, fit: fit($0), error: $errors[$0.id]) }
+            ForEach(shown) { HitRow(hit: $0, kind: kind, fit: fit($0), candidate: candidate($0), error: $errors[$0.id]) }
             if !hits.isEmpty { summary }
         } header: {
             Text("Find models on Hugging Face")
         } footer: {
-            Text("Most downloaded first. Only models that run on this \(DeviceFit.deviceWord) are listed; 4-bit MLX versions are usually the right size.")
+            Text("Most downloaded first. Only models that run on this \(DeviceFit.deviceWord) are listed. Storytellers can be MLX or GGUF (run with llama.cpp); for GGUF, Phonodeck picks the size that fits, usually Q4_K_M.")
         }
     }
 
@@ -126,21 +126,32 @@ struct ModelSearchSection: View {
             .font(.footnote).foregroundStyle(.secondary)
         }
         if noMLX + big > 0 {
-            let parts = [noMLX > 0 ? "\(noMLX) without MLX weights (GGUF or other formats)" : nil,
+            let parts = [noMLX > 0 ? "\(noMLX) in formats Phonodeck can't run" : nil,
                          big > 0 ? "\(big) too big for this \(DeviceFit.deviceWord)" : nil].compactMap { $0 }
             Text("Hidden: \(parts.joined(separator: " and ")).\(shown.isEmpty && checking == 0 ? " Try adding \"4bit\" or \"mlx\" to the search, or ask for a smaller size (for example 4B instead of 9B)." : "")")
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
 
+    /// What a result would be added as: the MLX weights, or for a GGUF storyteller the
+    /// quantization that fits best. Nil when nothing in it can run here.
+    private func candidate(_ hit: HubHit) -> ModelEntry? {
+        if let existing = ModelCatalog.entry(hit.id) { return existing }
+        guard let f = app.store.facts[hit.id] else { return nil }
+        if f.usesGGUF { return kind == .language ? app.store.bestGGUF(id: hit.id, facts: f) : nil }
+        if f.ggufOnly == true || !f.hasSafetensors || !f.looksMLX { return nil }
+        let e = HitRow.entry(hit, kind: kind, facts: f)
+        return DeviceFit.report(for: e, facts: f).verdict == .tooBig ? nil : e
+    }
+
     /// Whether a result can be offered, from what Hugging Face says about its files.
     private func fit(_ hit: HubHit) -> HitFit {
         guard let f = app.store.facts[hit.id] else { return checked.contains(hit.id) ? .unreadable : .checking }
-        if f.ggufOnly == true || !f.hasSafetensors || !f.looksMLX { return .noMLX }
-        let e = HitRow.entry(hit, kind: kind, facts: f)
+        let runnable = f.usesGGUF ? kind == .language : !(f.ggufOnly == true || !f.hasSafetensors || !f.looksMLX)
+        if !runnable { return .noMLX }
         // Hide only what can't run at all; what fits alone but not beside the chosen voice and
         // listening models is shown with a warning, since those can be switched.
-        if DeviceFit.report(for: e, facts: f).verdict == .tooBig { return .tooBig }
+        guard let e = candidate(hit) else { return .tooBig }
         switch app.store.report(for: e).verdict {
         case .comfortable: return .comfortable
         case .tight: return .tight
@@ -212,6 +223,7 @@ private struct HitRow: View {
     let hit: HubHit
     let kind: ModelEntry.Kind
     let fit: HitFit
+    let candidate: ModelEntry?
     @Binding var error: String?
     @State private var starting = false
 
@@ -265,7 +277,12 @@ private struct HitRow: View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Image(systemName: look.symbol)
             Text(look.label)
-            Text(String(format: "· %.1f GB", facts.gb)).foregroundStyle(.secondary)
+            if let c = candidate {
+                Text(String(format: "· %.1f GB", app.store.downloadGB(c))).foregroundStyle(.secondary)
+                if let q = c.ggufFile.map({ GGUFFile(name: $0, bytes: 0).quant }) {
+                    Text("· GGUF \(q)").foregroundStyle(.secondary)
+                }
+            }
         }
         .font(.caption)
         .foregroundStyle(look.color)

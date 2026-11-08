@@ -21,6 +21,11 @@ struct ModelEntry: Identifiable, Hashable, Codable {
     /// Default voice name for voice models (e.g. "af_heart" for Kokoro).
     var defaultVoice: String? = nil
     var voices: [String] = []
+    /// For a GGUF storyteller (run by llama.cpp instead of MLX): the one file in the repo to
+    /// download, e.g. "Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf".
+    var ggufFile: String? = nil
+
+    var isGGUF: Bool { ggufFile != nil }
 
     var url: URL { URL(string: "https://huggingface.co/\(id)")! }
 

@@ -3,6 +3,20 @@ import os
 
 /// What Hugging Face says about a model: its real download size and, for language
 /// models, the shape that decides how much memory the conversation (KV cache) takes.
+/// One quantization of a GGUF model, e.g. "…-Q4_K_M.gguf".
+struct GGUFFile: Codable, Hashable {
+    var name: String
+    var bytes: Int64
+    var gb: Double { Double(bytes) / 1_000_000_000 }
+    /// "Q4_K_M", "IQ4_XS", "BF16"… read from the file name.
+    var quant: String {
+        let base = name.replacingOccurrences(of: ".gguf", with: "", options: .caseInsensitive)
+        let pattern = "(?i)(IQ\\d_[A-Z0-9_]+|Q\\d_K_[SML]|Q\\d_K|Q\\d_[01]|Q\\d|BF16|F16|F32)$"
+        if let r = base.range(of: pattern, options: .regularExpression) { return base[r].uppercased() }
+        return base.split(separator: "-").last.map(String.init)?.uppercased() ?? "GGUF"
+    }
+}
+
 struct ModelFacts: Codable, Hashable {
     var bytes: Int64
     var layers: Int?
@@ -18,8 +32,14 @@ struct ModelFacts: Codable, Hashable {
     var unusedBytes: Int64? = nil
     /// How many layers' worth of conversation memory the model keeps, when it isn't simply `layers`.
     var kvLayers: Double? = nil
+    /// GGUF files in the repo (one per quantization), for storytellers run by llama.cpp.
+    /// Projector files for images (mmproj) and split files are left out.
+    var ggufFiles: [GGUFFile]? = nil
     /// The repo asks people to sign in and accept its terms before downloading (a "gated" model).
     var gated: Bool? = nil
+
+    /// No usable MLX weights, but GGUF files that llama.cpp can run.
+    var usesGGUF: Bool { ggufFiles?.isEmpty == false && (ggufOnly == true || !hasSafetensors || !looksMLX) }
 
     /// Download size.
     var gb: Double { Double(bytes) / 1_000_000_000 }
@@ -32,7 +52,7 @@ enum HFHub {
     static let browseVoiceURL = URL(string: "https://huggingface.co/models?library=mlx&pipeline_tag=text-to-speech&sort=trending")!
 
     /// Bumped when ModelFacts learns something new, so older cached facts are fetched again.
-    private static let cacheKey = "modelFacts.v3"
+    private static let cacheKey = "modelFacts.v4"
 
     /// Weight names a text-only model skips when it loads (mirrors MLX's Gemma 4 and Qwen3.5 loaders).
     static let unusedPrefixes = ["vision_tower", "multi_modal_projector", "audio_tower", "embed_audio",
@@ -105,6 +125,12 @@ enum HFHub {
             looksMLX: (info.tags ?? []).contains("mlx") || info.library_name == "mlx" || id.lowercased().hasPrefix("mlx-community/"))
         facts.ggufOnly = !facts.hasSafetensors && files.contains { $0.rfilename.lowercased().hasSuffix(".gguf") }
         facts.gated = info.gated
+        let ggufs = files.filter { f in
+            let n = f.rfilename.lowercased()
+            return n.hasSuffix(".gguf") && !n.contains("mmproj") && n.range(of: "-\\d{5}-of-\\d{5}", options: .regularExpression) == nil
+                && !f.rfilename.contains("/")
+        }
+        if !ggufs.isEmpty { facts.ggufFiles = ggufs.map { GGUFFile(name: $0.rfilename, bytes: $0.size ?? 0) } }
 
         if let pair = try? await get(URL(string: "https://huggingface.co/\(id)/resolve/main/config.json")!),
            pair.1?.statusCode == 200,
@@ -275,8 +301,13 @@ enum DeviceFit {
     }()
 
     /// Memory needed for weights plus a 4K-token conversation plus working room, in GB.
+    /// Memory the weights take once loaded. A GGUF entry carries the size of its one file.
+    static func weightsGB(_ entry: ModelEntry, _ facts: ModelFacts?) -> Double {
+        entry.isGGUF ? entry.approxGB : facts?.loadedGB ?? entry.approxGB
+    }
+
     static func need(for entry: ModelEntry, facts: ModelFacts?) -> Double {
-        let weights = facts?.loadedGB ?? entry.approxGB
+        let weights = weightsGB(entry, facts)
         guard entry.kind == .language else { return weights * 1.25 + 0.25 }
         var kv = 0.45
         if let f = facts, let l = f.layers, let h = f.kvHeads, let d = f.headDim {
@@ -291,7 +322,7 @@ enum DeviceFit {
     /// Rough generation speed: a phone reads all the weights once per token, so speed is
     /// memory bandwidth divided by model size. About 0.75 words per token.
     static func wordsPerSecond(for entry: ModelEntry, facts: ModelFacts?) -> Double {
-        let gb = max(0.3, facts?.loadedGB ?? entry.approxGB)
+        let gb = max(0.3, weightsGB(entry, facts))
         let bandwidth = ramGB >= 7 ? 45.0 : 32.0   // effective GB/s on recent iPhones
         return bandwidth / gb * 0.75
     }
