@@ -29,6 +29,7 @@ final class AppModel {
     let dictation: Dictation
     let library: Library
     let engine: StoryEngine
+    let chat: ChatEngine
     let vault: Vault
     var tab: Tab = .phonodeck
     var notice: String?
@@ -48,9 +49,22 @@ final class AppModel {
         self.narrator = narrator
         self.dictation = dictation
         self.library = library
-        self.engine = StoryEngine(llm: llm, narrator: narrator, dictation: dictation, library: library)
+        let engine = StoryEngine(llm: llm, narrator: narrator, dictation: dictation, library: library)
+        let chat = ChatEngine(llm: llm, narrator: narrator, dictation: dictation, library: library)
+        self.engine = engine
+        self.chat = chat
         self.vault = Vault()
         if let space = vault.unlocked { library.open(space) }
+        // The narrator and the microphone are shared: the Chat tab gets them while it is open
+        // or talking hands-free, the story gets them otherwise.
+        narrator.onFinished = { [weak self] in
+            guard let self else { return }
+            if self.chat.handsFree { self.chat.narrationFinished() } else { self.engine.narrationFinished() }
+        }
+        dictation.onSend = { [weak self] text in
+            guard let self else { return }
+            if self.tab == .chat || self.chat.handsFree { self.chat.send(text) } else { self.engine.send(text) }
+        }
         MLXCrashRecorder.install()
         let lastError = MLXCrashRecorder.takeLast()
         // The automatic switch to the processor made Kokoro hang without a sound, so it is undone
@@ -78,6 +92,7 @@ final class AppModel {
 
     func lock() {
         engine.close()
+        chat.close()
         narrator.stop()
         dictation.stop()
         vault.lock()

@@ -92,7 +92,7 @@ final class StoryEngine {
         Task { await dictation.start() }
     }
 
-    private func narrationFinished() {
+    func narrationFinished() {
         listenIfReady()
     }
 
