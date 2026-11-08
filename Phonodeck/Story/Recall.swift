@@ -1,11 +1,13 @@
 import Foundation
+import NaturalLanguage
 
 /// Recall: finds the memories that matter for what the player just said, from lore, older turns
 /// and older chapter summaries, the way the web app's recall does (figure 3 of How the Phonodeck
-/// Works). The web version merges a keyword search with a meaning search; on the phone only the
-/// keyword search (BM25) runs, because a meaning search would need a second model loaded beside
-/// the storyteller, and that memory isn't there. It is plain Swift on a few hundred short texts,
-/// so it takes a few milliseconds and no GPU.
+/// Works). Like the web version it merges two rankings: a keyword search (BM25) and a meaning
+/// search. The web app's meaning search calls Google's embedding model; on the phone it uses the
+/// sentence embedding built into iOS (NaturalLanguage), which runs on the CPU, needs no download
+/// and no GPU, and costs a few megabytes, so it never competes with the storyteller for memory.
+/// Each text is embedded once and cached, so after the first turn a recall takes milliseconds.
 enum Recall {
     struct Doc {
         /// "L" lore, "T" an older turn, "C" an older chapter.
@@ -64,7 +66,11 @@ enum Recall {
 
     /// Relevant memories for this turn, as briefing lines, within `budget` characters.
     /// `olderTurns` are the turns not already in the conversation the model sees, with their numbers.
-    static func memories(for a: Adventure, input: String, olderTurns: [(Int, StoryTurn)], chaptersInPrompt: Int, budget: Int) -> [String] {
+    /// `earlier` are the stories this one continues ("Same cast, new story"), nearest first: their
+    /// chapters and turns are searched too, so asking about something from a past story finds it.
+    /// Their people and places already live in this story's lore.
+    static func memories(for a: Adventure, input: String, olderTurns: [(Int, StoryTurn)], chaptersInPrompt: Int, budget: Int,
+                         earlier: [Adventure] = []) async -> [String] {
         guard budget > 200 else { return [] }
         func loreLine(_ e: LoreEntry) -> String {
             let label = e.kind == .person && !e.known && !e.role.isEmpty ? "\(e.name), known to the player only as \"\(e.role)\"" : e.name
@@ -85,11 +91,31 @@ enum Recall {
         for (i, c) in a.chapters.dropLast(chaptersInPrompt).enumerated() {
             docs.append(Doc(kind: "C", text: "Chapter \(i + 1): " + c, terms: tokens(c)))
         }
+        for s in earlier {
+            let tag = "From the earlier story \"\(s.report?.title ?? s.title)\", "
+            for (i, c) in s.chapters.enumerated() {
+                docs.append(Doc(kind: "C", text: tag + "chapter \(i + 1): " + c, terms: tokens(c)))
+            }
+            // Its last few hundred turns at most, so a long saga stays quick to search.
+            for (n, t) in s.transcript.enumerated().suffix(300) {
+                docs.append(Doc(kind: "T", text: tag + "turn \(n + 1) " + (t.role == .player ? "player" : "story") + ": " + t.text, terms: tokens(t.text)))
+            }
+        }
         // Short replies ("yes", "open it") need the end of the last reply to find the right memories.
         let lastGM = a.transcript.last { $0.role == .gm }?.text ?? ""
         let query = input + " " + String(lastGM.suffix(300))
         let qt = Set(tokens(query))
-        let top = bm25(docs, query: query, k: 12).map { brief($0, queryTerms: qt) }.filter { !named.contains($0) }
+        let lexical = bm25(docs, query: query, k: 12)
+        // The meaning search runs off the main thread (the first turn of a story embeds every doc once).
+        let texts = docs.map(\.text)
+        let semantic = await Task.detached(priority: .userInitiated) { Meaning.shared.rank(texts, query: query, k: 12) }.value
+        // Reciprocal rank fusion of the keyword and meaning rankings, as on the web.
+        var score: [String: Double] = [:]
+        var byText: [String: Doc] = [:]
+        for (i, d) in lexical.enumerated() { score[d.text, default: 0] += 1 / Double(60 + i); byText[d.text] = d }
+        for (i, j) in semantic.enumerated() { score[docs[j].text, default: 0] += 1 / Double(60 + i); byText[docs[j].text] = docs[j] }
+        let fused = score.sorted { $0.value > $1.value }.prefix(12).compactMap { byText[$0.key] }
+        let top = fused.map { brief($0, queryTerms: qt) }.filter { !named.contains($0) }
 
         var out: [String] = []
         var room = budget
@@ -100,5 +126,48 @@ enum Recall {
             if room <= 0 { break }
         }
         return out
+    }
+}
+
+/// The meaning search: Apple's built-in English sentence embedding, with every text embedded once
+/// and kept (keyed by the text itself) for the rest of the session. Returns nothing when the
+/// embedding isn't available (another language, or an older device without it), and recall then
+/// falls back to the keyword search alone.
+final class Meaning: @unchecked Sendable {
+    static let shared = Meaning()
+    private let lock = NSLock()
+    private var model: NLEmbedding?
+    private var loaded = false
+    private var cache: [String: [Float]] = [:]
+
+    private func embedding() -> NLEmbedding? {
+        if !loaded { model = NLEmbedding.sentenceEmbedding(for: .english); loaded = true }
+        return model
+    }
+
+    private func vector(_ text: String, _ m: NLEmbedding) -> [Float]? {
+        if let v = cache[text] { return v }
+        guard let d = m.vector(for: String(text.prefix(1000))) else { return nil }
+        var v = d.map { Float($0) }
+        let n = sqrt(v.reduce(0) { $0 + $1 * $1 })
+        if n > 0 { v = v.map { $0 / n } }
+        if cache.count > 4000 { cache.removeAll() }
+        cache[text] = v
+        return v
+    }
+
+    /// Indices of the `k` texts closest in meaning to `query`, best first.
+    func rank(_ texts: [String], query: String, k: Int) -> [Int] {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !texts.isEmpty, let m = embedding(), let q = vector(query, m) else { return [] }
+        var scored: [(Int, Float)] = []
+        for (i, t) in texts.enumerated() {
+            guard let v = vector(t, m), v.count == q.count else { continue }
+            var dot: Float = 0
+            for j in 0..<v.count { dot += v[j] * q[j] }
+            if dot > 0.3 { scored.append((i, dot)) }
+        }
+        return scored.sorted { $0.1 > $1.1 }.prefix(k).map(\.0)
     }
 }

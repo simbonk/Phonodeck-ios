@@ -273,6 +273,11 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// The mission map: places in the order they were first visited, and the moves between them.
     var places: [String] = []
     var links: [MapLink] = []
+    /// "Same cast, new story": the story this one continues, and how it connects (sequel, years
+    /// later, fresh start, prequel). Recall searches the earlier stories too, unless the connection
+    /// says their events haven't happened.
+    var sequelOf: UUID?
+    var link = ""
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -286,7 +291,7 @@ struct Adventure: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
-             notes, notesTurn, notesStale, bibleTurn, places, links
+             notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -313,6 +318,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         notes = try? c.decodeIfPresent(ShowrunnerNotes.self, forKey: .notes)
         notesTurn = v(.notesTurn, 0); notesStale = v(.notesStale, false); bibleTurn = v(.bibleTurn, 0)
         places = v(.places, []); links = v(.links, [])
+        sequelOf = try? c.decodeIfPresent(UUID.self, forKey: .sequelOf); link = v(.link, "")
     }
 
     func encode(to encoder: Encoder) throws {
@@ -328,6 +334,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encodeIfPresent(report, forKey: .report); try c.encode(lastDirector, forKey: .lastDirector)
         try c.encodeIfPresent(notes, forKey: .notes); try c.encode(notesTurn, forKey: .notesTurn)
         try c.encode(notesStale, forKey: .notesStale); try c.encode(bibleTurn, forKey: .bibleTurn)
+        try c.encodeIfPresent(sequelOf, forKey: .sequelOf); try c.encode(link, forKey: .link)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
