@@ -11,15 +11,28 @@ struct ModelFacts: Codable, Hashable {
     var modelType: String?
     var hasSafetensors: Bool
     var looksMLX: Bool
+    /// Bytes of vision and audio weights that a text-only storyteller downloads but never loads
+    /// (Gemma 4 and Qwen3.5 ship with image and sound encoders in the same files).
+    var unusedBytes: Int64? = nil
+    /// How many layers' worth of conversation memory the model keeps, when it isn't simply `layers`.
+    var kvLayers: Double? = nil
 
+    /// Download size.
     var gb: Double { Double(bytes) / 1_000_000_000 }
+    /// What the model occupies in memory once loaded.
+    var loadedGB: Double { Double(bytes - (unusedBytes ?? 0)) / 1_000_000_000 }
 }
 
 enum HFHub {
     static let browseLanguageURL = URL(string: "https://huggingface.co/models?library=mlx&pipeline_tag=text-generation&sort=trending")!
     static let browseVoiceURL = URL(string: "https://huggingface.co/models?library=mlx&pipeline_tag=text-to-speech&sort=trending")!
 
-    private static let cacheKey = "modelFacts"
+    /// Bumped when ModelFacts learns something new, so older cached facts are fetched again.
+    private static let cacheKey = "modelFacts.v2"
+
+    /// Weight names a text-only model skips when it loads (mirrors MLX's Gemma 4 and Qwen3.5 loaders).
+    static let unusedPrefixes = ["vision_tower", "multi_modal_projector", "audio_tower", "embed_audio",
+                                 "embed_vision", "vision_embedder", "visual"]
 
     static func cached(_ id: String) -> ModelFacts? {
         guard let d = UserDefaults.standard.data(forKey: cacheKey),
@@ -57,7 +70,8 @@ enum HFHub {
 
         if let pair = try? await URLSession.shared.data(from: URL(string: "https://huggingface.co/\(id)/resolve/main/config.json")!),
            (pair.1 as? HTTPURLResponse)?.statusCode == 200,
-           var cfg = try? JSONSerialization.jsonObject(with: pair.0) as? [String: Any] {
+           let top = try? JSONSerialization.jsonObject(with: pair.0) as? [String: Any] {
+            var cfg = top
             if let text = cfg["text_config"] as? [String: Any] { cfg.merge(text) { _, new in new } }
             facts.modelType = cfg["model_type"] as? String
             facts.layers = cfg["num_hidden_layers"] as? Int
@@ -65,9 +79,63 @@ enum HFHub {
             facts.kvHeads = (cfg["num_key_value_heads"] as? Int) ?? heads
             if let hd = cfg["head_dim"] as? Int { facts.headDim = hd }
             else if let hidden = cfg["hidden_size"] as? Int, let heads, heads > 0 { facts.headDim = hidden / heads }
+
+            // Layers that keep a growing memory of the conversation. Sliding-window layers only
+            // remember their window, layers that share another layer's cache keep none, and
+            // linear-attention layers (Qwen3.5) keep a small fixed state.
+            if let types = cfg["layer_types"] as? [String], !types.isEmpty {
+                let shared = cfg["num_kv_shared_layers"] as? Int ?? 0
+                let own = types.prefix(max(0, types.count - shared))
+                let window = Double(cfg["sliding_window"] as? Int ?? DeviceFit.contextTokens)
+                let slidingShare = min(1, window / Double(DeviceFit.contextTokens))
+                var kvLayers = 0.0
+                for t in own {
+                    if t == "full_attention" { kvLayers += 1 } else if t == "sliding_attention" { kvLayers += slidingShare }
+                }
+                facts.kvLayers = kvLayers
+            }
+
+            // Multimodal checkpoints: measure the vision and audio weights the storyteller never loads.
+            if top["vision_config"] != nil || top["audio_config"] != nil {
+                var unused: Int64 = 0
+                for f in files where f.rfilename.hasSuffix(".safetensors") {
+                    if let n = try? await unusedBytes(id, file: f.rfilename) { unused += n }
+                }
+                if unused > 0, unused < facts.bytes { facts.unusedBytes = unused }
+            }
         }
         store(id, facts)
         return facts
+    }
+
+    /// Reads just the header of a .safetensors file (two small range requests) and adds up the
+    /// tensors a text-only model skips.
+    static func unusedBytes(_ id: String, file: String) async throws -> Int64 {
+        let path = file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file
+        let url = URL(string: "https://huggingface.co/\(id)/resolve/main/\(path)")!
+        func range(_ from: Int, _ to: Int) async throws -> Data {
+            var req = URLRequest(url: url)
+            req.setValue("bytes=\(from)-\(to)", forHTTPHeaderField: "Range")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 206, data.count == to - from + 1 else {
+                throw URLError(.badServerResponse)
+            }
+            return data
+        }
+        let lenData = try await range(0, 7)
+        let len = lenData.withUnsafeBytes { raw in (0..<8).reduce(UInt64(0)) { $0 | UInt64(raw[$1]) << (8 * UInt64($1)) } }
+        guard len > 0, len < 50_000_000 else { return 0 }
+        let header = try await range(8, 8 + Int(len) - 1)
+        guard let json = try JSONSerialization.jsonObject(with: header) as? [String: Any] else { return 0 }
+        var total: Int64 = 0
+        for (name, value) in json where name != "__metadata__" {
+            var key = name
+            if key.hasPrefix("model.") { key.removeFirst("model.".count) }
+            guard unusedPrefixes.contains(where: { key.hasPrefix($0) }),
+                  let t = value as? [String: Any], let offs = t["data_offsets"] as? [NSNumber], offs.count == 2 else { continue }
+            total += offs[1].int64Value - offs[0].int64Value
+        }
+        return total
     }
 }
 
@@ -140,11 +208,12 @@ enum DeviceFit {
 
     /// Memory needed for weights plus a 4K-token conversation plus working room, in GB.
     static func need(for entry: ModelEntry, facts: ModelFacts?) -> Double {
-        let weights = facts?.gb ?? entry.approxGB
+        let weights = facts?.loadedGB ?? entry.approxGB
         guard entry.kind == .language else { return weights * 1.25 + 0.25 }
         var kv = 0.45
         if let f = facts, let l = f.layers, let h = f.kvHeads, let d = f.headDim {
-            kv = Double(2 * l * h * d * 2 * contextTokens) / 1_000_000_000
+            let layers = f.kvLayers ?? Double(l)
+            kv = layers * Double(2 * h * d * 2 * contextTokens) / 1_000_000_000
         }
         return weights * 1.05 + kv + 0.4
     }
@@ -152,7 +221,7 @@ enum DeviceFit {
     /// Rough generation speed: a phone reads all the weights once per token, so speed is
     /// memory bandwidth divided by model size. About 0.75 words per token.
     static func wordsPerSecond(for entry: ModelEntry, facts: ModelFacts?) -> Double {
-        let gb = max(0.3, facts?.gb ?? entry.approxGB)
+        let gb = max(0.3, facts?.loadedGB ?? entry.approxGB)
         let bandwidth = ramGB >= 7 ? 45.0 : 32.0   // effective GB/s on recent iPhones
         return bandwidth / gb * 0.75
     }

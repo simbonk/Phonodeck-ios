@@ -17,7 +17,7 @@ All are free, and all run offline once downloaded.
 
 | Job | Fast | Medium | Good, slower |
 |---|---|---|---|
-| **Storyteller** | Llama 3.2 3B (1.8 GB) | **Qwen3 4B (2.3 GB, recommended)**, Gemma 4 E4B (3.6 GB) | Qwen3 8B (4.6 GB, 12 GB phones) |
+| **Storyteller** | Llama 3.2 3B (1.8 GB), Gemma 4 E2B (3.6 GB download) | **Qwen3.5 4B (2.9 GB, recommended)**, Gemma 4 E4B (5.1 GB download, about 4 GB in memory) | Qwen3.5 9B (5.9 GB, 12 GB phones) |
 | **Narrator voice** | Apple's built-in voices (no download) | Kokoro (0.35 GB) | Qwen3-TTS (1.9 GB) |
 | **Listening** | Apple dictation (no download) | Parakeet Small (0.45 GB) | Parakeet 0.6B (2.5 GB) |
 
@@ -25,7 +25,7 @@ Small on-device models tell shorter, simpler stories than Gemini Pro, so the pro
 
 ## How it decides whether a model fits
 
-iOS lets each app use only part of the phone's memory. The app asks iOS how much it may use (`os_proc_available_memory`), then adds up what a model needs: its weights, the memory for a 4,000-token conversation (worked out from the model's own `config.json`), and some working room, plus whatever voice or listening model stays loaded beside it. Under 70% of the budget is **Runs comfortably**, under 92% is **Will run, but tight**, and above that is **Too big for this phone**. It also estimates speed (memory bandwidth divided by model size) so you know whether narration will keep up.
+iOS lets each app use only part of the phone's memory. The app asks iOS how much it may use (`os_proc_available_memory`), then adds up what a model needs: its weights, the memory for a 4,000-token conversation (worked out from the model's own `config.json`, counting only the layers that remember the whole conversation), and some working room, plus whatever voice or listening model stays loaded beside it. Gemma 4 and Qwen3.5 ship with image and sound encoders the storyteller never loads, so the app reads the weight files' headers and leaves those out. Under 70% of the budget is **Runs comfortably**, under 92% is **Will run, but tight**, and above that is **Too big for this phone**. It also estimates speed (memory bandwidth divided by model size) so you know whether narration will keep up.
 
 ---
 

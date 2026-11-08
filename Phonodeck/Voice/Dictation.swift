@@ -264,6 +264,9 @@ final class Dictation {
     /// The listening model held in memory, if any.
     var loadedModelID: String? { sttModelID }
 
+    /// Memory the listening model holds, so the fit check can count it as reclaimable.
+    var loadedGB: Double { sttModelID == nil ? 0 : store.neededGB(sttModelID) }
+
     func unloadModel() {
         sttModel = nil
         sttModelID = nil

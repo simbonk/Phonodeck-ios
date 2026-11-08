@@ -27,27 +27,44 @@ struct ModelEntry: Identifiable, Hashable, Codable {
     /// The configuration MLX uses to load a language model. Known models carry their own
     /// end-of-turn tokens; models added from a link rely on their tokenizer's settings.
     var configuration: ModelConfiguration {
-        LLMRegistry.shared.configuration(id: id)
+        var c = LLMRegistry.shared.configuration(id: id)
+        // Qwen chat models end their turn with <|im_end|>; MLX's registry only lists some of them.
+        if c.extraEOSTokens.isEmpty, id.lowercased().contains("qwen") { c.extraEOSTokens = ["<|im_end|>"] }
+        return c
     }
 }
 
 enum ModelCatalog {
+    /// Sizes are the Hugging Face download. Gemma 4 and Qwen3.5 also download image and sound
+    /// encoders the storyteller never loads; the fit check measures and leaves those out.
     static let language: [ModelEntry] = [
         ModelEntry(
             id: "mlx-community/Llama-3.2-3B-Instruct-4bit", name: "Llama 3.2 3B",
             blurb: "Small and quick. The pick for phones with 6 GB of memory.",
             kind: .language, approxGB: 1.8, paramsB: 3.2),
         ModelEntry(
-            id: "mlx-community/Qwen3-4B-4bit", name: "Qwen3 4B",
-            blurb: "Recommended. The best balance of story quality and speed on an 8 GB iPhone.",
-            kind: .language, approxGB: 2.3, paramsB: 4.0),
+            id: "mlx-community/Qwen3.5-4B-MLX-4bit", name: "Qwen3.5 4B",
+            blurb: "Recommended. The newer Qwen: follows the story and your choices far better than Qwen3, and stays quick on an 8 GB iPhone or iPad.",
+            kind: .language, approxGB: 2.9, paramsB: 4.0),
+        ModelEntry(
+            id: "mlx-community/gemma-4-e2b-it-4bit", name: "Gemma 4 E2B",
+            blurb: "Google's smallest Gemma 4. Warm, natural prose and very light on memory; a little less clever with plots.",
+            kind: .language, approxGB: 3.6, paramsB: 2.3),
         ModelEntry(
             id: "mlx-community/gemma-4-e4b-it-4bit", name: "Gemma 4 E4B",
-            blurb: "Google's small open model. Warm, natural prose; try it if Qwen feels flat.",
-            kind: .language, approxGB: 3.6, paramsB: 4.0),
+            blurb: "Google's small open model. Warm, natural prose; try it if Qwen feels flat. Wants about 5 GB free.",
+            kind: .language, approxGB: 5.1, paramsB: 4.0),
+        ModelEntry(
+            id: "mlx-community/Qwen3.5-9B-MLX-4bit", name: "Qwen3.5 9B",
+            blurb: "The best storyteller that fits on a phone: richer, more consistent stories. Wants 12 GB (iPhone 17 Pro, or an iPad Pro with 16 GB).",
+            kind: .language, approxGB: 5.9, paramsB: 9.0),
+        ModelEntry(
+            id: "mlx-community/Qwen3-4B-4bit", name: "Qwen3 4B",
+            blurb: "The older Qwen. Quick, but its stories wander; Qwen3.5 4B replaces it.",
+            kind: .language, approxGB: 2.3, paramsB: 4.0),
         ModelEntry(
             id: "mlx-community/Qwen3-8B-4bit", name: "Qwen3 8B",
-            blurb: "Richer, more consistent stories. Wants a 12 GB phone (iPhone 17 Pro and later).",
+            blurb: "The older, larger Qwen. Qwen3.5 9B writes better at about the same size.",
             kind: .language, approxGB: 4.6, paramsB: 8.2),
     ]
 
@@ -77,7 +94,7 @@ enum ModelCatalog {
             kind: .listening, approxGB: 2.5, paramsB: 0.6, tier: .best),
     ]
 
-    static let recommendedLanguageID = "mlx-community/Qwen3-4B-4bit"
+    static let recommendedLanguageID = "mlx-community/Qwen3.5-4B-MLX-4bit"
 
     static var custom: [ModelEntry] {
         get {

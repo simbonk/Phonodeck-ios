@@ -190,7 +190,7 @@ struct OptionCard<Extra: View>: View {
             }
             Text(blurb).font(.caption).foregroundStyle(Theme.dim)
             if let e = entry, !installed {
-                let r = app.store.report(for: e, loadedGB: app.llm.loadedGB)
+                let r = app.store.report(for: e, loadedGB: app.llm.loadedGB + app.narrator.neuralLoadedGB + app.dictation.loadedGB)
                 HStack(spacing: 4) {
                     Image(systemName: r.verdict.symbol)
                     Text(r.verdict.label)
