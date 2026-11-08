@@ -127,11 +127,7 @@ final class LLMService {
                 do {
                     defer { Task { await MLXGate.shared.release() } }
                     let container = try await self.ensureLoaded()
-                    var chat: [Chat.Message] = []
-                    if let system, !system.isEmpty { chat.append(.system(system)) }
-                    for t in history { chat.append(t.role == .user ? .user(t.text) : .assistant(t.text)) }
-                    let input = UserInput(chat: chat, additionalContext: ["enable_thinking": false])
-                    let prepared = try await container.prepare(input: input)
+                    let prepared = try await Self.prepareWithinBudget(container, system: system, history: history, maxTokens: options.maxTokens)
                     let params = GenerateParameters(
                         maxTokens: options.maxTokens, temperature: options.temperature, topP: options.topP,
                         repetitionPenalty: options.repetitionPenalty, repetitionContextSize: 64)
@@ -158,6 +154,54 @@ final class LLMService {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// The memory for a conversation grows with every token in it, and DeviceFit only promised
+    /// that `DeviceFit.contextTokens` would fit beside the model. So the prompt plus the longest
+    /// reply never goes over that: the oldest turns are dropped first, and if one message alone is
+    /// too long its middle is cut. This is what keeps extra calls (memory, showrunner notes, the
+    /// bible refresh) from ever raising peak memory above a normal turn.
+    static let contextBudget = DeviceFit.contextTokens
+
+    private static func prepareWithinBudget(_ container: ModelContainer, system: String?, history: [ChatTurn], maxTokens: Int) async throws -> LMInput {
+        let limit = max(512, contextBudget - maxTokens - 32)
+        var system = system
+        var turns = history
+        func input() -> UserInput {
+            var chat: [Chat.Message] = []
+            if let system, !system.isEmpty { chat.append(.system(system)) }
+            for t in turns { chat.append(t.role == .user ? .user(t.text) : .assistant(t.text)) }
+            return UserInput(chat: chat, additionalContext: ["enable_thinking": false])
+        }
+        var prepared = try await container.prepare(input: input())
+        var squeezes = 0
+        while prepared.text.tokens.size > limit {
+            let over = prepared.text.tokens.size
+            if turns.count > 1 {
+                // Drop the oldest turn, and keep the conversation starting with the player.
+                turns.removeFirst()
+                while turns.count > 1, turns.first?.role == .assistant { turns.removeFirst() }
+            } else if squeezes < 4 {
+                // One long message (or a long system prompt): keep its start and end, cut the middle.
+                squeezes += 1
+                let keep = Double(limit) / Double(over) * 0.9
+                if let s = system, s.count > (turns.first?.text.count ?? 0) {
+                    system = squeezeMiddle(s, keep: keep)
+                } else if !turns.isEmpty {
+                    turns[0].text = squeezeMiddle(turns[0].text, keep: keep)
+                }
+            } else {
+                break
+            }
+            prepared = try await container.prepare(input: input())
+        }
+        return prepared
+    }
+
+    static func squeezeMiddle(_ s: String, keep: Double) -> String {
+        let n = Int(Double(s.count) * min(1, max(0.1, keep)))
+        guard n < s.count else { return s }
+        return String(s.prefix(n * 2 / 3)) + "\n…\n" + String(s.suffix(n / 3))
     }
 
     /// The whole reply as one string.

@@ -120,6 +120,10 @@ struct WorldView: View {
             Caps(text: a.setup.simulator ? "Places" : "On the map").padding(.top, 8)
             Text(visited.joined(separator: " · ")).foregroundStyle(Theme.fg)
         }
+        if !a.links.isEmpty {
+            Caps(text: "Routes taken").padding(.top, 8)
+            Text(a.links.suffix(8).map { "\($0.from) → \($0.to)" }.joined(separator: "\n")).font(.callout).foregroundStyle(Theme.fg)
+        }
         if !a.chapters.isEmpty {
             Caps(text: "Chapters").padding(.top, 8)
             ForEach(Array(a.chapters.enumerated()), id: \.offset) { _, c in card { Text(c).font(.callout).foregroundStyle(Theme.fg) } }

@@ -2,8 +2,11 @@ import Foundation
 import Observation
 
 /// The story engine: builds the world, runs each turn, keeps the clock, remembers what
-/// happened, and writes the report card. Ported from the web app's engine.js, with a lighter
-/// load for on-device models (one Game Master call per turn, a short memory pass after it).
+/// happened, and writes the report card. Ported from the web app's engine.js and following the
+/// same flow (see How the Phonodeck Works): recall before each reply, one Game Master call, a
+/// memory pass after it, and housekeeping (the showrunner's notes, a bible rewrite) every ten
+/// turns. Only one model call runs at a time and every prompt is held to the context size the
+/// fit check planned for, so the extra steps never raise peak memory.
 @Observable
 @MainActor
 final class StoryEngine {
@@ -29,6 +32,10 @@ final class StoryEngine {
     private let dictation: Dictation
     private let library: Library
     private var memoryJob: Task<Void, Never>?
+    /// The showrunner's notes or the bible refresh, chained after the memory pass.
+    private var housekeepingJob: Task<Void, Never>?
+    /// True while housekeeping is actually talking to the model (a turn then waits for it).
+    private var housekeepingRunning = false
     private var undoSnapshot: Adventure?
     private var currentTask: Task<Void, Never>?
 
@@ -73,6 +80,7 @@ final class StoryEngine {
         building = false
         thinkingSince = nil
         forge?.abort()
+        housekeepingJob?.cancel()
         ComputerSounds.shared.stopHum()
     }
 
@@ -162,6 +170,7 @@ final class StoryEngine {
         if !str("title").isEmpty, e.title.isEmpty { a.title = str("title") }
         a.bible = str("bible").isEmpty ? e.describe + "\n\n" + e.answers(player: player) : str("bible")
         a.location = str("location").isEmpty ? e.place : str("location")
+        a.visit(a.location, from: "")
 
         // The player
         let p = plan["player"] as? [String: Any]
@@ -234,6 +243,7 @@ final class StoryEngine {
         var e = e
         e.byPlayer = true
         if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
+        a.notesStale = a.notes != nil   // so the cast agendas stop describing the old version
         adventure = a
         library.save(a)
         refreshVocabulary()
@@ -293,6 +303,7 @@ final class StoryEngine {
     func editBible(_ text: String) {
         guard var a = adventure else { return }
         a.bible = text
+        a.notesStale = a.notes != nil
         adventure = a
         library.save(a)
     }
@@ -300,6 +311,16 @@ final class StoryEngine {
     private func runTurn(input: String, hidden: Bool, forceFinal: Bool = false) async {
         guard var a = adventure else { return }
         ComputerSounds.shared.startHum()
+        // Housekeeping already talking to the model holds the GPU, so wait for it (it is one call,
+        // once every few turns). If it hasn't started yet, it waits for a later turn instead.
+        if housekeepingRunning, let job = housekeepingJob {
+            stage = "Updating the story notes"
+            await job.value
+            guard !Task.isCancelled else { return }
+            a = adventure ?? a
+        } else {
+            housekeepingJob?.cancel()
+        }
         // Let the memory pass finish first, but never hold up the story for long.
         if let job = memoryJob {
             stage = "Remembering"
@@ -316,14 +337,36 @@ final class StoryEngine {
         clockTick(&a, hidden: hidden)
         if forceFinal { a.left = 0 }
         let system = systemPrompt(a)
-        var history: [ChatTurn] = []
-        for t in a.transcript.dropFirst(a.summarisedTurns).suffix(10) {
-            history.append(ChatTurn(role: t.role == .player ? .user : .assistant, text: t.text))
+        let maxOut = a.isShort ? 300 : 420
+        let playerNarrates = !hidden && Self.narrates(input)
+        let notes = directorNotes(a, playerNarrates: playerNarrates)
+        func briefing(_ memories: [String]) -> String {
+            "[GAME MASTER BRIEFING: private, for this reply only]\n" + briefingText(a, memories: memories, director: notes)
+                + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
         }
-        let briefing = "[GAME MASTER BRIEFING: private, for this reply only]\n" + briefingText(a, playerNarrates: !hidden && Self.narrates(input))
-            + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
+
+        // Fit everything into the context the fit check planned for: the system prompt and the
+        // briefing first, then the last few turns, then recalled memories, then older turns.
+        stage = "Recalling memories"
+        let budget = LLMService.contextBudget - maxOut - 200
+        let fixed = Self.tokens(system) + Self.tokens(briefing([]))
+        let recent = Array(a.transcript.enumerated()).dropFirst(a.summarisedTurns).suffix(10)
+        let recallReserve = Self.recallChars * 2 / 7
+        var kept: [(Int, StoryTurn)] = []
+        var used = fixed
+        for (i, t) in recent.reversed() {
+            let cost = Self.tokens(t.text) + 8
+            if kept.count >= 4 && used + cost + recallReserve > budget { break }
+            kept.insert((i, t), at: 0)
+            used += cost
+        }
+        let keptIDs = Set(kept.map { $0.1.id })
+        let older = a.transcript.enumerated().filter { !keptIDs.contains($0.element.id) }.map { ($0.offset + 1, $0.element) }
+        let room = min(Self.recallChars, max(0, (budget - used) * 7 / 2))
+        let memories = hidden ? [] : Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: min(6, a.chapters.count), budget: room)
+        var history = kept.map { ChatTurn(role: $0.1.role == .player ? .user : .assistant, text: $0.1.text) }
         if history.first?.role == .assistant { history.insert(ChatTurn(role: .user, text: "(The story begins.)"), at: 0) }
-        history.append(ChatTurn(role: .user, text: briefing))
+        history.append(ChatTurn(role: .user, text: briefing(memories)))
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
 
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
@@ -334,8 +377,7 @@ final class StoryEngine {
         if narrate { narrator.begin() }
         var reply = ""
         do {
-            let short = a.isShort
-            for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: short ? 300 : 420, temperature: 0.85)) {
+            for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
                 if stage != "" {
                     stage = ""; thinkingSince = nil; forge?.close()
                     if !narrate { ComputerSounds.shared.stopHum() }   // otherwise it hums on until the voice starts
@@ -357,6 +399,8 @@ final class StoryEngine {
             adventure = snapshot
             return
         }
+        // The memory pass may have finished while the reply was written: keep what it learned.
+        if let now = adventure, now.id == a.id { a.takeMemory(from: now) }
         a.transcript.append(StoryTurn(role: .gm, text: reply))
         streaming = ""
         if a.left == 0 && !hidden { a.ended = true }
@@ -369,13 +413,27 @@ final class StoryEngine {
             await writeReportCard()
         } else if !hidden {
             let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
-            memoryJob = Task { await self.remember(exchange) }
+            let memory = Task { await self.remember(exchange) }
+            memoryJob = memory
+            // Housekeeping follows the memory pass, never alongside it (one model call at a time).
+            housekeepingJob?.cancel()
+            housekeepingJob = Task {
+                await memory.value
+                await self.housekeep()
+            }
         }
         if !a.ended && (!narrate || !narrator.speaking) {
             busy = false
             listenIfReady()
         }
     }
+
+    /// How many characters of recalled memories a briefing can carry at most (about 550 tokens).
+    static let recallChars = 2000
+
+    /// A cautious token count (about 3.5 bytes a token), for planning a prompt before it is tokenised.
+    /// LLMService checks the real count and trims if this ever guesses low.
+    static func tokens(_ s: String) -> Int { s.utf8.count * 2 / 7 + 1 }
 
     /// Strips things small models sometimes add: headings, "GM:" prefixes, trailing option lists.
     static func tidy(_ s: String) -> String {
@@ -439,8 +497,12 @@ final class StoryEngine {
                 + pinned.map { "- \($0.name) (\($0.label.lowercased())): \($0.desc)" }.joined(separator: "\n")
         }
         if !a.chapters.isEmpty { s += "\n\n## STORY SO FAR\n" + a.chapters.suffix(6).map { "- " + $0 }.joined(separator: "\n") }
-        if !a.secrets.isEmpty { s += "\n\n## PRIVATE NOTES (never reveal outright; seed clues)\n" + a.secrets.map { "- " + $0 }.joined(separator: "\n") }
-        s += "\n\n## HOW EACH TURN ARRIVES\nThe latest message starts with a private briefing for this reply only, then the player's action. Follow the briefing, never mention it, and reply to the action."
+        if let notes = a.notes, !notes.text.isEmpty {
+            s += "\n\n## PRIVATE GM NOTES (never reveal outright; seed clues)\n" + notes.text
+        } else if !a.secrets.isEmpty {
+            s += "\n\n## PRIVATE NOTES (never reveal outright; seed clues)\n" + a.secrets.map { "- " + $0 }.joined(separator: "\n")
+        }
+        s += "\n\n## HOW EACH TURN ARRIVES\nThe latest message starts with a private briefing for this reply only (mission map, relevant memories, director notes), then the player's action. Follow the briefing, never mention it, and reply to the action."
         return s
     }
 
@@ -453,9 +515,10 @@ final class StoryEngine {
         }
     }
 
-    private func briefingText(_ a: Adventure, playerNarrates: Bool) -> String {
+    private func briefingText(_ a: Adventure, memories: [String], director: [String]) -> String {
         var lines: [String] = []
         lines.append("Location: " + (a.location.isEmpty ? "unknown" : a.location))
+        if !a.mapText.isEmpty { lines.append("Mission map: " + a.mapText) }
         if a.setup.simulator {
             lines.append("Player's goal: " + (a.setup.goal.isEmpty ? "(open: follow their lead)" : a.setup.goal))
             if !a.goalProgress.isEmpty { lines.append("Progress: " + a.goalProgress) }
@@ -473,9 +536,14 @@ final class StoryEngine {
         if !hidden.isEmpty {
             lines.append("Not yet introduced by name (call them by role until the story reveals it): " + hidden.map { "\"\($0.role)\" is \($0.name)" }.joined(separator: "; "))
         }
+        if !memories.isEmpty {
+            lines.append("")
+            lines.append("RELEVANT MEMORIES (older moments and lore that bear on this reply; facts the player set win over them)")
+            lines.append(contentsOf: memories.map { "- " + $0 })
+        }
         lines.append("")
         lines.append("DIRECTOR NOTES FOR THIS REPLY")
-        lines.append(contentsOf: directorNotes(a, playerNarrates: playerNarrates).map { "- " + $0 })
+        lines.append(contentsOf: director.map { "- " + $0 })
         return lines.joined(separator: "\n")
     }
 
@@ -531,6 +599,11 @@ final class StoryEngine {
             notes.append("WRAP-UP: the session is nearly over. Steer toward a payoff and an ending. No new threads.")
         }
         if !final && !playerNarrates { notes.append(Prompts.endings.randomElement()!) }
+        // The showrunner's agendas, acted out: someone pursues what they want, on screen.
+        if !a.isShort, !calm, !wrap, !playerNarrates, let cast = a.notes?.cast, let c = cast.randomElement(), Double.random(in: 0..<1) < 0.6 {
+            notes.append("Motive in action: \(c.name) wants \(c.wants)" + (c.fears.isEmpty ? "" : " and fears \(c.fears)")
+                + ". Show them pursuing it visibly in this reply (a choice, a lie, a favour, a closed door), even where it cuts against what the player wants.")
+        }
         let repeats = repeatedPhrases(a)
         if !repeats.isEmpty { notes.append("Avoid repeating these phrases from recent replies: " + repeats.joined(separator: ", ")) }
         return notes
@@ -568,7 +641,10 @@ final class StoryEngine {
 
         a.events.append(contentsOf: ((m["events"] as? [String]) ?? []).prefix(2))
         a.events = Array(a.events.suffix(30))
-        if let loc = m["location"] as? String, !loc.isEmpty { a.location = loc }
+        if let loc = (m["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !loc.isEmpty {
+            a.visit(loc, from: a.location)
+            a.location = loc
+        }
         if let gp = m["goal_progress"] as? String, !gp.isEmpty { a.goalProgress = gp }
         let turn = a.playerTurns
         for p in ((m["lore"] as? [[String: Any]]) ?? []) + ((m["people"] as? [[String: Any]]) ?? []) {
@@ -619,6 +695,10 @@ final class StoryEngine {
             a.ended = now.ended
             a.lastDirector = now.lastDirector
             a.bible = now.bible
+            a.notes = now.notes
+            a.notesTurn = now.notesTurn
+            a.notesStale = now.notesStale
+            a.bibleTurn = now.bibleTurn
             // Entries the player edited or added in the World panel meanwhile win.
             for e in now.lore where e.byPlayer {
                 if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
@@ -628,6 +708,109 @@ final class StoryEngine {
         adventure = a
         library.save(a)
         refreshVocabulary()
+    }
+
+    // MARK: Housekeeping (the web app's slow job: bible refresh and the showrunner's notes)
+
+    /// Runs after the memory pass. At most one extra model call per turn, and only every few
+    /// turns: the first showrunner notes after turn 2, then a bible rewrite at turns 10, 20, ...
+    /// and revised notes at turns 12, 22, ... (sooner after a hand edit). Each prompt is kept
+    /// well inside the context the fit check planned for, and the call waits its turn for the
+    /// GPU like everything else, so memory never goes above a normal turn's.
+    private func housekeep() async {
+        guard !Task.isCancelled, let start = adventure, !start.ended, (start.left ?? 99) > 1 else { return }
+        let turn = start.playerTurns
+        let bibleDue = turn >= 10 && turn - start.bibleTurn >= 10
+        // A first attempt that came back unusable is tried again four turns later, not every turn.
+        let notesDue = start.notes == nil
+            ? turn >= 2 && (start.notesTurn == 0 || turn - start.notesTurn >= 4)
+            : start.notesStale || turn - start.notesTurn >= 10
+        guard bibleDue || notesDue else { return }
+        housekeepingRunning = true
+        defer { housekeepingRunning = false }
+        if bibleDue { await refreshBible(start, turn: turn) } else { await makeNotes(start, turn: turn) }
+    }
+
+    private func clip(_ s: String, _ n: Int) -> String { s.count <= n ? s : String(s.prefix(n)) + "…" }
+
+    /// What the player set by hand, for background calls: it beats the transcript.
+    private func playerFacts(_ a: Adventure) -> String {
+        let pinned = a.lore.filter(\.byPlayer).suffix(12)
+        guard !pinned.isEmpty else { return "" }
+        return "PLAYER-SET FACTS (keep them exactly, even where the transcript says otherwise):\n"
+            + pinned.map { "- \($0.name) (\($0.label.lowercased())): " + clip($0.desc, 240) }.joined(separator: "\n") + "\n\n"
+    }
+
+    private func recentTurns(_ a: Adventure, _ n: Int, each: Int) -> String {
+        a.transcript.suffix(n).map { ($0.role == .player ? "PLAYER: " : "STORY: ") + clip($0.text, each) }.joined(separator: "\n")
+    }
+
+    private func refreshBible(_ start: Adventure, turn: Int) async {
+        let hidden = hiddenPeople(start)
+        var prompt = Prompts.bibleRefresh + "\n\nCURRENT BIBLE:\n" + clip(start.bible, 2400) + "\n\n" + playerFacts(start)
+        if !hidden.isEmpty {
+            prompt += "NAMES THE PLAYER HAS NOT LEARNED (write the role, never the name): " + hidden.map { "\($0.name) = \"\($0.role)\"" }.joined(separator: "; ") + "\n\n"
+        }
+        if !start.mapText.isEmpty { prompt += "MISSION MAP: " + start.mapText + "\n\n" }
+        if !start.chapters.isEmpty { prompt += "STORY SO FAR:\n" + start.chapters.suffix(3).map { "- " + clip($0, 400) }.joined(separator: "\n") + "\n\n" }
+        prompt += "RECENT TURNS:\n" + recentTurns(start, 8, each: 600)
+        let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 420, temperature: 0.4))
+        guard !Task.isCancelled, var now = adventure, now.id == start.id else { return }
+        let bible = Self.tidy(reply ?? "")
+        // Skip it if you edited the bible while this ran, or the model gave back something too short to be a bible.
+        if bible.split(separator: " ").count >= 60, now.bible == start.bible { now.bible = bible }
+        now.bibleTurn = turn
+        adventure = now
+        library.save(now)
+    }
+
+    private func makeNotes(_ start: Adventure, turn: Int) async {
+        let revise = start.notes != nil
+        var prompt = Prompts.showrunner
+        if revise { prompt += "\n" + Prompts.showrunnerRevise }
+        if start.setup.simulator { prompt += "\n" + Prompts.showrunnerSimulator }
+        if start.isShort { prompt += "\nThis is a SHORT story: keep the notes small and simple (2-3 secrets, 1-2 threads)." }
+        prompt += "\nThe cast has at most \(start.minutes >= 30 ? 3 : 2) named characters besides the player, plus one antagonist; do not add new named people."
+        prompt += "\nEverything should serve the FEELING TO ACHIEVE: " + (start.setup.feeling.isEmpty ? "what the player came for" : start.setup.feeling) + "."
+        if let notes = start.notes {
+            prompt += "\n\nCURRENT NOTES:\n" + notes.text
+        } else if !start.secrets.isEmpty {
+            prompt += "\n\nSECRETS PLANNED AT THE START (keep the ones still hidden):\n" + start.secrets.map { "- " + clip($0, 300) }.joined(separator: "\n")
+        }
+        prompt += "\n\nBIBLE:\n" + clip(start.bible, 2000) + "\n\n" + playerFacts(start)
+        let lore = start.lore.filter { !$0.isPlayer }.sorted { ($0.updatedTurn ?? 0) > ($1.updatedTurn ?? 0) }.prefix(16)
+        if !lore.isEmpty { prompt += "LORE:\n" + lore.map { "- \($0.name) (\($0.kind.rawValue)): " + clip($0.desc, 160) }.joined(separator: "\n") + "\n\n" }
+        if !start.mapText.isEmpty { prompt += "MISSION MAP: " + start.mapText + "\n\n" }
+        prompt += "RECENT TURNS:\n" + recentTurns(start, 6, each: 500)
+
+        let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 450, temperature: 0.7))
+        guard !Task.isCancelled, var now = adventure, now.id == start.id else { return }
+        if let g = reply.flatMap(JSONExtract.object) {
+            func str(_ d: [String: Any], _ k: String) -> String { (d[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+            var notes = ShowrunnerNotes()
+            notes.voice = str(g, "voice")
+            notes.secrets = ((g["secrets"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }
+            notes.threads = ((g["threads"] as? [Any]) ?? []).compactMap { t in
+                if let s = t as? String { return ShowrunnerNotes.StoryThread(thread: s) }
+                guard let d = t as? [String: Any], !str(d, "thread").isEmpty else { return nil }
+                return ShowrunnerNotes.StoryThread(thread: str(d, "thread"), status: str(d, "status").isEmpty ? "seeded" : str(d, "status"))
+            }
+            notes.bigReveal = str(g, "big_reveal")
+            // Only the story's own named people get agendas, so the notes never invent a new cast.
+            let names = start.cast.map { $0.name.lowercased() }
+            notes.cast = ((g["cast"] as? [[String: Any]]) ?? []).compactMap { c in
+                let name = str(c, "name")
+                guard !name.isEmpty, name.caseInsensitiveCompare(start.playerName) != .orderedSame else { return nil }
+                let first = name.lowercased().split(separator: " ").first.map(String.init) ?? ""
+                guard names.isEmpty || names.contains(where: { $0 == name.lowercased() || $0.hasPrefix(first + " ") || $0 == first }) else { return nil }
+                return ShowrunnerNotes.Agenda(name: name, wants: str(c, "wants"), fears: str(c, "fears"), secret: str(c, "secret"), nextMove: str(c, "next_move"))
+            }
+            if !notes.voice.isEmpty || !notes.secrets.isEmpty { now.notes = notes }
+        }
+        now.notesStale = false
+        now.notesTurn = turn
+        adventure = now
+        library.save(now)
     }
 
     private func refreshVocabulary() {
