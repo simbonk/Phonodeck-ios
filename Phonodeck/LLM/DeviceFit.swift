@@ -84,7 +84,7 @@ enum DeviceFit {
             switch self {
             case .comfortable: "Runs comfortably"
             case .tight: "Will run, but tight"
-            case .tooBig: "Too big for this phone"
+            case .tooBig: "Too big for this \(DeviceFit.deviceWord)"
             }
         }
         var symbol: String {
@@ -120,8 +120,23 @@ enum DeviceFit {
         let machine = withUnsafeBytes(of: &info.machine) { raw in
             String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
         }
-        return knownDevices[machine] ?? machine
+        if let k = knownDevices[machine] { return k }
+        return machine.hasPrefix("iPad") ? "iPad" : machine.hasPrefix("iPhone") ? "iPhone" : machine
     }
+
+    /// "iPad" or "iPhone", for sentences like "Too big for this iPad".
+    static let deviceWord: String = {
+        var info = utsname()
+        uname(&info)
+        let machine = withUnsafeBytes(of: &info.machine) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        if machine.hasPrefix("iPad") { return "iPad" }
+        #if targetEnvironment(simulator)
+        if let m = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"], m.hasPrefix("iPad") { return "iPad" }
+        #endif
+        return "iPhone"
+    }()
 
     /// Memory needed for weights plus a 4K-token conversation plus working room, in GB.
     static func need(for entry: ModelEntry, facts: ModelFacts?) -> Double {
@@ -154,7 +169,7 @@ enum DeviceFit {
         let wps = wordsPerSecond(for: entry, facts: facts)
         var detail = String(format: "Needs about %.1f GB", need)
         if otherLoadedGB > 0.05 { detail += String(format: " (plus %.1f GB for the other model)", otherLoadedGB) }
-        detail += String(format: "; this phone lets the app use about %.1f GB.", budget)
+        detail += String(format: "; this \(deviceWord) lets the app use about %.1f GB.", budget)
         if entry.kind == .language {
             detail += String(format: " Expect roughly %.0f words a second", wps)
             detail += wps >= 4 ? ", fast enough to narrate as it writes." : ", slower than speech, so replies will pause."
@@ -175,6 +190,15 @@ enum DeviceFit {
         "iPhone17,3": "iPhone 16", "iPhone17,4": "iPhone 16 Plus", "iPhone17,1": "iPhone 16 Pro", "iPhone17,2": "iPhone 16 Pro Max",
         "iPhone17,5": "iPhone 16e", "iPhone18,3": "iPhone 17", "iPhone18,1": "iPhone 17 Pro", "iPhone18,2": "iPhone 17 Pro Max",
         "iPhone18,4": "iPhone Air",
+        "iPad13,16": "iPad Air (M1)", "iPad13,17": "iPad Air (M1)",
+        "iPad13,4": "iPad Pro 11\" (M1)", "iPad13,5": "iPad Pro 11\" (M1)", "iPad13,6": "iPad Pro 11\" (M1)", "iPad13,7": "iPad Pro 11\" (M1)",
+        "iPad13,8": "iPad Pro 12.9\" (M1)", "iPad13,9": "iPad Pro 12.9\" (M1)", "iPad13,10": "iPad Pro 12.9\" (M1)", "iPad13,11": "iPad Pro 12.9\" (M1)",
+        "iPad14,3": "iPad Pro 11\" (M2)", "iPad14,4": "iPad Pro 11\" (M2)", "iPad14,5": "iPad Pro 12.9\" (M2)", "iPad14,6": "iPad Pro 12.9\" (M2)",
+        "iPad14,8": "iPad Air 11\" (M2)", "iPad14,9": "iPad Air 11\" (M2)", "iPad14,10": "iPad Air 13\" (M2)", "iPad14,11": "iPad Air 13\" (M2)",
+        "iPad15,3": "iPad Air 11\" (M3)", "iPad15,4": "iPad Air 11\" (M3)", "iPad15,5": "iPad Air 13\" (M3)", "iPad15,6": "iPad Air 13\" (M3)",
+        "iPad15,7": "iPad (A16)", "iPad15,8": "iPad (A16)",
+        "iPad16,1": "iPad mini (A17 Pro)", "iPad16,2": "iPad mini (A17 Pro)",
+        "iPad16,3": "iPad Pro 11\" (M4)", "iPad16,4": "iPad Pro 11\" (M4)", "iPad16,5": "iPad Pro 13\" (M4)", "iPad16,6": "iPad Pro 13\" (M4)",
         "arm64": "Simulator", "x86_64": "Simulator",
     ]
 }

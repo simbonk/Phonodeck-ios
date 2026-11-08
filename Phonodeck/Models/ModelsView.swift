@@ -52,7 +52,7 @@ struct ModelsView: View {
                 for e in ModelCatalog.all where store.facts[e.id] == nil { await store.loadFacts(e) }
             }
             .confirmationDialog(
-                "This model may not run well on this phone",
+                "This model may not run well on this \(DeviceFit.deviceWord)",
                 isPresented: Binding(get: { confirmBig != nil }, set: { if !$0 { confirmBig = nil } }),
                 titleVisibility: .visible, presenting: confirmBig
             ) { e in
@@ -68,14 +68,14 @@ struct ModelsView: View {
 
     private var deviceSection: some View {
         Section {
-            LabeledContent("This phone", value: DeviceFit.deviceName)
+            LabeledContent("This \(DeviceFit.deviceWord)", value: DeviceFit.deviceName)
             LabeledContent("Memory", value: String(format: "%.0f GB", DeviceFit.ramGB.rounded()))
             LabeledContent("Phonodeck may use", value: String(format: "about %.1f GB", DeviceFit.availableGB + app.llm.loadedGB + app.narrator.neuralLoadedGB))
             if case .failed(_, let message) = store.download {
                 Text(message).foregroundStyle(.red).font(.footnote)
             }
         } footer: {
-            Text("iOS gives each app only part of the phone's memory. Each model below shows whether it fits alongside the others you've picked. Downloads are big, so use Wi-Fi.")
+            Text("iOS gives each app only part of the \(DeviceFit.deviceWord)'s memory. Each model below shows whether it fits alongside the others you've picked. Downloads are big, so use Wi-Fi.")
         }
     }
 
@@ -111,7 +111,7 @@ struct ModelsView: View {
         } header: {
             Text("Add any model from Hugging Face")
         } footer: {
-            Text("Paste a link to an MLX model (most are under mlx-community, and 4-bit versions are the right size for a phone). Phonodeck checks its size against this phone before you download it.")
+            Text("Paste a link to an MLX model (most are under mlx-community, and 4-bit versions are the right size for a phone). Phonodeck checks its size against this \(DeviceFit.deviceWord) before you download it.")
         }
     }
 

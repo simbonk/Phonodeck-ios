@@ -1,33 +1,13 @@
 import SwiftUI
 
-struct BuildingView: View {
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        VStack(spacing: 20) {
-            ProgressView().controlSize(.large)
-            Text(app.engine.stage.isEmpty ? "Building your world" : app.engine.stage)
-                .font(.title3.bold())
-            Text("Your iPhone is writing this world itself, so the first scene takes a minute or so.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-            if let e = app.engine.error {
-                Text(e).foregroundStyle(.red).font(.footnote)
-            }
-            Button("Cancel", role: .cancel) { app.engine.stopAll() }
-        }
-        .padding(30)
-    }
-}
-
-/// The story as it is told, with typing, dictation and hands-free play.
+/// The story as it is told, with typing and hands-free play, laid out like the web app:
+/// a timer pill with +10, the World button, the transcript, and the composer with Hands-free.
 struct StoryView: View {
     @Environment(AppModel.self) private var app
     @State private var input = ""
     @State private var showWorld = false
     @State private var showReport = false
-    @State private var now = Date()
-    private let tick = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
+    @FocusState private var typing: Bool
 
     private var engine: StoryEngine { app.engine }
     private var dictation: Dictation { app.dictation }
@@ -35,22 +15,100 @@ struct StoryView: View {
     var body: some View {
         if let a = engine.adventure {
             VStack(spacing: 0) {
+                header(a)
                 transcript(a)
-                Divider()
                 if a.ended {
                     endedBar(a)
                 } else {
-                    inputBar(a)
+                    composer(a)
                 }
             }
-            .navigationTitle(a.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { toolbar(a) }
+            .background(Theme.bg)
+            .toolbar(.hidden, for: .navigationBar)
+            .toolbar(.hidden, for: .tabBar)
             .sheet(isPresented: $showWorld) { WorldView() }
             .sheet(isPresented: $showReport) { ReportCardView() }
-            .onReceive(tick) { now = $0 }
             .onChange(of: a.report) { _, r in if r != nil { showReport = true } }
             .onChange(of: dictation.text) { _, t in if dictation.listening { input = t } }
+            .onChange(of: engine.handsFree) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
+            .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        }
+    }
+
+    // MARK: Header: title, the timer pill (+10), World, menu, and a bar that fills as the session runs
+
+    private func header(_ a: Adventure) -> some View {
+        TimelineView(.periodic(from: .now, by: 15)) { _ in
+            let left = Int((engine.secsLeft(a) / 60).rounded(.up))
+            let low = !a.ended && left <= 3
+            let color = low ? Theme.warn : Theme.accent
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Button { engine.close() } label: {
+                        Image(systemName: "chevron.left").font(.title3.weight(.semibold)).frame(width: 32, height: 36)
+                    }
+                    .accessibilityLabel("Menu")
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("PHONODECK").font(.caption.bold()).tracking(1.5).foregroundStyle(Theme.accent)
+                        Text(a.title).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    HStack(spacing: 0) {
+                        Text(a.ended ? "complete" : "⏱ \(left) min")
+                            .font(.subheadline.bold().monospacedDigit())
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                        if !a.ended {
+                            Button { engine.addTime(10) } label: {
+                                Text("+10").font(.subheadline.bold()).padding(.horizontal, 9).padding(.vertical, 5)
+                                    .background(color.opacity(0.16))
+                            }
+                            .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 1.5) }
+                            .accessibilityLabel("Add 10 minutes")
+                        }
+                    }
+                    .foregroundStyle(color)
+                    .overlay(Capsule().stroke(color, lineWidth: 1.5))
+                    .clipShape(Capsule())
+                    Button { showWorld = true } label: {
+                        Image(systemName: "globe").font(.title3)
+                    }
+                    .accessibilityLabel("World")
+                    menu(a)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                GeometryReader { g in
+                    let f = a.ended ? 1 : max(0, min(1, 1 - Double(left) / Double(max(1, a.minutes))))
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Theme.line)
+                        Rectangle().fill(color).frame(width: g.size.width * f)
+                    }
+                }
+                .frame(height: 3)
+            }
+        }
+    }
+
+    private func menu(_ a: Adventure) -> some View {
+        Menu {
+            Button { showWorld = true } label: { Label("World, story and mission", systemImage: "globe") }
+            Toggle(isOn: Binding(get: { engine.narrate }, set: { engine.narrate = $0; if !$0 { app.narrator.stop() } })) {
+                Label("Read aloud", systemImage: "speaker.wave.2")
+            }
+            Button { app.narrator.stop() } label: { Label("Stop reading", systemImage: "speaker.slash") }
+            Button { engine.undo() } label: { Label("Undo last turn", systemImage: "arrow.uturn.backward") }
+                .disabled(!engine.canUndo)
+            if !a.ended {
+                Button { engine.endNow() } label: { Label("End the story now", systemImage: "flag.checkered") }
+            }
+            if a.report != nil {
+                Button { showReport = true } label: { Label("Report card", systemImage: "rosette") }
+            }
+            if let url = app.library.exportFile(a.setup) {
+                ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle").font(.title3)
         }
     }
 
@@ -59,89 +117,177 @@ struct StoryView: View {
     private func transcript(_ a: Adventure) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(a.transcript) { t in
                         if t.role == .gm {
                             Text(t.text)
                                 .font(Theme.narration)
                                 .lineSpacing(4)
+                                .foregroundStyle(Theme.fg)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
                                 .textSelection(.enabled)
-                                .onTapGesture(count: 2) { app.narrator.speak(t.text) }
+                                .onTapGesture { app.narrator.speak(t.text) }
                         } else {
                             Text(t.text)
-                                .italic()
-                                .foregroundStyle(Theme.accent)
+                                .foregroundStyle(Theme.fg)
+                                .padding(12)
+                                .background(Theme.you, in: RoundedRectangle(cornerRadius: 12))
                                 .frame(maxWidth: .infinity, alignment: .trailing)
-                                .multilineTextAlignment(.trailing)
+                                .padding(.leading, 50)
                         }
                     }
                     if !engine.streaming.isEmpty {
-                        Text(engine.streaming).font(Theme.narration).lineSpacing(4)
+                        Text(engine.streaming)
+                            .font(Theme.narration).lineSpacing(4).foregroundStyle(Theme.fg)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
+                    } else if let since = engine.thinkingSince {
+                        thinking(since)
+                    } else if !engine.stage.isEmpty {
+                        HStack(spacing: 10) { HoloCore(size: 30); Text(engine.stage).foregroundStyle(Theme.dim) }
+                            .frame(maxWidth: .infinity)
                     }
-                    if !engine.stage.isEmpty {
-                        HStack(spacing: 8) { ProgressView(); Text(engine.stage).foregroundStyle(.secondary) }
+                    if a.transcript.isEmpty && !engine.busy && engine.forge == nil {
+                        Text("The story hasn't started yet. Go back and build it again.").foregroundStyle(Theme.dim).italic()
+                            .frame(maxWidth: .infinity)
+                    }
+                    if a.ended && a.report != nil {
+                        Button { showReport = true } label: {
+                            Text("The adventure is complete. Tap here to see your report card.").italic()
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                     if let e = engine.error {
-                        Text(e).foregroundStyle(.red).font(.footnote)
+                        Text(e).foregroundStyle(Theme.warn).font(.footnote)
                     }
                     if let e = app.narrator.lastError {
-                        Text(e).foregroundStyle(.orange).font(.footnote)
+                        Text(e).foregroundStyle(Theme.warn).font(.footnote)
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
-                .padding()
+                .padding(12)
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
             }
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: engine.streaming) { proxy.scrollTo("end", anchor: .bottom) }
-            .onChange(of: a.transcript.count) { proxy.scrollTo("end", anchor: .bottom) }
+            .onChange(of: a.transcript.count) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+            .onChange(of: engine.thinkingSince) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
             .onAppear { proxy.scrollTo("end", anchor: .bottom) }
         }
     }
 
-    // MARK: Input
-
-    private func inputBar(_ a: Adventure) -> some View {
-        VStack(spacing: 8) {
-            if dictation.listening {
-                HStack(spacing: 6) {
-                    Image(systemName: "waveform").symbolEffect(.variableColor.iterative, options: .repeating)
-                    Text(dictation.transcribing ? "Hearing you…" : "Listening. Say ")
-                    + Text(Dictation.sendPhrase).bold().foregroundColor(Theme.accent)
-                    + Text(" to send.")
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+    private func thinking(_ since: Date) -> some View {
+        VStack(spacing: 6) {
+            HoloCore(size: 44)
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text("The Phonodeck is thinking… \(Int(ctx.date.timeIntervalSince(since)))s")
+                    .font(.footnote.monospacedDigit()).foregroundStyle(Theme.dim)
             }
-            if let e = dictation.error { Text(e).font(.footnote).foregroundStyle(.orange) }
-            HStack(alignment: .bottom, spacing: 8) {
-                Button {
-                    if dictation.listening { dictation.stop() } else {
-                        app.narrator.stop()
-                        Task { await dictation.start() }
-                    }
-                } label: {
-                    Image(systemName: dictation.listening ? "mic.fill" : "mic")
-                        .font(.title2)
-                        .foregroundStyle(dictation.listening ? Theme.accent : .primary)
-                        .frame(width: 36, height: 36)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: Composer: the reply box, then Undo, Hands-free and Send
+
+    private func composer(_ a: Adventure) -> some View {
+        VStack(spacing: 8) {
+            if engine.handsFree { handsFreeStatus }
+            if let e = dictation.error { Text(e).font(.footnote).foregroundStyle(Theme.warn) }
+            TextField(engine.handsFree ? "Say \"\(Dictation.sendPhrase)\" to send" : "What do you do?", text: $input, axis: .vertical)
+                .lineLimit(1...5)
+                .focused($typing)
+                .padding(12)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
+            HStack(spacing: 8) {
+                Button { engine.undo() } label: {
+                    Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 40)
                 }
-                TextField("What do you do?", text: $input, axis: .vertical)
-                    .lineLimit(1...5)
-                    .padding(10)
-                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 18))
+                .buttonStyle(.bordered)
+                .disabled(!engine.canUndo)
+                .accessibilityLabel("Undo last turn")
+                handsFreeButton
                 if engine.busy {
-                    Button { engine.stopAll() } label: { Image(systemName: "stop.circle.fill").font(.title) }
+                    Button { engine.stopAll() } label: {
+                        Text("Stop").bold().frame(minWidth: 70, minHeight: 40)
+                    }
+                    .buttonStyle(.bordered)
                 } else {
                     Button {
+                        typing = false
                         if dictation.listening { dictation.stop(send: true) } else { engine.send(input) }
                         input = ""
                     } label: {
-                        Image(systemName: "arrow.up.circle.fill").font(.title)
+                        Text("Send").bold().frame(minWidth: 70, minHeight: 40)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .foregroundStyle(Theme.onAccent)
                     .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
         .padding(10)
+        .frame(maxWidth: 820)
+        .frame(maxWidth: .infinity)
+        .background(Theme.bg.overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) })
+    }
+
+    /// Off: a glowing teal outline with a light sweeping across it, so it stands out until used.
+    /// On and listening: solid red and pulsing. On but paused (narrator speaking, story loading): red outline.
+    private var handsFreeButton: some View {
+        let on = engine.handsFree
+        let live = on && dictation.listening
+        return Button {
+            typing = false
+            engine.setHandsFree(!on)
+        } label: {
+            Label(on ? "Hands-free ON" : "Hands-free", systemImage: "headphones")
+                .font(.body.bold())
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .foregroundStyle(live ? .white : on ? Theme.rec : Theme.accent)
+                .background(live ? Theme.rec : Color.clear, in: Capsule())
+                .overlay(Capsule().stroke(on ? Theme.rec : Theme.accent, lineWidth: 2))
+                .shadow(color: on ? .clear : Theme.accent.opacity(0.45), radius: 8)
+                .modifier(Sheen(active: !on))
+                .modifier(Pulse(active: live))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("The microphone stays on; say \(Dictation.sendPhrase) to send")
+    }
+
+    @ViewBuilder
+    private var handsFreeStatus: some View {
+        Group {
+            if engine.busy {
+                Text("Hands-free ON: the story is being prepared…")
+            } else if app.narrator.speaking || app.narrator.preparing {
+                Text("Hands-free ON: narrator speaking (mic paused).")
+            } else if dictation.listening {
+                if dictation.transcribing {
+                    Text("Hands-free ON: hearing you…")
+                } else {
+                    HStack(spacing: 4) {
+                        Text("Hands-free ON: listening. Say")
+                        MagicPhrase(phrase: Dictation.sendPhrase)
+                        Text("to send.")
+                    }
+                }
+            } else {
+                Text("Hands-free ON: starting the microphone…")
+            }
+        }
+        .font(.callout)
+        .foregroundStyle(Theme.fg)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 2)
     }
 
     private func endedBar(_ a: Adventure) -> some View {
@@ -150,115 +296,14 @@ struct StoryView: View {
                 if a.report == nil { Task { await engine.writeReportCard() } } else { showReport = true }
             }
             .buttonStyle(.borderedProminent)
+            .tint(Theme.accent)
+            .foregroundStyle(Theme.onAccent)
             Button("+10 min, keep going") { engine.addTime(10) }
                 .buttonStyle(.bordered)
+            Spacer()
+            Button("Menu") { engine.close() }
         }
         .padding()
-    }
-
-    // MARK: Toolbar
-
-    @ToolbarContentBuilder
-    private func toolbar(_ a: Adventure) -> some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) {
-            Button { engine.close() } label: { Image(systemName: "chevron.left") }
-        }
-        ToolbarItem(placement: .principal) {
-            VStack(spacing: 0) {
-                Text(a.title).font(.subheadline.bold()).lineLimit(1)
-                let left = Int((engine.secsLeft(a) / 60).rounded(.up))
-                Text(a.ended ? "The end" : "\(left) min left")
-                    .font(.caption2)
-                    .foregroundStyle(left <= 3 && !a.ended ? Theme.accent : .secondary)
-                    .id(now)
-            }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Button { showWorld = true } label: { Label("World", systemImage: "globe") }
-                Button { engine.addTime(10) } label: { Label("+10 minutes", systemImage: "plus.circle") }
-                Toggle(isOn: Binding(get: { engine.narrate }, set: { engine.narrate = $0; if !$0 { app.narrator.stop() } })) {
-                    Label("Read aloud", systemImage: "speaker.wave.2")
-                }
-                Toggle(isOn: Binding(get: { engine.handsFree }, set: { engine.handsFree = $0 })) {
-                    Label("Hands-free", systemImage: "ear")
-                }
-                Button { app.narrator.stop() } label: { Label("Stop reading", systemImage: "speaker.slash") }
-                Button { engine.undo() } label: { Label("Undo last turn", systemImage: "arrow.uturn.backward") }
-                    .disabled(!engine.canUndo)
-                if !a.ended {
-                    Button { engine.endNow() } label: { Label("End the story now", systemImage: "flag.checkered") }
-                }
-                if a.report != nil {
-                    Button { showReport = true } label: { Label("Report card", systemImage: "rosette") }
-                }
-                if let url = app.library.exportFile(a.setup) {
-                    ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }
-                }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-        }
-    }
-}
-
-struct WorldView: View {
-    @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
-    @State private var bible = ""
-
-    var body: some View {
-        NavigationStack {
-            if let a = app.engine.adventure {
-                Form {
-                    Section {
-                        TextEditor(text: $bible).frame(minHeight: 200).font(.callout)
-                    } header: {
-                        Text("Story bible")
-                    } footer: {
-                        Text("Edit it to change the world; the Game Master follows your version.")
-                    }
-                    Section("Feeling") { Text(a.setup.feeling.isEmpty ? "Not set" : a.setup.feeling) }
-                    if !a.location.isEmpty { Section("Where you are") { Text(a.location) } }
-                    if !a.cast.isEmpty {
-                        Section("People") {
-                            ForEach(a.cast) { c in
-                                let met = c.known || a.transcript.contains { $0.role == .gm && $0.text.contains(c.name.split(separator: " ").first.map(String.init) ?? c.name) }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(met ? c.name : c.role.capitalized).font(.headline)
-                                    if met && !c.role.isEmpty { Text(c.role).font(.caption).foregroundStyle(.secondary) }
-                                    if met { Text(c.desc).font(.caption) }
-                                }
-                            }
-                        }
-                    }
-                    if !a.setup.simulator && !a.beats.isEmpty {
-                        Section("Story steps") {
-                            ForEach(Array(a.beats.enumerated()), id: \.offset) { _, b in
-                                Label(b.text, systemImage: b.done ? "checkmark.circle.fill" : "circle")
-                            }
-                        }
-                    }
-                    if !a.chapters.isEmpty {
-                        Section("Chapters") { ForEach(Array(a.chapters.enumerated()), id: \.offset) { _, c in Text(c).font(.callout) } }
-                    }
-                    if !a.events.isEmpty {
-                        Section("What happened") { ForEach(Array(a.events.suffix(12).enumerated()), id: \.offset) { _, e in Text(e).font(.callout) } }
-                    }
-                }
-                .navigationTitle("World")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            if bible != a.bible { app.engine.editBible(bible) }
-                            dismiss()
-                        }
-                    }
-                }
-                .onAppear { bible = a.bible }
-            }
-        }
     }
 }
 
@@ -270,41 +315,59 @@ struct ReportCardView: View {
         NavigationStack {
             ScrollView {
                 if let a = app.engine.adventure, let r = a.report {
-                    VStack(alignment: .leading, spacing: 22) {
-                        Text(r.title).font(.largeTitle.bold())
-                        Text(r.summary).font(Theme.narration)
-                        gradeCard("How the Phonodeck did", r.storyteller)
-                        gradeCard("How you did", r.player)
+                    VStack(alignment: .leading, spacing: 18) {
+                        Caps(text: "Adventure complete", color: Theme.dim)
+                        Text(r.title).font(.largeTitle.bold()).foregroundStyle(Theme.accent)
+                        Text(r.summary).font(Theme.narration).foregroundStyle(Theme.fg)
+                        gradeCard("How the Phonodeck did", sub: "The feeling: " + a.setup.feeling, r.storyteller)
+                        gradeCard("How you did", sub: nil, r.player)
                         if !r.next.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("Next time").font(.headline)
-                                Text(r.next)
+                                Caps(text: "Next time")
+                                Text(r.next).foregroundStyle(Theme.fg)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                         }
-                        Button("Read it to me") { app.narrator.speak(r.summary + " " + r.player.comment) }
-                            .buttonStyle(.bordered)
+                        HStack {
+                            Button("Read it to me") { app.narrator.speak(r.summary + " " + r.player.comment) }
+                                .buttonStyle(.bordered)
+                            Spacer()
+                            Button("Menu") { dismiss(); app.engine.close() }
+                                .buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(Theme.onAccent)
+                        }
                     }
                     .padding()
                 } else {
-                    ProgressView("Writing your report card…").padding(40)
+                    VStack(spacing: 12) {
+                        HoloCore(size: 60)
+                        Text("Writing your report card…").foregroundStyle(Theme.dim)
+                    }
+                    .padding(40)
                 }
             }
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .background(Theme.bg)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Close") { dismiss() } } }
         }
     }
 
-    private func gradeCard(_ title: String, _ g: Grade) -> some View {
-        HStack(alignment: .top, spacing: 16) {
-            Text(g.grade)
-                .font(.system(size: 40, weight: .bold, design: .serif))
-                .foregroundStyle(Theme.accent)
-                .frame(width: 70)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.headline)
-                Text(g.comment).font(.callout)
+    private func gradeCard(_ title: String, sub: String?, _ g: Grade) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Caps(text: title)
+            if let sub { Text(sub).font(.caption).foregroundStyle(Theme.dim) }
+            HStack(alignment: .top, spacing: 16) {
+                Text(g.grade)
+                    .font(.system(size: 52, weight: .bold))
+                    .foregroundStyle(Theme.accent)
+                    .shadow(color: Theme.accent.opacity(0.5), radius: 8)
+                    .frame(minWidth: 70)
+                Text(g.comment).font(.callout).foregroundStyle(Theme.fg)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
     }
 }

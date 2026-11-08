@@ -28,12 +28,14 @@ struct Experience: Codable, Identifiable, Hashable {
     var threat = ""
     var play = ""
     var avoid = ""
+    /// Who the player is drawn to, if anyone ("No romance" or empty for none).
+    var romance = ""
     /// A guide for a good series of events, for the Game Master only.
     var beats = ""
     var minutes = 20
 
     enum CodingKeys: String, CodingKey {
-        case format, id, title, author, simulator, feeling, describe, world, vibe, who, traits, place, goal, hook, allies, threat, play, avoid, beats, minutes
+        case format, id, title, author, simulator, feeling, describe, world, vibe, who, traits, place, goal, hook, allies, threat, play, avoid, romance, beats, minutes
     }
 
     init() {}
@@ -45,7 +47,7 @@ struct Experience: Codable, Identifiable, Hashable {
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
         title = s(.title); author = s(.author); feeling = s(.feeling); describe = s(.describe); world = s(.world)
         vibe = s(.vibe); who = s(.who); traits = s(.traits); place = s(.place); goal = s(.goal); hook = s(.hook)
-        allies = s(.allies); threat = s(.threat); play = s(.play); avoid = s(.avoid); beats = s(.beats)
+        allies = s(.allies); threat = s(.threat); play = s(.play); avoid = s(.avoid); romance = s(.romance); beats = s(.beats)
         simulator = (try? c.decodeIfPresent(Bool.self, forKey: .simulator)) ?? false
         minutes = (try? c.decodeIfPresent(Int.self, forKey: .minutes)) ?? 20
     }
@@ -69,7 +71,10 @@ struct Experience: Codable, Identifiable, Hashable {
         add("Player's name", player.name)
         if player.age > 0 { lines.append("Player's age: \(player.age)") }
         add("Player's gender", player.gender)
-        if player.age >= 18 { add("Romance", player.interest.isEmpty ? "" : "interested in " + player.interest) }
+        if player.age == 0 || player.age >= 18 {
+            if !romance.isEmpty { add("Romance", romance) }
+            else if !player.interest.isEmpty { lines.append("About the real player (background only; romance only if the player starts it): interested in " + player.interest) }
+        }
         return lines.joined(separator: "\n")
     }
 }
@@ -88,23 +93,64 @@ struct PlayerDetails {
     }
 }
 
-struct CastMember: Codable, Hashable, Identifiable {
+/// Something the world knows about: a person, a place, an item or a faction. The World panel
+/// lists these, the Game Master is reminded of them, and the memory pass adds to them as you play.
+struct LoreEntry: Codable, Hashable, Identifiable {
+    enum Kind: String, Codable, CaseIterable { case person, place, item, faction, other }
+
     var id = UUID()
     var name: String
-    var role: String
-    var known: Bool
-    var desc: String
+    var kind: Kind = .other
+    var desc = ""
+    /// How the player first knows a person ("the old fisherman"), until the story reveals the name.
+    var role = ""
+    /// The player already knows this person's name (or the story has revealed it).
+    var known = true
+    /// What a person wants: their private agenda.
+    var wants = ""
+    var isPlayer = false
+    /// The player wrote or edited this entry; their words always win.
+    var byPlayer = false
+    /// The turn it was last updated in play.
+    var updatedTurn: Int?
 
-    enum CodingKeys: String, CodingKey { case name, role, known, desc }
-    init(name: String, role: String, known: Bool, desc: String) {
-        self.name = name; self.role = role; self.known = known; self.desc = desc
+    init(name: String, kind: Kind, desc: String = "", role: String = "", known: Bool = true, wants: String = "", isPlayer: Bool = false) {
+        self.name = name; self.kind = kind; self.desc = desc; self.role = role; self.known = known; self.wants = wants; self.isPlayer = isPlayer
     }
+
+    enum CodingKeys: String, CodingKey { case id, name, kind, desc, role, known, wants, isPlayer, byPlayer, updatedTurn }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
         name = (try? c.decode(String.self, forKey: .name)) ?? ""
-        role = (try? c.decode(String.self, forKey: .role)) ?? ""
-        known = (try? c.decode(Bool.self, forKey: .known)) ?? false
-        desc = (try? c.decode(String.self, forKey: .desc)) ?? ""
+        kind = (try? c.decodeIfPresent(Kind.self, forKey: .kind)) ?? .other
+        desc = (try? c.decodeIfPresent(String.self, forKey: .desc)) ?? ""
+        role = (try? c.decodeIfPresent(String.self, forKey: .role)) ?? ""
+        known = (try? c.decodeIfPresent(Bool.self, forKey: .known)) ?? true
+        wants = (try? c.decodeIfPresent(String.self, forKey: .wants)) ?? ""
+        isPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .isPlayer)) ?? false
+        byPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .byPlayer)) ?? false
+        updatedTurn = try? c.decodeIfPresent(Int.self, forKey: .updatedTurn)
+    }
+
+    static func kind(from s: String) -> Kind {
+        switch s.lowercased() {
+        case "person", "character", "people", "animal", "creature": .person
+        case "place", "location": .place
+        case "item", "object", "thing": .item
+        case "faction", "group", "organisation", "organization": .faction
+        default: .other
+        }
+    }
+
+    var label: String {
+        switch kind {
+        case .person: isPlayer ? "You" : "Character"
+        case .place: "Place"
+        case .item: "Item"
+        case .faction: "Faction"
+        case .other: "Other"
+        }
     }
 }
 
@@ -155,7 +201,8 @@ struct Adventure: Codable, Identifiable, Hashable {
     var bible = ""
     var location = ""
     var playerName = ""
-    var cast: [CastMember] = []
+    /// People, places, items and factions (the player's own entry included).
+    var lore: [LoreEntry] = []
     var beats: [Beat] = []
     var roadmap: [Act] = []
     var secrets: [String] = []
@@ -177,4 +224,51 @@ struct Adventure: Codable, Identifiable, Hashable {
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
+    /// The people of the story, besides the player.
+    var cast: [LoreEntry] { lore.filter { $0.kind == .person && !$0.isPlayer } }
+
+    init(setup: Experience, title: String, minutes: Int) {
+        self.setup = setup; self.title = title; self.minutes = minutes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
+             summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector
+    }
+
+    /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func v<T: Decodable>(_ k: CodingKeys, _ d: T) -> T { (try? c.decodeIfPresent(T.self, forKey: k)) ?? d }
+        id = v(.id, UUID()); created = v(.created, Date()); updated = v(.updated, Date())
+        setup = try c.decode(Experience.self, forKey: .setup)
+        title = v(.title, "Untitled"); bible = v(.bible, ""); location = v(.location, ""); playerName = v(.playerName, "")
+        lore = v(.lore, [LoreEntry]())
+        if lore.isEmpty {
+            struct OldCast: Decodable { var name: String?; var role: String?; var known: Bool?; var desc: String? }
+            lore = v(.cast, [OldCast]()).compactMap { o in
+                guard let n = o.name, !n.isEmpty else { return nil }
+                return LoreEntry(name: n, kind: .person, desc: o.desc ?? "", role: o.role ?? "", known: o.known ?? false)
+            }
+        }
+        beats = v(.beats, []); roadmap = v(.roadmap, []); secrets = v(.secrets, []); events = v(.events, []); chapters = v(.chapters, [])
+        summarisedTurns = v(.summarisedTurns, 0); goalProgress = v(.goalProgress, ""); mood = v(.mood, Mood())
+        transcript = v(.transcript, []); minutes = v(.minutes, 20); elapsed = v(.elapsed, 0)
+        lastSendAt = try? c.decodeIfPresent(Date.self, forKey: .lastSendAt)
+        turnTimes = v(.turnTimes, []); left = try? c.decodeIfPresent(Int.self, forKey: .left); ended = v(.ended, false)
+        report = try? c.decodeIfPresent(ReportCard.self, forKey: .report); lastDirector = v(.lastDirector, [:])
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(created, forKey: .created); try c.encode(updated, forKey: .updated)
+        try c.encode(setup, forKey: .setup); try c.encode(title, forKey: .title); try c.encode(bible, forKey: .bible)
+        try c.encode(location, forKey: .location); try c.encode(playerName, forKey: .playerName); try c.encode(lore, forKey: .lore)
+        try c.encode(beats, forKey: .beats); try c.encode(roadmap, forKey: .roadmap); try c.encode(secrets, forKey: .secrets)
+        try c.encode(events, forKey: .events); try c.encode(chapters, forKey: .chapters); try c.encode(summarisedTurns, forKey: .summarisedTurns)
+        try c.encode(goalProgress, forKey: .goalProgress); try c.encode(mood, forKey: .mood); try c.encode(transcript, forKey: .transcript)
+        try c.encode(minutes, forKey: .minutes); try c.encode(elapsed, forKey: .elapsed); try c.encodeIfPresent(lastSendAt, forKey: .lastSendAt)
+        try c.encode(turnTimes, forKey: .turnTimes); try c.encodeIfPresent(left, forKey: .left); try c.encode(ended, forKey: .ended)
+        try c.encodeIfPresent(report, forKey: .report); try c.encode(lastDirector, forKey: .lastDirector)
+    }
 }

@@ -1,214 +1,220 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The Phonodeck tab: pick or build an experience, or continue one.
+/// The Phonodeck tab: the start screen (set up a new experience, continue one), the build screen,
+/// and the story itself.
 struct PhonodeckHome: View {
     @Environment(AppModel.self) private var app
-    @State private var setup: Experience?
+    @State private var curator = false
+    @State private var curatorStart: Experience?
     @State private var importing = false
+    @State private var showContinue = true
 
     var body: some View {
         NavigationStack {
-            Group {
+            ZStack {
                 if app.engine.adventure != nil {
                     StoryView()
-                } else if app.engine.building {
-                    BuildingView()
-                } else if !app.store.hasLanguageModel {
-                    NeedsModelBanner()
                 } else {
                     home
                 }
+                if let forge = app.engine.forge, !forge.finished {
+                    ForgeView(forge: forge) { app.engine.stopAll(); app.engine.close() }
+                        .transition(.opacity)
+                        .zIndex(1)
+                }
             }
+            .background(Theme.bg)
         }
-        .sheet(item: $setup) { e in
-            SetupView(experience: e)
+        .fullScreenCover(isPresented: $curator) {
+            CuratorView(start: curatorStart)
         }
         .onChange(of: app.pendingExperience) { _, e in
-            if let e { setup = e; app.pendingExperience = nil }
+            if let e { open(e); app.pendingExperience = nil }
         }
         .onAppear {
-            if let e = app.pendingExperience { setup = e; app.pendingExperience = nil }
+            if let e = app.pendingExperience { open(e); app.pendingExperience = nil }
         }
     }
 
+    private func open(_ e: Experience?) {
+        curatorStart = e
+        curator = true
+    }
+
     private var home: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Step into a story").font(.title2.bold())
-                    Text("Say how long you have and the feeling you want. A Game Master builds a world for you, tells it aloud, and lands a real ending in time.")
-                        .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("PHONODECK")
+                    .font(.system(size: 30, weight: .bold))
+                    .tracking(4)
+                    .foregroundStyle(Theme.accent)
+                    .shadow(color: Theme.accent.opacity(0.5), radius: 8)
+                    .padding(.top, 12)
+                Text("Your story, your vibe. Everything is remembered, and it all happens on this device.")
+                    .font(.subheadline).foregroundStyle(Theme.dim)
+
+                if !app.store.hasLanguageModel {
+                    StorytellerCard()
+                        .padding(.top, 8)
                 }
-                .padding(.vertical, 6)
-                Button {
-                    setup = Experience()
+
+                BigCard(primary: true) {
+                    open(nil)
                 } label: {
-                    Label("Build the world myself", systemImage: "sparkles")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Set up a new experience").font(.title3.bold())
+                        Text("A few quick questions: your time, a little about you, then a curated world or one you build yourself.")
+                            .font(.subheadline).opacity(0.8)
+                    }
                 }
-            }
+                .disabled(!app.store.hasLanguageModel)
+                .opacity(app.store.hasLanguageModel ? 1 : 0.5)
+                .padding(.top, 8)
 
-            let open = app.library.adventures.filter { !$0.ended }
-            if !open.isEmpty {
-                Section("Continue") {
-                    ForEach(open) { a in adventureRow(a) }
-                        .onDelete { idx in idx.map { open[$0] }.forEach(app.library.delete) }
+                let open = app.library.adventures.filter { !$0.ended }
+                if !open.isEmpty {
+                    BigCard {
+                        withAnimation { showContinue.toggle() }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Continue an experience").font(.title3.bold())
+                                Text("\(open.count) in progress").font(.subheadline).foregroundStyle(Theme.dim)
+                            }
+                            Spacer()
+                            Image(systemName: showContinue ? "chevron.up" : "chevron.down").foregroundStyle(Theme.dim)
+                        }
+                    }
+                    if showContinue {
+                        ForEach(open) { a in adventureRow(a) }
+                    }
                 }
-            }
 
-            Section("Curated experiences") {
-                ForEach(CuratedExperiences.all) { e in experienceRow(e) }
-            }
+                let finished = app.library.adventures.filter(\.ended)
+                if !finished.isEmpty {
+                    Caps(text: "Finished", color: Theme.dim).padding(.top, 14)
+                    ForEach(finished) { a in adventureRow(a) }
+                }
 
-            Section {
-                ForEach(app.library.imported) { e in experienceRow(e) }
-                    .onDelete { idx in idx.map { app.library.imported[$0] }.forEach(app.library.deleteImported) }
+                Caps(text: "Shared experiences", color: Theme.dim).padding(.top, 14)
+                Text("Experiences travel as small .phonodeck files. Share one from a story's menu; anyone with Phonodeck can open it. Experiences shared with you appear in the set-up, next to the curated ones.")
+                    .font(.footnote).foregroundStyle(Theme.dim)
                 Button {
                     importing = true
                 } label: {
                     Label("Import an experience file", systemImage: "square.and.arrow.down")
                 }
-            } header: {
-                Text("Shared with you")
-            } footer: {
-                Text("Experiences are small .phonodeck files. Share one from its set-up screen; anyone with Phonodeck can open it.")
+                .buttonStyle(.bordered)
             }
-
-            let finished = app.library.adventures.filter(\.ended)
-            if !finished.isEmpty {
-                Section("Finished") {
-                    ForEach(finished) { a in adventureRow(a) }
-                        .onDelete { idx in idx.map { finished[$0] }.forEach(app.library.delete) }
-                }
-            }
+            .padding(20)
+            .frame(maxWidth: 680)
+            .frame(maxWidth: .infinity)
         }
-        .navigationTitle("Phonodeck")
+        .background(Theme.bg)
+        .toolbar(.hidden, for: .navigationBar)
         .fileImporter(isPresented: $importing, allowedContentTypes: [.phonodeckExperience, .json]) { result in
             if case .success(let url) = result { app.importFile(url) }
         }
     }
 
-    private func experienceRow(_ e: Experience) -> some View {
-        Button {
-            setup = e
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(e.title).font(.headline)
-                Text(e.feeling).font(.subheadline).foregroundStyle(Theme.accent)
-                Text(e.describe).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                Text("\(e.minutes) min · \(e.simulator ? "Experience" : "Story")\(e.author.isEmpty ? "" : " · by \(e.author)")")
-                    .font(.caption2).foregroundStyle(.secondary)
+    private func adventureRow(_ a: Adventure) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                app.engine.open(a)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(a.report?.title ?? a.title).font(.headline).foregroundStyle(Theme.fg)
+                    Text(subtitle(a)).font(.caption).foregroundStyle(Theme.dim).lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
+            }
+            .buttonStyle(.plain)
+            Menu {
+                if let url = app.library.exportFile(a.setup) {
+                    ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }
+                }
+                Button(role: .destructive) { app.library.delete(a) } label: { Label("Delete", systemImage: "trash") }
+            } label: {
+                Image(systemName: "ellipsis").frame(width: 36, height: 44)
             }
         }
-        .foregroundStyle(.primary)
     }
 
-    private func adventureRow(_ a: Adventure) -> some View {
-        Button {
-            app.engine.open(a)
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(a.report?.title ?? a.title).font(.headline)
-                Text(a.ended ? "Finished · \(a.report?.player.grade ?? "")" : "\(Int(app.engine.secsLeft(a, live: false) / 60)) min left · \(a.playerTurns) replies")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+    private func subtitle(_ a: Adventure) -> String {
+        var bits = [a.setup.simulator ? "Experience" : "Story"]
+        if a.ended {
+            bits.append("Finished" + (a.report.map { " · you got \($0.player.grade)" } ?? ""))
+        } else {
+            bits.append("\(Int(a.elapsed / 60)) of \(a.minutes) min")
         }
-        .foregroundStyle(.primary)
+        if !a.setup.feeling.isEmpty { bits.append(a.setup.feeling) }
+        if !a.location.isEmpty { bits.append(a.location) }
+        bits.append(a.updated.formatted(date: .abbreviated, time: .omitted))
+        return bits.joined(separator: " · ")
     }
 }
 
-/// Fill in or edit an experience, then build the world.
-struct SetupView: View {
+/// The recommended storyteller, with its fit on this device and a download button. Used on the
+/// start screen and in the welcome until a storyteller is installed.
+struct StorytellerCard: View {
     @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
-    @State var experience: Experience
-    @State private var more = false
-    @State private var shareURL: URL?
 
-    private let lengths = [10, 15, 20, 30, 45, 60, 90]
+    private var entry: ModelEntry {
+        let rec = ModelCatalog.entry(ModelCatalog.recommendedLanguageID) ?? ModelCatalog.language[0]
+        let r = app.store.report(for: rec, loadedGB: 0)
+        if r.verdict == .tooBig, let small = ModelCatalog.language.first { return small }
+        return rec
+    }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Title", text: $experience.title)
-                    TextField("Describe what you'd like to experience", text: $experience.describe, axis: .vertical)
-                        .lineLimit(3...8)
-                }
-                Section {
-                    TextField("The feeling you want to come away with", text: $experience.feeling, axis: .vertical)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack {
-                            ForEach(Prompts.feelingIdeas, id: \.self) { f in
-                                Button(f) { experience.feeling = f }
-                                    .font(.caption)
-                                    .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("The feeling comes first")
-                }
-                Section {
-                    Picker("Length", selection: $experience.minutes) {
-                        ForEach(lengths, id: \.self) { Text($0 >= 60 ? "\($0 / 60) h\($0 % 60 == 0 ? "" : " \($0 % 60) min")" : "\($0) min").tag($0) }
-                        if !lengths.contains(experience.minutes) { Text("\(experience.minutes) min").tag(experience.minutes) }
-                    }
-                    Picker("How to play", selection: $experience.simulator) {
-                        Text("A story with a plot").tag(false)
-                        Text("An experience, no plot").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                }
-                Section(isExpanded: $more) {
-                    TextField("World and era", text: $experience.world, axis: .vertical)
-                    TextField("Where it begins", text: $experience.place, axis: .vertical)
-                    TextField("Who you are", text: $experience.who, axis: .vertical)
-                    TextField("Your strengths and flaws", text: $experience.traits, axis: .vertical)
-                    if experience.simulator {
-                        TextField("Your goal", text: $experience.goal, axis: .vertical)
-                    } else {
-                        TextField("The hook", text: $experience.hook, axis: .vertical)
-                        TextField("What stands in the way", text: $experience.threat, axis: .vertical)
-                    }
-                    TextField("Companions", text: $experience.allies, axis: .vertical)
-                    TextField("Mood (e.g. cozy, funny)", text: $experience.vibe)
-                    TextField("Style of play", text: $experience.play)
-                    TextField("Keep it… (content limits)", text: $experience.avoid, axis: .vertical)
-                    TextField("Secret guide for the Game Master", text: $experience.beats, axis: .vertical)
-                    TextField("Your name as author (for sharing)", text: $experience.author)
-                } header: {
-                    Text("Details (optional)")
-                }
+        let e = entry
+        let r = app.store.report(for: e, loadedGB: 0)
+        let installed = app.store.installed.contains(e.id)
+        VStack(alignment: .leading, spacing: 8) {
+            Caps(text: "Step 1: download your storyteller")
+            Text(e.name).font(.title3.bold()).foregroundStyle(Theme.fg)
+            Text(e.blurb).font(.subheadline).foregroundStyle(Theme.dim)
+            HStack(spacing: 6) {
+                Image(systemName: r.verdict.symbol)
+                Text(r.verdict.label).bold()
+                Text(String(format: "· %.1f GB", app.store.facts[e.id]?.gb ?? e.approxGB)).foregroundStyle(Theme.dim)
             }
-            .navigationTitle(experience.title.isEmpty ? "New experience" : experience.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) {
-                    if let url = shareURL {
-                        ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
+            .font(.caption)
+            .foregroundStyle(r.verdict == .comfortable ? .green : r.verdict == .tight ? .orange : .red)
+            if case .downloading(let id, let f) = app.store.download, id == e.id {
+                ShimmerBar(fraction: f)
+                HStack {
+                    Text("Downloading… \(Int(f * 100))%. You can keep using the app.").font(.caption).foregroundStyle(Theme.dim)
+                    Spacer()
+                    Button("Cancel") { app.store.cancelDownload() }.font(.caption)
+                }
+            } else if installed {
+                Label("Ready", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+            } else {
+                if case .failed(_, let m) = app.store.download { Text(m).font(.caption).foregroundStyle(Theme.warn) }
+                HStack {
+                    Button {
+                        app.store.startDownload(e)
+                    } label: {
+                        Text("Download").bold().padding(.horizontal, 10)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .foregroundStyle(Theme.onAccent)
+                    .disabled(app.store.isDownloading)
+                    Spacer()
+                    Button("Other models") { app.tab = .models }.font(.footnote)
                 }
+                Text("Downloads are big, so use Wi-Fi. After this, Phonodeck works in Airplane Mode.").font(.caption).foregroundStyle(Theme.dim)
             }
-            .safeAreaInset(edge: .bottom) {
-                Button {
-                    var e = experience
-                    if e.title.isEmpty { e.title = "My experience" }
-                    app.engine.create(e, player: PlayerDetails.saved)
-                    dismiss()
-                } label: {
-                    Text("Build my world").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .padding()
-                .disabled(experience.describe.isEmpty && experience.world.isEmpty && experience.feeling.isEmpty)
-            }
-            .onAppear {
-                more = !experience.world.isEmpty
-                shareURL = app.library.exportFile(experience)
-            }
-            .onChange(of: experience) { _, e in shareURL = app.library.exportFile(e) }
         }
+        .padding(16)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.accent.opacity(0.6)))
+        .task { if app.store.facts[e.id] == nil { await app.store.loadFacts(e) } }
     }
 }

@@ -2,7 +2,8 @@
 
 An audio storytelling app that runs entirely on your iPhone. You download a language model once, and from then on it works in Airplane Mode: nothing you say or write leaves the phone.
 
-- **Phonodeck tab:** say how long you have and the feeling you want, pick a curated experience or build your own, and a Game Master builds a world, tells it aloud, keeps an eye on the clock, lands a real ending, and grades the result with a report card. Play by typing, by tapping the microphone, or hands-free (say **"make it so"** to send).
+- **Phonodeck tab:** the same flow as the web app. A set-up wizard asks how long you have and a little about you, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made: story, map, characters and lore, the Game Master and the Director. Then the Game Master tells it aloud, keeps an eye on the clock, lands a real ending, and grades the result with a report card. Play by typing, or tap **hands-free** and just talk (say **"make it so"** to send).
+- **World button:** the globe in a story opens the Mission (feeling meter, mission track, events), the Story bible, and the World: every character, place, item and faction the story has collected. Edit or add anything; your words always win.
 - **Chat tab:** a plain conversation with the same on-device model.
 - **Models tab:** download the storyteller, narrator voice and listening models from Hugging Face. Every model shows whether it will run comfortably on *this* phone before you download it. Paste a link to add any other MLX model.
 - **Share experiences:** export a set-up as a small `.phonodeck` file and send it to someone; they tap it to import.
@@ -67,9 +68,9 @@ Xcode opens the project and starts fetching packages (you'll see "Resolving Pack
 
 ### 5. First launch
 
-1. The app opens on the **Models** tab. On Wi-Fi, tap **Download** next to **Qwen3 4B** (green "Runs comfortably" means it fits).
-2. Optional: download **Kokoro** for a more natural narrator and **Parakeet Small** for offline listening.
-3. Go to the **Phonodeck** tab, pick an experience, and tap **Build my world**. The first scene takes about a minute while the phone loads the model and designs the world.
+1. A short welcome explains hands-free play, asks your name, and offers the recommended storyteller. On Wi-Fi, tap **Download** (green "Runs comfortably" means it fits).
+2. Optional: in the **Models** tab, download **Kokoro** for a more natural narrator and **Parakeet Small** for offline listening.
+3. On the **Phonodeck** tab, tap **Set up a new experience** and follow the wizard. The first scene takes about a minute while the model loads and designs the world.
 
 ### Updating later
 
@@ -88,6 +89,8 @@ With a free Apple ID, apps you install yourself stop opening after 7 days. Just 
 - **"No such module 'MLX…'"** or package errors: **File > Packages > Reset Package Caches**, then build again.
 - **Metal toolchain missing** (Xcode 26 and later): in Terminal run `xcodebuild -downloadComponent MetalToolchain`, then build again.
 - **"CodeSign failed" with "unable to build chain to self-signed root":** pull the latest code (`git pull`); the app now targets iOS 26, which avoids the extra library whose signing step trips over this.
+- **"errSecInternalComponent" on a work or managed Mac:** the login keychain won't let `codesign` use the key. Put the signing certificate in its own keychain (for example `phonodeck-signing.keychain-db`) and, after a restart, unlock it with `security unlock-keychain ~/Library/Keychains/phonodeck-signing.keychain-db`.
+- **`git pull` says local changes to project.pbxproj would be overwritten:** run `git checkout -- Phonodeck.xcodeproj`, pull, then pick your Team again in Signing & Capabilities.
 - **The app closes while loading a model:** the model is too big for the phone's memory; pick a smaller one in the Models tab.
 - **Silent narrator:** check the volume. Apple voices sound much better after you download a Premium or Enhanced voice in **Settings > Accessibility > Spoken Content > Voices**.
 

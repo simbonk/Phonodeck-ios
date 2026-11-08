@@ -51,7 +51,6 @@ final class AppModel {
         self.engine = StoryEngine(llm: llm, narrator: narrator, dictation: dictation, library: library)
         self.vault = Vault()
         if let space = vault.unlocked { library.open(space) }
-        if !store.hasLanguageModel { tab = .models }
     }
 
     func unlocked() {
@@ -79,14 +78,32 @@ final class AppModel {
     }
 }
 
+/// The web app's look: deep navy, a teal holographic accent, gold for the send phrase.
 enum Theme {
-    static let accent = Color(red: 0.98, green: 0.69, blue: 0.29)
-    static let card = Color.white.opacity(0.06)
+    static let bg = Color(hex: 0x0B0F14)
+    static let panel = Color(hex: 0x121923)
+    static let line = Color(hex: 0x223042)
+    static let fg = Color(hex: 0xD7E2EE)
+    static let dim = Color(hex: 0x8497AB)
+    static let accent = Color(hex: 0x4FD1C5)
+    static let you = Color(hex: 0x1D2B3C)
+    static let warn = Color(hex: 0xF6C667)
+    static let magic = Color(hex: 0xFFD36B)
+    static let rec = Color(hex: 0xC0392B)
+    static let onAccent = Color(hex: 0x001122)
+    static let card = panel
     static let narration = Font.system(.body, design: .serif)
+}
+
+extension Color {
+    init(hex: UInt32) {
+        self.init(red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255, blue: Double(hex & 0xFF) / 255)
+    }
 }
 
 struct RootView: View {
     @Environment(AppModel.self) private var app
+    @AppStorage("onboarded") private var onboarded = false
 
     var body: some View {
         @Bindable var app = app
@@ -110,6 +127,9 @@ struct RootView: View {
                 }
             }
         }
+        .fullScreenCover(isPresented: Binding(get: { !onboarded && !app.vault.isLocked }, set: { if !$0 { onboarded = true } })) {
+            WelcomeView { onboarded = true; app.tab = .phonodeck }
+        }
         .alert("Phonodeck", isPresented: Binding(get: { app.notice != nil }, set: { if !$0 { app.notice = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -129,7 +149,7 @@ struct NeedsModelBanner: View {
                 .foregroundStyle(Theme.accent)
             Text("Download a storyteller first")
                 .font(.title3.bold())
-            Text("Phonodeck runs its language model on your iPhone, so nothing you say leaves the phone and it works in Airplane Mode. Pick one in the Models tab; the recommended one is about 2.3 GB.")
+            Text("Phonodeck runs its language model on your \(DeviceFit.deviceWord), so nothing you say leaves it and it works in Airplane Mode. Pick one in the Models tab; the recommended one is about 2.3 GB.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
             Button("Open Models") { app.tab = .models }

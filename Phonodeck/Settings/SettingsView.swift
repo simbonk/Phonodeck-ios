@@ -32,9 +32,8 @@ struct SettingsView: View {
                     Text("Used for every new experience. They can be made up. Children get gentle, G-rated stories.")
                 }
 
-                Section("Story") {
+                Section {
                     Toggle("Read replies aloud", isOn: $engine.narrate)
-                    Toggle("Hands-free (listen after each reply)", isOn: $engine.handsFree)
                     LabeledContent("Say this to send") {
                         TextField("make it so", text: $sendPhrase)
                             .multilineTextAlignment(.trailing)

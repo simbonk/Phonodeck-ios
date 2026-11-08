@@ -11,14 +11,18 @@ final class StoryEngine {
     private(set) var streaming = ""
     private(set) var stage = ""
     private(set) var busy = false
-    /// True while a new world is being designed (before the first scene exists).
+    /// True while a new world is being designed (until the opening scene's first words).
     private(set) var building = false
+    /// The build screen's progress, following the architect as it writes.
+    private(set) var forge: Forge?
+    /// When the storyteller started on the current reply (for the "thinking" timer).
+    private(set) var thinkingSince: Date?
     var error: String?
 
     /// Read replies aloud as they are written.
     var narrate: Bool { didSet { UserDefaults.standard.set(narrate, forKey: "narrate") } }
-    /// After the narrator finishes, start listening automatically.
-    var handsFree: Bool { didSet { UserDefaults.standard.set(handsFree, forKey: "handsFree") } }
+    /// Hands-free: the microphone opens after every reply, and the send phrase sends.
+    private(set) var handsFree = false
 
     private let llm: LLMService
     private let narrator: Narrator
@@ -37,7 +41,6 @@ final class StoryEngine {
         self.dictation = dictation
         self.library = library
         narrate = UserDefaults.standard.object(forKey: "narrate") as? Bool ?? true
-        handsFree = UserDefaults.standard.bool(forKey: "handsFree")
         narrator.onFinished = { [weak self] in self?.narrationFinished() }
         dictation.onSend = { [weak self] text in self?.send(text) }
     }
@@ -48,6 +51,7 @@ final class StoryEngine {
 
     func open(_ a: Adventure) {
         stopAll()
+        forge = nil
         adventure = a
         undoSnapshot = nil
         refreshVocabulary()
@@ -55,6 +59,7 @@ final class StoryEngine {
 
     func close() {
         stopAll()
+        handsFree = false
         if let a = adventure { library.save(a) }
         adventure = nil
     }
@@ -65,11 +70,30 @@ final class StoryEngine {
         dictation.stop()
         streaming = ""
         busy = false
+        building = false
+        thinkingSince = nil
+        forge?.abort()
+    }
+
+    /// Turns hands-free on or off. On, the story is read aloud and the microphone opens
+    /// whenever the narrator is quiet.
+    func setHandsFree(_ on: Bool) {
+        handsFree = on
+        if on {
+            narrate = true
+            listenIfReady()
+        } else {
+            dictation.stop()
+        }
+    }
+
+    private func listenIfReady() {
+        guard handsFree, let a = adventure, !a.ended, !busy, !dictation.listening, !narrator.speaking, !narrator.preparing else { return }
+        Task { await dictation.start() }
     }
 
     private func narrationFinished() {
-        guard handsFree, let a = adventure, !a.ended, !busy, !dictation.listening else { return }
-        Task { await dictation.start() }
+        listenIfReady()
     }
 
     // MARK: Building a world
@@ -79,51 +103,89 @@ final class StoryEngine {
         busy = true
         building = true
         error = nil
+        let forge = Forge(name: e.title.isEmpty ? "Your world" : e.title, curated: CuratedExperiences.all.contains { $0.id == e.id })
+        self.forge = forge
         currentTask = Task {
-            defer { busy = false; building = false; stage = "" }
-            stage = "Waking the storyteller"
-            do { _ = try await llm.ensureLoaded() } catch { self.error = error.localizedDescription; return }
+            defer { busy = false; stage = "" }
+            do { _ = try await llm.ensureLoaded() } catch {
+                self.error = error.localizedDescription
+                building = false
+                forge.abort()
+                return
+            }
             guard !Task.isCancelled else { return }
 
-            stage = "Designing your world"
             var a = Adventure(setup: e, title: e.title.isEmpty ? "Untitled" : e.title, minutes: max(5, e.minutes))
             a.playerName = player.name
             let request = (e.simulator ? Prompts.architect + "\n" + Prompts.architectSimulator : Prompts.architect)
             let prompt = "PLAYER'S ANSWERS\n" + e.answers(player: player)
                 + "\n\nFEELING TO ACHIEVE: " + (e.feeling.isEmpty ? "surprise me" : e.feeling)
+                + "\nPLAY MODE: " + (e.simulator ? "experience (no plot)" : "story")
                 + "\nSESSION LENGTH: \(a.minutes) minutes (about \(max(3, a.minutes * 60 / 90)) player replies)."
                 + (a.isShort ? "\nThis is a SHORT story: a small cast, 2-3 places, 3 acts, one clear goal." : "")
             var plan: [String: Any]?
-            for temperature in [Float(0.7), 0.5] where plan == nil {
-                guard !Task.isCancelled else { return }
-                if let reply = try? await llm.complete(system: nil, prompt: request + "\n\n" + prompt,
-                                                       options: .init(maxTokens: 1100, temperature: temperature)) {
-                    plan = JSONExtract.object(reply)
+            // Streamed, so the build screen can follow the architect section by section.
+            var raw = ""
+            do {
+                for try await piece in llm.stream(system: nil, history: [ChatTurn(role: .user, text: request + "\n\n" + prompt)],
+                                                  options: .init(maxTokens: 1300, temperature: 0.7)) {
+                    raw += piece
+                    forge.feed(piece)
                 }
+            } catch {}
+            guard !Task.isCancelled else { return }
+            plan = JSONExtract.object(raw)
+            if plan == nil, let retry = try? await llm.complete(system: nil, prompt: request + "\n\n" + prompt,
+                                                                options: .init(maxTokens: 1300, temperature: 0.5)) {
+                plan = JSONExtract.object(retry)
             }
-            apply(plan ?? [:], to: &a, setup: e)
-            building = false
+            guard !Task.isCancelled else { return }
+            apply(plan ?? [:], to: &a, setup: e, player: player)
+            forge.reach(Forge.stages.count - 1)
             adventure = a
             undoSnapshot = nil
             refreshVocabulary()
             library.save(a)
 
-            stage = "Raising the curtain"
             await runTurn(input: Prompts.openingInstruction(simulator: e.simulator, short: a.isShort), hidden: true)
+            building = false
+            forge.close()
         }
     }
 
-    private func apply(_ plan: [String: Any], to a: inout Adventure, setup e: Experience) {
-        func str(_ k: String) -> String { (plan[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+    private func apply(_ plan: [String: Any], to a: inout Adventure, setup e: Experience, player: PlayerDetails) {
+        func str(_ k: String, _ d: [String: Any]? = nil) -> String { ((d ?? plan)[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         if !str("title").isEmpty, e.title.isEmpty { a.title = str("title") }
-        a.bible = str("bible").isEmpty ? e.describe + "\n\n" + e.answers(player: PlayerDetails.saved) : str("bible")
+        a.bible = str("bible").isEmpty ? e.describe + "\n\n" + e.answers(player: player) : str("bible")
         a.location = str("location").isEmpty ? e.place : str("location")
-        if !str("player_name").isEmpty, a.playerName.isEmpty { a.playerName = str("player_name") }
-        let cap = (a.minutes >= 30 ? 3 : 2) + 1
-        a.cast = ((plan["cast"] as? [[String: Any]]) ?? []).prefix(cap).compactMap { c in
-            guard let n = c["name"] as? String, !n.isEmpty else { return nil }
-            return CastMember(name: n, role: c["role"] as? String ?? "", known: c["known"] as? Bool ?? false, desc: c["desc"] as? String ?? "")
+
+        // The player
+        let p = plan["player"] as? [String: Any]
+        let playerName = !player.name.isEmpty ? player.name : !str("name", p).isEmpty ? str("name", p) : str("player_name")
+        a.playerName = playerName
+        a.lore = [LoreEntry(name: playerName.isEmpty ? "You" : playerName, kind: .person,
+                            desc: [str("desc", p), e.who, e.traits].filter { !$0.isEmpty }.joined(separator: ". "), isPlayer: true)]
+
+        // Places, people and things
+        for place in (plan["places"] as? [Any]) ?? [] {
+            let d = place as? [String: Any]
+            let name = (place as? String) ?? str("name", d)
+            if !name.isEmpty { addLore(&a, LoreEntry(name: name, kind: .place, desc: str("desc", d))) }
         }
+        if !a.location.isEmpty, !a.lore.contains(where: { $0.name.caseInsensitiveCompare(a.location) == .orderedSame }) {
+            addLore(&a, LoreEntry(name: a.location, kind: .place, desc: ""))
+        }
+        let cap = (a.minutes >= 30 ? 3 : 2) + 1
+        var people = 0
+        for item in ((plan["lore"] as? [[String: Any]]) ?? []) + ((plan["cast"] as? [[String: Any]]) ?? []) {
+            let name = str("name", item)
+            guard !name.isEmpty, name.caseInsensitiveCompare(playerName) != .orderedSame else { continue }
+            let kind = item["type"] is String ? LoreEntry.kind(from: str("type", item)) : .person
+            if kind == .person { people += 1; if people > cap + 1 { continue } }
+            addLore(&a, LoreEntry(name: name, kind: kind, desc: str("desc", item), role: str("role", item),
+                                  known: kind != .person || (item["known"] as? Bool ?? false), wants: str("wants", item)))
+        }
+
         a.beats = ((plan["beats"] as? [Any]) ?? []).compactMap { b in
             (b as? String) ?? ((b as? [String: Any])?["beat"] as? String)
         }.map { Beat(text: $0) }
@@ -139,8 +201,45 @@ final class StoryEngine {
                 Act(from: m * 0.8, to: m, goal: "Land a satisfying storybook ending that delivers the feeling."),
             ]
         }
+        if e.simulator { a.beats = [] }
         a.secrets = (plan["secrets"] as? [String]) ?? []
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
+    }
+
+    /// Adds an entry, or updates the one with the same name (the player's own edits always win).
+    @discardableResult
+    private func addLore(_ a: inout Adventure, _ e: LoreEntry) -> Int {
+        let key = e.name.lowercased()
+        if let i = a.lore.firstIndex(where: { $0.name.lowercased() == key || (e.kind == .person && !e.role.isEmpty && !$0.known && $0.role.lowercased() == e.role.lowercased()) }) {
+            if !a.lore[i].byPlayer {
+                if !e.desc.isEmpty { a.lore[i].desc = e.desc }
+                if !e.wants.isEmpty { a.lore[i].wants = e.wants }
+                if !e.role.isEmpty, a.lore[i].role.isEmpty { a.lore[i].role = e.role }
+                if a.lore[i].kind == .other { a.lore[i].kind = e.kind }
+            }
+            return i
+        }
+        a.lore.append(e)
+        return a.lore.count - 1
+    }
+
+    // MARK: Editing the world (the World panel)
+
+    func saveLore(_ e: LoreEntry) {
+        guard var a = adventure else { return }
+        var e = e
+        e.byPlayer = true
+        if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
+        adventure = a
+        library.save(a)
+        refreshVocabulary()
+    }
+
+    func deleteLore(_ id: UUID) {
+        guard var a = adventure else { return }
+        a.lore.removeAll { $0.id == id && !$0.isPlayer }
+        adventure = a
+        library.save(a)
     }
 
     // MARK: Playing
@@ -226,12 +325,13 @@ final class StoryEngine {
         adventure = a
         streaming = ""
         stage = "The storyteller is thinking"
+        thinkingSince = Date()
         if narrate { narrator.begin() }
         var reply = ""
         do {
             let short = a.isShort
             for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: short ? 300 : 420, temperature: 0.85)) {
-                if stage != "" { stage = "" }
+                if stage != "" { stage = ""; thinkingSince = nil; forge?.close() }
                 reply += piece
                 streaming = reply
                 if narrate { narrator.feed(piece) }
@@ -241,6 +341,7 @@ final class StoryEngine {
         }
         if narrate { narrator.finish() }
         stage = ""
+        thinkingSince = nil
         reply = Self.tidy(reply)
         guard !reply.isEmpty, !Task.isCancelled else {
             streaming = ""
@@ -260,6 +361,10 @@ final class StoryEngine {
         } else if !hidden {
             let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
             memoryJob = Task { await self.remember(exchange) }
+        }
+        if !a.ended && (!narrate || !narrator.speaking) {
+            busy = false
+            listenIfReady()
         }
     }
 
@@ -319,13 +424,18 @@ final class StoryEngine {
         let age = PlayerDetails.saved.age
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
         s += "\n\n## STORY BIBLE\n" + a.bible
+        let pinned = a.lore.filter(\.byPlayer)
+        if !pinned.isEmpty {
+            s += "\n\n## FACTS THE PLAYER SET (always true; they win over anything said before)\n"
+                + pinned.map { "- \($0.name) (\($0.label.lowercased())): \($0.desc)" }.joined(separator: "\n")
+        }
         if !a.chapters.isEmpty { s += "\n\n## STORY SO FAR\n" + a.chapters.suffix(6).map { "- " + $0 }.joined(separator: "\n") }
         if !a.secrets.isEmpty { s += "\n\n## PRIVATE NOTES (never reveal outright; seed clues)\n" + a.secrets.map { "- " + $0 }.joined(separator: "\n") }
         s += "\n\n## HOW EACH TURN ARRIVES\nThe latest message starts with a private briefing for this reply only, then the player's action. Follow the briefing, never mention it, and reply to the action."
         return s
     }
 
-    private func hiddenPeople(_ a: Adventure) -> [CastMember] {
+    private func hiddenPeople(_ a: Adventure) -> [LoreEntry] {
         let told = a.transcript.filter { $0.role == .gm }.map(\.text).joined(separator: " ")
         return a.cast.filter { c in
             guard !c.known else { return false }
@@ -345,8 +455,11 @@ final class StoryEngine {
             lines.append("Story steps: " + a.beats.map { ($0.done ? "[done] " : $0 == next ? "[now] " : "[later] ") + $0.text }.joined(separator: "; "))
         }
         if !a.events.isEmpty { lines.append("Recent events: " + a.events.suffix(6).joined(separator: "; ")) }
-        let people = a.cast.map { "\($0.name) (\($0.role)): \($0.desc)" }
+        let people = a.cast.map { "\($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": \($0.desc)" + ($0.wants.isEmpty ? "" : " Wants: \($0.wants)") }
         if !people.isEmpty { lines.append("People: " + people.joined(separator: " | ")) }
+        let recent = (a.transcript.suffix(2).map(\.text) + [a.location]).joined(separator: " ").lowercased()
+        let things = a.lore.filter { $0.kind != .person && !$0.desc.isEmpty && recent.contains($0.name.lowercased()) }.prefix(5)
+        if !things.isEmpty { lines.append("Places and things here: " + things.map { "\($0.name): \($0.desc)" }.joined(separator: " | ")) }
         let hidden = hiddenPeople(a)
         if !hidden.isEmpty {
             lines.append("Not yet introduced by name (call them by role until the story reveals it): " + hidden.map { "\"\($0.role)\" is \($0.name)" }.joined(separator: "; "))
@@ -433,10 +546,11 @@ final class StoryEngine {
 
     private func remember(_ exchange: String) async {
         guard let start = adventure else { return }
-        let known = start.cast.map { "\($0.name) (\($0.role))" }.joined(separator: ", ")
+        let known = start.lore.filter { !$0.isPlayer }.map { "\($0.name) (\($0.kind.rawValue))" }.joined(separator: ", ")
         let steps = start.beats.filter { !$0.done }.map(\.text).joined(separator: "; ")
         let prompt = Prompts.memory + "\n\nFEELING TO ACHIEVE: " + start.setup.feeling
-            + "\nKNOWN PEOPLE: " + (known.isEmpty ? "(none)" : known)
+            + "\nTHE PLAYER: " + (start.playerName.isEmpty ? "you" : start.playerName)
+            + "\nALREADY KNOWN: " + (known.isEmpty ? "(none)" : known)
             + "\nOPEN STORY STEPS: " + (steps.isEmpty ? "(none)" : steps)
             + "\n\nLATEST EXCHANGE\n" + exchange
         guard let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 350, temperature: 0.3)),
@@ -447,14 +561,20 @@ final class StoryEngine {
         a.events = Array(a.events.suffix(30))
         if let loc = m["location"] as? String, !loc.isEmpty { a.location = loc }
         if let gp = m["goal_progress"] as? String, !gp.isEmpty { a.goalProgress = gp }
-        for p in (m["people"] as? [[String: Any]]) ?? [] {
-            guard let name = (p["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { continue }
-            let role = p["role"] as? String ?? "", desc = p["desc"] as? String ?? ""
-            if let i = a.cast.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame || (!role.isEmpty && $0.role.caseInsensitiveCompare(role) == .orderedSame) }) {
-                if !desc.isEmpty { a.cast[i].desc = desc }
-            } else if a.cast.count < 12, name.caseInsensitiveCompare(a.playerName) != .orderedSame {
-                a.cast.append(CastMember(name: name, role: role, known: exchange.contains(name), desc: desc))
-            }
+        let turn = a.playerTurns
+        for p in ((m["lore"] as? [[String: Any]]) ?? []) + ((m["people"] as? [[String: Any]]) ?? []) {
+            guard let name = (p["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty,
+                  name.caseInsensitiveCompare(a.playerName) != .orderedSame, a.lore.count < 40 else { continue }
+            let kind = (p["type"] as? String).map(LoreEntry.kind(from:)) ?? .person
+            let i = addLore(&a, LoreEntry(name: name, kind: kind, desc: p["desc"] as? String ?? "", role: p["role"] as? String ?? "",
+                                          known: kind != .person || exchange.contains(name)))
+            a.lore[i].updatedTurn = turn
+        }
+        // A person's name counts as revealed once the story has said it.
+        let told = exchange.components(separatedBy: "THE STORY:").last ?? ""
+        for i in a.lore.indices where a.lore[i].kind == .person && !a.lore[i].known {
+            let first = a.lore[i].name.split(separator: " ").first.map(String.init) ?? a.lore[i].name
+            if told.contains(a.lore[i].name) || (first.count > 2 && told.contains(first)) { a.lore[i].known = true }
         }
         for done in (m["beats_done"] as? [String]) ?? [] {
             if let i = a.beats.firstIndex(where: { !$0.done && ($0.text.localizedCaseInsensitiveContains(done) || done.localizedCaseInsensitiveContains($0.text)) }) {
@@ -489,6 +609,12 @@ final class StoryEngine {
             a.left = now.left
             a.ended = now.ended
             a.lastDirector = now.lastDirector
+            a.bible = now.bible
+            // Entries the player edited or added in the World panel meanwhile win.
+            for e in now.lore where e.byPlayer {
+                if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
+            }
+            a.lore.removeAll { e in !e.isPlayer && !now.lore.contains { $0.id == e.id } && start.lore.contains { $0.id == e.id } }
         }
         adventure = a
         library.save(a)

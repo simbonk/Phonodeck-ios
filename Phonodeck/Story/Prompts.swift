@@ -104,21 +104,24 @@ enum Prompts {
 
     // MARK: Building the world
 
+    /// The architect's reply is streamed, and the build screen lights up each stage as the model
+    /// starts writing that part, so the keys must come in this order.
     static let architect = """
-    You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text:
+    You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text, with the keys in exactly this order:
     {"title":"a short title",
-     "bible":"120-250 words, written to the player as 'you': premise, tone, who the player is, the setting, the cast, the goal, what stands in the way",
+     "bible":"120-220 words, written to the player as 'you': premise, tone, who the player is, the setting, the goal, what stands in the way",
      "location":"the opening place",
-     "player_name":"the player character's name",
-     "cast":[{"name":"","role":"how the player first knows them, e.g. the old fisherman","known":false,"desc":"two telling details and what they want"}],
+     "places":[{"name":"","desc":"one line"}],
      "beats":["3-5 short story steps in order"],
-     "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}],
-     "secrets":["2-4 hidden truths the player has not discovered"]}
-    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, cast and roadmap to deliver it. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Keep the cast small. "known" is true only for people the player already knows at the start. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion).
+     "player":{"name":"the player character's name","desc":"one line: who they are here"},
+     "lore":[{"name":"","type":"person|item|faction","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"two telling details","wants":"for a person: what they want"}],
+     "secrets":["2-4 hidden truths the player has not discovered"],
+     "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}]}
+    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly.
     """
 
     static let architectSimulator = """
-    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist. "beats" is [] and "roadmap" is []. "secrets" are small delights to discover. The cast are people with their own lives who make the place feel real. Build everything around the player's goal and the feeling.
+    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist. "beats" is [] and "roadmap" is []. "secrets" are small delights to discover. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
 
     // MARK: Memory
@@ -127,11 +130,11 @@ enum Prompts {
     You keep the memory of an interactive story. From the latest exchange, output ONLY one JSON object:
     {"events":["0-2 notable events, past tense"],
      "location":"where the player is now",
-     "people":[{"name":"real name","role":"how the story refers to them","desc":"one or two sentences, updated"}],
+     "lore":[{"name":"real name","type":"person|place|item|faction","role":"for a person: how the story refers to them","desc":"one or two sentences, updated"}],
      "beats_done":["exact text of any story steps the player completed"],
      "goal_progress":"one short sentence",
      "mood":{"feeling":0,"enjoying":"","leaving_plot":false}}
-    people: only new characters or ones whose situation changed. mood.feeling is 0-10: how strongly the player seems to feel the FEELING TO ACHIEVE. enjoying: a character, place or activity they clearly want more of, or "". leaving_plot: true if they are deliberately moving away from the plot. No commentary.
+    lore: only people, places, items or groups that are new or whose situation changed in this exchange; never the player. mood.feeling is 0-10: how strongly the player seems to feel the FEELING TO ACHIEVE. enjoying: a character, place or activity they clearly want more of, or "". leaving_plot: true if they are deliberately moving away from the plot. No commentary.
     """
 
     static let chapter = "Summarise these story turns in 2 or 3 plain past-tense sentences, second person (\"you\"), keeping names, promises, discoveries and anything unresolved. Output only the summary."
@@ -174,6 +177,27 @@ enum Prompts {
         "End with a quiet observation that invites the player to act.",
         "End on an interruption: someone arrives or a message lands.",
     ]
+
+    // MARK: The set-up wizard
+
+    /// Asks for more option chips that fit the earlier answers.
+    static func suggestions(question: String, hint: String, existing: [String], earlier: String, typed: String, id: String, age: Int, short: Bool) -> String {
+        var s = "Suggest 6 NEW options for a question in the set-up of an interactive audio story. Output ONLY JSON: {\"options\":[\"...\"]}.\n"
+        if id == "feeling" {
+            s += "The options are FEELINGS someone might want to come away with from a really good story, each a specific, evocative emotional experience of 3 to 9 words (like \"The thrill of getting away with something\", \"Cosy safety while a storm rages outside\"). Make them varied: warm, thrilling, bittersweet, triumphant, peaceful."
+            if !typed.isEmpty { s += " The player typed \"\(typed.prefix(200))\": offer richer, more specific variations of that feeling." }
+        } else {
+            s += "Match the style of the existing options: short, broad categories of 1 to 5 words, at the same level of detail. Do not invent character names or plot details."
+            if id == "world" { s += " The options are specific eras and places, each with a time and a place (like \"Venice during Carnival, 1750\"). No trademarked film, TV or game worlds." }
+            if id == "goal" { s += " The options are things to DO there (2 to 6 words)." }
+            if id == "play" { s += " The options are gameplay styles (like \"Heist planning\", \"Social intrigue\", \"Chase scenes\")." }
+        }
+        if age > 0 { s += age < 13 ? " The player is \(age), a child: G-rated, playful, no romance, nothing frightening." : age < 18 ? " The player is \(age), a teenager: PG, no romance." : " The player is \(age): suit that age." }
+        if short { s += " It is a SHORT story: keep options simple and grounded, on Earth, today or in a familiar period of history." }
+        s += "\nThey should fit the earlier answers in spirit and must not repeat the existing options.\n\nEARLIER ANSWERS:\n" + (earlier.isEmpty ? "(none yet)" : earlier)
+        s += "\n\nQUESTION: \(question) (\(hint))\nEXISTING OPTIONS: " + existing.joined(separator: "; ")
+        return s
+    }
 
     static let feelingIdeas = [
         "The thrill of getting away with something", "Coming home after years away", "Being truly seen by someone",
