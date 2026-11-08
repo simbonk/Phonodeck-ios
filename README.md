@@ -30,7 +30,7 @@ iOS lets each app use only part of the phone's memory. The app asks iOS how much
 
 ## Put it on your iPhone: step by step
 
-You need a Mac, your iPhone and a USB cable. You've never built an app before? That's fine; these steps are all of it. The first build takes 10 to 20 minutes because Xcode downloads and compiles the AI libraries.
+You need a Mac, an iPhone or iPad on iOS 26 or later, and a USB cable. You've never built an app before? That's fine; these steps are all of it. The first build takes 10 to 20 minutes because Xcode downloads and compiles the AI libraries.
 
 ### 1. Install Xcode (once)
 
@@ -87,6 +87,7 @@ With a free Apple ID, apps you install yourself stop opening after 7 days. Just 
 
 - **"No such module 'MLX…'"** or package errors: **File > Packages > Reset Package Caches**, then build again.
 - **Metal toolchain missing** (Xcode 26 and later): in Terminal run `xcodebuild -downloadComponent MetalToolchain`, then build again.
+- **"CodeSign failed" with "unable to build chain to self-signed root":** pull the latest code (`git pull`); the app now targets iOS 26, which avoids the extra library whose signing step trips over this.
 - **The app closes while loading a model:** the model is too big for the phone's memory; pick a smaller one in the Models tab.
 - **Silent narrator:** check the volume. Apple voices sound much better after you download a Premium or Enhanced voice in **Settings > Accessibility > Spoken Content > Voices**.
 
