@@ -339,7 +339,8 @@ final class StoryEngine {
         let system = systemPrompt(a)
         let maxOut = a.isShort ? 300 : 420
         let playerNarrates = !hidden && Self.narrates(input)
-        let notes = directorNotes(a, playerNarrates: playerNarrates)
+        let playerAsks = !hidden && !playerNarrates && Self.asks(input)
+        let notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks)
         func briefing(_ memories: [String]) -> String {
             "[GAME MASTER BRIEFING: private, for this reply only]\n" + briefingText(a, memories: memories, director: notes)
                 + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
@@ -444,6 +445,16 @@ final class StoryEngine {
         return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// The player asks something ("I ask how I got here", "what happened to my ship?").
+    /// Small models tend to answer a question with atmosphere or a riddle, so a question gets a
+    /// direct instruction to answer it, placed right before the player's words where it is hardest to miss.
+    static func asks(_ input: String) -> Bool {
+        let t = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.contains("?") { return true }
+        let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b"#
+        return t.range(of: pattern, options: .regularExpression) != nil
+    }
+
     /// The player writes prose rather than commands.
     static func narrates(_ input: String) -> Bool {
         input.split(separator: " ").count > 25 && input.contains(".")
@@ -498,9 +509,9 @@ final class StoryEngine {
         }
         if !a.chapters.isEmpty { s += "\n\n## STORY SO FAR\n" + a.chapters.suffix(6).map { "- " + $0 }.joined(separator: "\n") }
         if let notes = a.notes, !notes.text.isEmpty {
-            s += "\n\n## PRIVATE GM NOTES (never reveal outright; seed clues)\n" + notes.text
+            s += "\n\n## PRIVATE GM NOTES (do not blurt these out; seed clues. If the player asks directly, characters still answer what they honestly know)\n" + notes.text
         } else if !a.secrets.isEmpty {
-            s += "\n\n## PRIVATE NOTES (never reveal outright; seed clues)\n" + a.secrets.map { "- " + $0 }.joined(separator: "\n")
+            s += "\n\n## PRIVATE NOTES (do not blurt these out; seed clues. If the player asks directly, characters still answer what they honestly know)\n" + a.secrets.map { "- " + $0 }.joined(separator: "\n")
         }
         s += "\n\n## HOW EACH TURN ARRIVES\nThe latest message starts with a private briefing for this reply only (mission map, relevant memories, director notes), then the player's action. Follow the briefing, never mention it, and reply to the action."
         return s
@@ -547,7 +558,7 @@ final class StoryEngine {
         return lines.joined(separator: "\n")
     }
 
-    private func directorNotes(_ a: Adventure, playerNarrates: Bool) -> [String] {
+    private func directorNotes(_ a: Adventure, playerNarrates: Bool, playerAsks: Bool) -> [String] {
         let turn = a.playerTurns + 1
         let feeling = a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling
         let final = a.left == 0
@@ -555,7 +566,11 @@ final class StoryEngine {
         let happy = (a.mood.feeling ?? 0) >= 7 || !a.mood.enjoying.isEmpty
         let roaming = !a.setup.simulator && a.mood.leavingPlot
         let calm = a.setup.simulator || happy || roaming
-        var notes = ["FEELING TO ACHIEVE: \(feeling). Make this reply deliver it."
+        var notes: [String] = []
+        if playerAsks {
+            notes.append("THE PLAYER ASKED A QUESTION. Answer it first, in the opening lines, plainly and concretely: a character who would know tells them, or they see it for themselves. No riddles or vague hints.")
+        }
+        notes += ["FEELING TO ACHIEVE: \(feeling). Make this reply deliver it."
             + ((a.mood.feeling ?? 10) < 5 ? " Last reading was \(a.mood.feeling ?? 0)/10, so lean into it harder." : "")]
         if happy { notes.append("The player is enjoying this" + (a.mood.enjoying.isEmpty ? "" : " (\(a.mood.enjoying))") + ". No new complications or interruptions; deepen what is working.") }
         if roaming { notes.append("The player is leaving the plot behind. Let it go; make wherever they are worth being in.") }
@@ -573,7 +588,8 @@ final class StoryEngine {
             notes.append("THE PLAYER IS NARRATING: their passage is canon. Do not retell it; continue where it ends, in their voice. Keep it short.")
         } else if !final {
             var pool = Prompts.director.keys.filter { k in
-                !((calm || wrap) && Prompts.disruptive.contains(k)) && turn - (a.lastDirector[k] ?? -99) >= 3
+                !((calm || wrap || playerAsks) && Prompts.disruptive.contains(k)) && !(playerAsks && k == "seed")
+                    && turn - (a.lastDirector[k] ?? -99) >= 3
             }
             pool.shuffle()
             if let k = pool.first {
@@ -606,6 +622,8 @@ final class StoryEngine {
         }
         let repeats = repeatedPhrases(a)
         if !repeats.isEmpty { notes.append("Avoid repeating these phrases from recent replies: " + repeats.joined(separator: ", ")) }
+        // Last, right before the player's words: small models follow what they read most recently.
+        if playerAsks { notes.append("Now reply to the player below, starting with a clear answer to their question.") }
         return notes
     }
 
