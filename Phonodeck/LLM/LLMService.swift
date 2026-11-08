@@ -41,6 +41,8 @@ final class LLMService {
     private(set) var loadedID: String?
     private(set) var busy = false
     var lastTokensPerSecond: Double = 0
+    /// Characters of hidden reasoning written so far in the current call (for "thinking" progress).
+    private(set) var thoughtChars = 0
 
     private let store: ModelStore
     private var container: ModelContainer?
@@ -141,6 +143,10 @@ final class LLMService {
         var temperature: Float = 0.8
         var topP: Float = 0.95
         var repetitionPenalty: Float? = 1.08
+        /// Let the model reason privately before it answers (Qwen's thinking mode). The reasoning
+        /// counts toward maxTokens and is removed from the output. Models without a thinking mode
+        /// give back nothing here, so callers fall back to a call without it.
+        var thinking = false
     }
 
     /// Streams the reply a few characters at a time. Hidden <think> reasoning is removed.
@@ -158,16 +164,20 @@ final class LLMService {
                         return
                     }
                     let container = try await self.ensureLoaded()
-                    let prepared = try await Self.prepareWithinBudget(container, system: system, history: history, maxTokens: options.maxTokens)
+                    let prepared = try await Self.prepareWithinBudget(container, system: system, history: history, maxTokens: options.maxTokens,
+                                                                      thinking: options.thinking)
                     let params = GenerateParameters(
                         maxTokens: options.maxTokens, temperature: options.temperature, topP: options.topP,
                         repetitionPenalty: options.repetitionPenalty, repetitionContextSize: 64)
                     let events = try await container.generate(input: prepared, parameters: params)
-                    var filter = ThinkFilter()
+                    // In thinking mode the template may already have opened the <think> block, so start inside it.
+                    var filter = ThinkFilter(startInside: options.thinking)
+                    self.thoughtChars = 0
                     for await event in events {
                         if Task.isCancelled { break }
                         switch event {
                         case .chunk(let text):
+                            if filter.inside { self.thoughtChars += text.count }
                             let out = filter.feed(text)
                             if !out.isEmpty { continuation.yield(out) }
                         case .info(let info):
@@ -250,7 +260,8 @@ final class LLMService {
     /// bible refresh) from ever raising peak memory above a normal turn.
     static let contextBudget = DeviceFit.contextTokens
 
-    private static func prepareWithinBudget(_ container: ModelContainer, system: String?, history: [ChatTurn], maxTokens: Int) async throws -> LMInput {
+    private static func prepareWithinBudget(_ container: ModelContainer, system: String?, history: [ChatTurn], maxTokens: Int,
+                                            thinking: Bool = false) async throws -> LMInput {
         let limit = max(512, contextBudget - maxTokens - 32)
         var system = system
         var turns = history
@@ -258,7 +269,7 @@ final class LLMService {
             var chat: [Chat.Message] = []
             if let system, !system.isEmpty { chat.append(.system(system)) }
             for t in turns { chat.append(t.role == .user ? .user(t.text) : .assistant(t.text)) }
-            return UserInput(chat: chat, additionalContext: ["enable_thinking": false])
+            return UserInput(chat: chat, additionalContext: ["enable_thinking": thinking])
         }
         var prepared = try await container.prepare(input: input())
         var squeezes = 0
@@ -306,11 +317,18 @@ struct ThinkFilter {
     private var buffer = ""
     private var thinking = false
 
+    init(startInside: Bool = false) { thinking = startInside }
+
+    /// True while the stream is inside a reasoning block.
+    var inside: Bool { thinking }
+
     mutating func feed(_ text: String) -> String {
         buffer += text
         var out = ""
         while true {
             if thinking {
+                // A model that opens the block itself, after the template already did.
+                if let open = buffer.range(of: "<think>") { buffer.removeSubrange(open) }
                 guard let end = buffer.range(of: "</think>") else {
                     buffer = String(buffer.suffix(8))
                     return out

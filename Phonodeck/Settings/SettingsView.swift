@@ -32,6 +32,8 @@ struct SettingsView: View {
                 Section {
                     Toggle("Read replies aloud", isOn: $engine.narrate)
                     Toggle("Game Master plans each reply", isOn: $engine.gmPlans)
+                    Toggle("Game Master reasons first (slower)", isOn: $engine.deepThinking)
+                        .disabled(!engine.gmPlans)
                     LabeledContent("Say this to send") {
                         TextField("make it so", text: $sendPhrase)
                             .multilineTextAlignment(.trailing)
@@ -40,7 +42,7 @@ struct SettingsView: View {
                     Toggle("Computer sounds", isOn: $computerSounds)
                         .onChange(of: computerSounds) { _, on in if !on { ComputerSounds.shared.stopHum() } }
                 } footer: {
-                    Text("Game Master plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and the recalled memories and decides what the reply must do. It adds a few seconds to each turn. Computer sounds: a chirp when the microphone opens, an acknowledging chirp when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
+                    Text("Game Master plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and the recalled memories and decides what the reply must do. While a reply is read aloud it also reviews it, fixes slips and proposes the next move. Reasons first: the plan and the review use the model's thinking mode (Qwen), which can take up to about a minute per turn. Computer sounds: a chirp when the microphone opens, an acknowledging chirp when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
                 }
 
                 Section {

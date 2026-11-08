@@ -278,6 +278,13 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// says their events haven't happened.
     var sequelOf: UUID?
     var link = ""
+    /// The Game Master's look-ahead, written while the last reply is read aloud: facts that must
+    /// stay true (pronouns, what the player has, who is present), slips in the last reply to
+    /// quietly correct from now on, and the proposed next move, which the plan realigns to
+    /// whatever the player actually says.
+    var facts: [String] = []
+    var fixes: [String] = []
+    var nextMove = ""
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -291,7 +298,7 @@ struct Adventure: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
-             notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link
+             notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -319,6 +326,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         notesTurn = v(.notesTurn, 0); notesStale = v(.notesStale, false); bibleTurn = v(.bibleTurn, 0)
         places = v(.places, []); links = v(.links, [])
         sequelOf = try? c.decodeIfPresent(UUID.self, forKey: .sequelOf); link = v(.link, "")
+        facts = v(.facts, []); fixes = v(.fixes, []); nextMove = v(.nextMove, "")
     }
 
     func encode(to encoder: Encoder) throws {
@@ -335,6 +343,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encodeIfPresent(notes, forKey: .notes); try c.encode(notesTurn, forKey: .notesTurn)
         try c.encode(notesStale, forKey: .notesStale); try c.encode(bibleTurn, forKey: .bibleTurn)
         try c.encodeIfPresent(sequelOf, forKey: .sequelOf); try c.encode(link, forKey: .link)
+        try c.encode(facts, forKey: .facts); try c.encode(fixes, forKey: .fixes); try c.encode(nextMove, forKey: .nextMove)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -344,6 +353,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         chapters = o.chapters; summarisedTurns = o.summarisedTurns; goalProgress = o.goalProgress; mood = o.mood
         notes = o.notes; notesTurn = o.notesTurn; notesStale = o.notesStale; bibleTurn = o.bibleTurn
         places = o.places; links = o.links
+        facts = o.facts; fixes = o.fixes; nextMove = o.nextMove
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.

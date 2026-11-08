@@ -243,7 +243,8 @@ struct StoryView: View {
             HoloCore(size: 64)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 // Names the step underway (the Game Master planning, then the storyteller writing).
-                Text((engine.stage.isEmpty ? "The Phonodeck is thinking" : engine.stage) + "… \(Int(ctx.date.timeIntervalSince(since)))s")
+                Text((engine.stage.isEmpty ? "The Phonodeck is thinking" : engine.stage) + "… \(Int(ctx.date.timeIntervalSince(since)))s"
+                     + (engine.thoughtWords > 20 && engine.stage.hasPrefix("The Game Master") ? " · \(engine.thoughtWords) words of reasoning" : ""))
                     .font(.footnote.monospacedDigit()).foregroundStyle(Theme.dim)
             }
         }

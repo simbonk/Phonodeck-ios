@@ -29,6 +29,11 @@ final class StoryEngine {
     var narrate: Bool { didSet { UserDefaults.standard.set(narrate, forKey: "narrate") } }
     /// The Game Master writes a short private plan before each reply (a few seconds more per turn).
     var gmPlans: Bool { didSet { UserDefaults.standard.set(gmPlans, forKey: "gmPlans") } }
+    /// The plan and the look-ahead use the model's reasoning mode (Qwen's thinking): much slower,
+    /// up to about a minute per turn, but the Game Master really works the problem first.
+    var deepThinking: Bool { didSet { UserDefaults.standard.set(deepThinking, forKey: "deepThinking") } }
+    /// Words of hidden reasoning the model has written in the current step.
+    var thoughtWords: Int { llm.thoughtChars / 6 }
     /// Hands-free: the microphone opens after every reply, and the send phrase sends.
     private(set) var handsFree = false
 
@@ -54,6 +59,7 @@ final class StoryEngine {
         self.library = library
         narrate = UserDefaults.standard.object(forKey: "narrate") as? Bool ?? true
         gmPlans = UserDefaults.standard.object(forKey: "gmPlans") as? Bool ?? true
+        deepThinking = UserDefaults.standard.object(forKey: "deepThinking") as? Bool ?? true
         narrator.onFinished = { [weak self] in self?.narrationFinished() }
         dictation.onSend = { [weak self] text in self?.send(text) }
     }
@@ -272,6 +278,8 @@ final class StoryEngine {
             guard !name.isEmpty, name.caseInsensitiveCompare(playerName) != .orderedSame else { continue }
             let kind = item["type"] is String ? LoreEntry.kind(from: str("type", item)) : .person
             if kind == .person { people += 1; if people > cap + 1 { continue } }
+            let pronouns = str("pronouns", item)
+            if kind == .person, !pronouns.isEmpty { a.facts.append("\(name) uses \(pronouns).") }
             addLore(&a, LoreEntry(name: name, kind: kind, desc: str("desc", item), role: str("role", item),
                                   known: kind != .person || (item["known"] as? Bool ?? false), wants: str("wants", item)))
         }
@@ -291,7 +299,20 @@ final class StoryEngine {
                 Act(from: m * 0.8, to: m, goal: "Land a satisfying storybook ending that delivers the feeling."),
             ]
         }
-        if e.simulator { a.beats = [] }
+        if e.simulator {
+            a.beats = []
+            if a.roadmap.isEmpty {
+                let m = Double(a.minutes)
+                let goal = e.goal.isEmpty ? "what the player came for" : e.goal
+                a.roadmap = [
+                    Act(from: 0, to: m * 0.3, goal: "Settle in: a first meeting and a small shared moment, toward " + goal + "."),
+                    Act(from: m * 0.3, to: m * 0.75, goal: "Deepen it: do something together, trade stories, discover a small delight."),
+                    Act(from: m * 0.75, to: m, goal: "A warm closing moment that seals " + goal + " and lands the feeling."),
+                ]
+            }
+        }
+        a.facts += ((plan["facts"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(10)
+        a.facts = Array(a.facts.prefix(14))
         a.secrets = (plan["secrets"] as? [String]) ?? []
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
@@ -398,16 +419,19 @@ final class StoryEngine {
         } else {
             housekeepingJob?.cancel()
         }
-        // Let the memory pass finish first, but never hold up the story for long.
+        // Let the memory pass and the look-ahead finish first. With planning on they are part of the
+        // Game Master's thinking, so the turn waits for them (up to two minutes); otherwise briefly.
         if let job = memoryJob {
-            stage = "Remembering"
+            stage = gmPlans ? "The Game Master is finishing its review" : "Remembering"
             let waiter = Task { await job.value }
+            let limit: Double = gmPlans ? 120 : 4
             _ = await withTaskGroup(of: Void.self) { group in
                 group.addTask { await waiter.value }
-                group.addTask { try? await Task.sleep(for: .seconds(4)) }
+                group.addTask { try? await Task.sleep(for: .seconds(limit)) }
                 await group.next()
                 group.cancelAll()
             }
+            guard !Task.isCancelled else { return }
             a = adventure ?? a
         }
         let snapshot = a
@@ -431,7 +455,7 @@ final class StoryEngine {
         // Fit everything into the context the fit check planned for: the system prompt and the
         // briefing first, then the last few turns, then recalled memories, then older turns.
         stage = "Recalling memories"
-        let budget = LLMService.contextBudget - maxOut - 200 - (planning ? Self.planTokens + 40 : 0)
+        let budget = LLMService.contextBudget - maxOut - 200 - (planning ? 380 : 0)   // room for the plan in the briefing
         let fixed = Self.tokens(system) + Self.tokens(briefing([]))
         let recent = Array(a.transcript.enumerated()).dropFirst(a.summarisedTurns).suffix(10)
         let recallReserve = Self.recallChars * 2 / 7
@@ -506,13 +530,25 @@ final class StoryEngine {
             await writeReportCard()
         } else if !hidden {
             let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
-            let memory = Task { await self.remember(exchange) }
+            // Background thinking while the reply is read aloud: wait until the voice has made its speech
+            // (it needs the GPU), then the memory pass, then the Game Master's look-ahead.
+            let memory = Task {
+                await self.waitForVoice()
+                await self.remember(exchange)
+                if self.gmPlans { await self.review() }
+            }
             memoryJob = memory
             // Housekeeping follows the memory pass, never alongside it (one model call at a time).
             housekeepingJob?.cancel()
             housekeepingJob = Task {
                 await memory.value
                 await self.housekeep()
+            }
+        } else if gmPlans {
+            // After the opening scene: the first look-ahead (facts and the first move) while it is read.
+            memoryJob = Task {
+                await self.waitForVoice()
+                await self.review()
             }
         }
         if !a.ended && (!narrate || !narrator.speaking) {
@@ -521,27 +557,110 @@ final class StoryEngine {
         }
     }
 
-    /// The longest plan the Game Master may write before a reply.
-    static let planTokens = 150
+    /// The longest plan the Game Master may write before a reply (without reasoning).
+    static let planTokens = 260
+    /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
+    static let deepPlanTokens = 1100
 
-    /// The Game Master's private plan for the next reply: one short model call over a compact view
-    /// of the story (its own briefing, the bible, the last exchange and what the player just did).
-    /// The prompt is kept far below the context the fit check planned for, so it never raises
-    /// peak memory, and the output is capped so it adds only a few seconds.
+    /// Waits while a neural voice is still making speech, so background thinking never makes the
+    /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
+    private func waitForVoice() async {
+        var waited = 0.0
+        while narrator.synthesizing, waited < 90, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(500))
+            waited += 0.5
+        }
+    }
+
+    /// Runs a background or planning call, with the model's reasoning when deep thinking is on.
+    /// A model without a thinking mode (or one that thinks past its room) gives back nothing, and
+    /// then the call is made again without it.
+    private func think(_ prompt: String, quickTokens: Int, deepTokens: Int, temperature: Float) async -> String {
+        if deepThinking {
+            let out = (try? await llm.complete(system: nil, prompt: prompt,
+                                               options: .init(maxTokens: deepTokens, temperature: 0.6, repetitionPenalty: nil, thinking: true))) ?? ""
+            if !out.isEmpty || Task.isCancelled { return out }
+        }
+        return (try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: quickTokens, temperature: temperature))) ?? ""
+    }
+
+    /// The set-up's hard limits, for the Game Master and its reviews.
+    private func limitsText(_ a: Adventure) -> String {
+        var l: [String] = []
+        if !a.setup.who.isEmpty { l.append("The player character: " + a.setup.who + (a.setup.traits.isEmpty ? "" : ". " + a.setup.traits)) }
+        if !a.setup.avoid.isEmpty { l.append("The player asked: " + a.setup.avoid) }
+        if a.setup.simulator { l.append("This is an experience with no threat, danger, villain or mystery.") }
+        return l.map { "- " + $0 }.joined(separator: "\n")
+    }
+
+    private func factsText(_ a: Adventure) -> String {
+        var s = ""
+        if !a.facts.isEmpty { s += "FACTS (always true):\n" + a.facts.map { "- " + $0 }.joined(separator: "\n") }
+        if !a.fixes.isEmpty { s += (s.isEmpty ? "" : "\n") + "SLIPS TO CORRECT FROM NOW ON (the true version):\n" + a.fixes.map { "- " + $0 }.joined(separator: "\n") }
+        return s
+    }
+
+    /// The Game Master's private plan for the next reply: it reviews a compact view of the story
+    /// (the bible, the facts, its own look-ahead, the briefing, the last exchange and what the
+    /// player just did) and decides what the reply must do. With deep thinking on, the model
+    /// reasons first. The prompt plus the room to think stay inside the context the fit check
+    /// planned for, so it never raises peak memory.
     private func makePlan(snapshot a: Adventure, input: String, memories: [String], notes: [String]) async -> String {
-        var prompt = Prompts.gmPlan + "\n\nSTORY BIBLE:\n" + clip(a.bible, 1400)
-        if let n = a.notes, !n.text.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + clip(n.text, 900) }
-        else if !a.secrets.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + a.secrets.prefix(4).map { "- " + clip($0, 200) }.joined(separator: "\n") }
+        var prompt = Prompts.gmPlan + "\n\nSTORY BIBLE:\n" + clip(a.bible, 1200)
+        let limits = limitsText(a)
+        if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS (never break):\n" + limits }
+        let facts = factsText(a)
+        if !facts.isEmpty { prompt += "\n\n" + clip(facts, 1200) }
+        if !a.nextMove.isEmpty { prompt += "\n\nYOUR LOOK-AHEAD (written before the player spoke):\n" + clip(a.nextMove, 500) }
+        if let n = a.notes, !n.text.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + clip(n.text, 500) }
+        else if !a.secrets.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + a.secrets.prefix(4).map { "- " + clip($0, 160) }.joined(separator: "\n") }
         if let m = a.mood.feeling { prompt += "\n\nFEELING READING: \(m)/10" + (a.mood.enjoying.isEmpty ? "" : ", enjoying " + a.mood.enjoying) + (a.mood.leavingPlot ? ", leaving the plot" : "") }
-        prompt += "\n\nSTORY STATE:\n" + clip(briefingText(a, memories: memories, director: notes), 4200)
+        prompt += "\n\nSTORY STATE:\n" + clip(briefingText(a, memories: memories, director: notes, withFacts: false), deepThinking ? 2200 : 3600)
         let last = a.transcript.dropLast().suffix(2)   // the player's new words are the last turn
-        if !last.isEmpty { prompt += "\n\nLAST EXCHANGE:\n" + last.map { ($0.role == .player ? "PLAYER: " : "STORY: ") + clip($0.text, 900) }.joined(separator: "\n") }
-        prompt += "\n\nWHAT THE PLAYER JUST DID: " + clip(input, 800) + "\n\nYour four lines:"
-        guard let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: Self.planTokens, temperature: 0.4)) else { return "" }
+        if !last.isEmpty { prompt += "\n\nLAST EXCHANGE:\n" + last.map { ($0.role == .player ? "PLAYER: " : "STORY: ") + clip($0.text, 600) }.joined(separator: "\n") }
+        prompt += "\n\nWHAT THE PLAYER JUST DID: " + clip(input, 800) + "\n\nYour six lines:"
+        let reply = await think(prompt, quickTokens: Self.planTokens, deepTokens: Self.deepPlanTokens, temperature: 0.4)
         // Keep only the plan lines, in case the model wanders into writing the story itself.
         let lines = reply.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.range(of: #"^[-*\s]*(PLAYER|BEAT|USE|KEEP)\**:"#, options: .regularExpression) != nil }
-        return clip(lines.joined(separator: "\n"), 900)
+            .filter { $0.range(of: #"^[-*\s]*(PLAYER|ANSWER|BEAT|WHO|USE|AVOID)\**:"#, options: .regularExpression) != nil }
+        return clip(lines.joined(separator: "\n"), 1200)
+    }
+
+    /// The look-ahead: while the reply is read aloud, the Game Master checks it against the bible,
+    /// the facts and the set-up limits, keeps the facts current, notes slips to correct from now on,
+    /// and proposes the next move. Runs after the memory pass, one model call, inside the context
+    /// budget like every other call.
+    private func review() async {
+        guard !Task.isCancelled, let start = adventure, !start.ended, start.transcript.last?.role == .gm else { return }
+        var prompt = Prompts.review + "\n\nFEELING TO ACHIEVE: " + (start.setup.feeling.isEmpty ? "what the player came for" : start.setup.feeling)
+        prompt += "\n\nSTORY BIBLE:\n" + clip(start.bible, 1600)
+        let limits = limitsText(start)
+        if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS:\n" + limits }
+        prompt += "\n\nCURRENT FACTS:\n" + (start.facts.isEmpty ? "(none yet)" : start.facts.map { "- " + clip($0, 160) }.joined(separator: "\n"))
+        let people = start.cast.prefix(6).map { "- \($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc, 160) }
+        if !people.isEmpty { prompt += "\n\nPEOPLE:\n" + people.joined(separator: "\n") }
+        let played = start.elapsed / 60
+        if let act = start.roadmap.first(where: { played >= $0.from && played <= $0.to }) ?? start.roadmap.first(where: { played < $0.to }) {
+            prompt += "\n\nROADMAP NOW (minute \(Int(played)) of \(start.minutes)): " + act.goal
+            if let next = start.roadmap.first(where: { $0.from > act.from }) { prompt += "\nAFTER THAT: " + next.goal }
+        }
+        if !start.goalProgress.isEmpty { prompt += "\nPROGRESS: " + start.goalProgress }
+        prompt += "\n\nRECENT TURNS (the last one is the reply to review):\n" + recentTurns(start, 3, each: 700)
+        let reply = await think(prompt, quickTokens: 450, deepTokens: 1100, temperature: 0.3)
+        guard !Task.isCancelled, let m = JSONExtract.object(reply), var now = adventure, now.id == start.id else { return }
+        func list(_ k: String) -> [String] {
+            ((m[k] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        }
+        let facts = list("facts")
+        if facts.count >= 3 { now.facts = Array(facts.prefix(14)) }
+        var fixes = Array(list("fixes").prefix(3))
+        if let u = (m["unanswered"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), u.count > 8 {
+            fixes.append("Still unanswered, answer it plainly next: " + clip(u, 300))
+        }
+        now.fixes = fixes
+        if let n = (m["next"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { now.nextMove = clip(n, 600) }
+        adventure = now
+        library.save(now)
     }
 
     /// How many characters of recalled memories a briefing can carry at most (about 550 tokens).
@@ -616,6 +735,8 @@ final class StoryEngine {
         s += "\n\n" + Prompts.modeRules(simulator: a.setup.simulator)
         let age = PlayerDetails.saved.age
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
+        let limits = limitsText(a)
+        if !limits.isEmpty { s += "\n\n## SET-UP LIMITS (the player chose these; never break them)\n" + limits }
         s += "\n\n## STORY BIBLE\n" + a.bible
         let pinned = a.lore.filter(\.byPlayer)
         if !pinned.isEmpty {
@@ -641,8 +762,12 @@ final class StoryEngine {
         }
     }
 
-    private func briefingText(_ a: Adventure, memories: [String], director: [String]) -> String {
+    private func briefingText(_ a: Adventure, memories: [String], director: [String], withFacts: Bool = true) -> String {
         var lines: [String] = []
+        if withFacts {
+            let f = factsText(a)
+            if !f.isEmpty { lines.append(f); lines.append("") }
+        }
         lines.append("Location: " + (a.location.isEmpty ? "unknown" : a.location))
         if !a.mapText.isEmpty { lines.append("Mission map: " + a.mapText) }
         if a.setup.simulator {
@@ -722,7 +847,10 @@ final class StoryEngine {
             }
         }
 
-        if !a.setup.simulator, !a.roadmap.isEmpty {
+        if a.setup.simulator, !a.roadmap.isEmpty {
+            let act = a.roadmap.first { played >= $0.from && played <= $0.to } ?? a.roadmap.first { played < $0.to } ?? a.roadmap.last!
+            notes.append("GENTLE ARC (minute \(Int(played)) of \(a.minutes)): take one small step toward this, at the player's pace: " + act.goal)
+        } else if !a.roadmap.isEmpty {
             let act = a.roadmap.first { played >= $0.from && played <= $0.to } ?? a.roadmap.first { played < $0.to } ?? a.roadmap.last!
             notes.append(calm
                 ? "SECRET ROADMAP (on hold while the player is happy where they are; offer it again only if they reach for it): " + act.goal
@@ -841,6 +969,9 @@ final class StoryEngine {
             a.notesTurn = now.notesTurn
             a.notesStale = now.notesStale
             a.bibleTurn = now.bibleTurn
+            a.facts = now.facts
+            a.fixes = now.fixes
+            a.nextMove = now.nextMove
             // Entries the player edited or added in the World panel meanwhile win.
             for e in now.lore where e.byPlayer {
                 if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
