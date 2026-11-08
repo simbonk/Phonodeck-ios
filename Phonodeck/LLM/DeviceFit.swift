@@ -123,7 +123,8 @@ enum HFHub {
             return data
         }
         let lenData = try await range(0, 7)
-        let len = lenData.withUnsafeBytes { raw in (0..<8).reduce(UInt64(0)) { $0 | UInt64(raw[$1]) << (8 * UInt64($1)) } }
+        var len: UInt64 = 0
+        for (i, byte) in lenData.enumerated() { len |= UInt64(byte) << (8 * UInt64(i)) }
         guard len > 0, len < 50_000_000 else { return 0 }
         let header = try await range(8, 8 + Int(len) - 1)
         guard let json = try JSONSerialization.jsonObject(with: header) as? [String: Any] else { return 0 }
