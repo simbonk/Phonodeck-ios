@@ -46,6 +46,7 @@ struct ModelsView: View {
                     Text("Say \"make it so\" to send.")
                 }
 
+                ModelSearchSection().buttonStyle(.borderless)
                 addSection
             }
             .navigationTitle("Models")
