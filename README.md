@@ -2,7 +2,7 @@
 
 An audio storytelling app that runs entirely on your iPhone. You download a language model once, and from then on it works in Airplane Mode: nothing you say or write leaves the phone.
 
-- **Phonodeck tab:** the same flow as the web app. A set-up wizard asks how long you have and a little about you, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made: story, map, characters and lore, the Game Master and the Director. Then the Game Master tells it aloud, keeps an eye on the clock, lands a real ending, and grades the result with a report card. Play by typing, or tap **hands-free** and just talk (say **"make it so"** to send).
+- **Phonodeck tab:** the same flow as the web app. A set-up wizard asks how long you have, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made: story, map, characters and lore, the Game Master and the Director. Then the Game Master tells it aloud, keeps an eye on the clock, lands a real ending, and grades the result with a report card. Play by typing, or tap **hands-free** and just talk (say **"make it so"** to send).
 - **World button:** the globe in a story opens the Mission (feeling meter, mission track, events), the Story bible, and the World: every character, place, item and faction the story has collected. Edit or add anything; your words always win.
 - **Chat tab:** a plain conversation with the same on-device model.
 - **Models tab:** download the storyteller, narrator voice and listening models from Hugging Face. Every model shows whether it will run comfortably on *this* phone before you download it. Paste a link to add any other MLX model.
@@ -68,7 +68,7 @@ Xcode opens the project and starts fetching packages (you'll see "Resolving Pack
 
 ### 5. First launch
 
-1. A short welcome explains hands-free play, asks your name, and offers the recommended storyteller. On Wi-Fi, tap **Download** (green "Runs comfortably" means it fits).
+1. A short welcome explains hands-free play, confirms you are 18 or over (Phonodeck is adults only), and offers the recommended storyteller. On Wi-Fi, tap **Download** (green "Runs comfortably" means it fits).
 2. Optional: in the **Models** tab, download **Kokoro** for a more natural narrator and **Parakeet Small** for offline listening.
 3. On the **Phonodeck** tab, tap **Set up a new experience** and follow the wizard. The first scene takes about a minute while the model loads and designs the world.
 

@@ -89,7 +89,6 @@ struct CuratorView: View {
     // About you
     @State private var first = ""
     @State private var last = ""
-    @State private var age = ""
     @State private var gender = ""
     // Romance
     @State private var romGender = ""
@@ -99,7 +98,8 @@ struct CuratorView: View {
     @State private var naming = false
     @State private var name = ""
 
-    private var ageNow: Int { Int(age) ?? 0 }
+    /// Phonodeck is for adults only, so there is no age question and no children's mode.
+    private var ageNow: Int { 0 }
     private var kid: Bool { ageNow > 0 && ageNow < 13 }
     private var minor: Bool { ageNow > 0 && ageNow < 18 }
     private var minutes: Int { Self.minutes(from: answers["time"] ?? "") }
@@ -107,7 +107,7 @@ struct CuratorView: View {
     private var simulator: Bool { (answers["mode"] ?? "").localizedCaseInsensitiveContains("simulator") }
 
     private var questions: [CuratorQuestion] {
-        var qs = [CuratorQuestions.time, CuratorQuestions.me, CuratorQuestions.pick]
+        var qs = [CuratorQuestions.time, CuratorQuestions.pick]
         if buildOwn {
             qs += [CuratorQuestions.feeling, CuratorQuestions.mode]
             qs += simulator ? CuratorQuestions.simulator : CuratorQuestions.story
@@ -213,7 +213,6 @@ struct CuratorView: View {
         VStack(alignment: .leading, spacing: 10) {
             field("First name", $first)
             field("Last name (so characters can say \"Captain Chiu\")", $last)
-            field("Age, e.g. 10, 35 or 70", $age).keyboardType(.numberPad)
             field("Gender, in your own words", $gender)
         }
     }
@@ -366,7 +365,6 @@ struct CuratorView: View {
         // Remember the details for next time (never overwriting what Settings already has).
         let d = UserDefaults.standard
         if (d.string(forKey: "playerName") ?? "").isEmpty, !full.isEmpty { d.set(full, forKey: "playerName") }
-        if d.integer(forKey: "playerAge") == 0, ageNow > 0 { d.set(ageNow, forKey: "playerAge") }
         if (d.string(forKey: "playerGender") ?? "").isEmpty, !gender.isEmpty { d.set(gender, forKey: "playerGender") }
         if !romNone, !romInterest.isEmpty, (d.string(forKey: "playerInterest") ?? "").isEmpty { d.set(romInterest, forKey: "playerInterest") }
 
@@ -470,7 +468,6 @@ struct CuratorView: View {
         let names = p.name.split(separator: " ").map(String.init)
         first = names.first ?? ""
         last = names.dropFirst().joined(separator: " ")
-        age = p.age > 0 ? String(p.age) : ""
         gender = p.gender
         romGender = p.gender
         romInterest = p.interest

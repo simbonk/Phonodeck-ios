@@ -5,8 +5,7 @@ import SwiftUI
 struct WelcomeView: View {
     @Environment(AppModel.self) private var app
     @AppStorage("playerName") private var playerName = ""
-    @AppStorage("playerAge") private var playerAge = 0
-    @AppStorage("playerGender") private var playerGender = ""
+    @AppStorage("adultConfirmed") private var adult = false
     @State private var page = 0
     var onDone: () -> Void
 
@@ -23,7 +22,7 @@ struct WelcomeView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     switch page {
                     case 0: intro
-                    case 1: aboutYou
+                    case 1: adultsOnly
                     default: storyteller
                     }
                 }
@@ -46,6 +45,7 @@ struct WelcomeView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
                 .foregroundStyle(Theme.onAccent)
+                .disabled(page == 1 && !adult)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 20)
@@ -80,16 +80,21 @@ struct WelcomeView: View {
         }
     }
 
-    private var aboutYou: some View {
+    private var adultsOnly: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Caps(text: "About you")
-            Text("Stories are written around you. These are used for every new experience, can be made up, and can be changed in Settings. Children get gentle, G-rated stories.")
+            Caps(text: "For adults")
+            Text("Phonodeck is for people 18 and over.")
+                .font(.title3.bold()).foregroundStyle(Theme.fg)
+            Text("The storyteller is an open model running on this \(DeviceFit.deviceWord), with no content filter in the cloud behind it. It can write mature themes, so it isn't suitable for children.")
                 .font(.subheadline).foregroundStyle(Theme.dim)
-            field("Your name in stories") { TextField("e.g. Alex", text: $playerName).textContentType(.givenName) }
-            field("Age") {
-                Stepper(playerAge == 0 ? "Not set" : "\(playerAge)", value: $playerAge, in: 0...110)
+            Toggle(isOn: $adult) {
+                Text("I'm 18 or older").bold().foregroundStyle(Theme.fg)
             }
-            field("Gender (your own words)") { TextField("optional", text: $playerGender) }
+            .tint(Theme.accent)
+            .padding(12)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(adult ? Theme.accent : Theme.line))
+            field("Your name in stories (optional)") { TextField("Leave blank and each story names you", text: $playerName).textContentType(.givenName) }
         }
     }
 

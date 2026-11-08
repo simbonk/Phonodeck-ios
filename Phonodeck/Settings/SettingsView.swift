@@ -4,7 +4,6 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
     @AppStorage("playerName") private var playerName = ""
-    @AppStorage("playerAge") private var playerAge = 0
     @AppStorage("playerGender") private var playerGender = ""
     @AppStorage("playerInterest") private var playerInterest = ""
     @AppStorage("appleVoice") private var appleVoice = ""
@@ -21,15 +20,12 @@ struct SettingsView: View {
             Form {
                 Section {
                     TextField("Your name in stories", text: $playerName)
-                    Stepper(playerAge == 0 ? "Age: not set" : "Age: \(playerAge)", value: $playerAge, in: 0...110)
                     TextField("Gender (your own words)", text: $playerGender)
-                    if playerAge >= 18 || playerAge == 0 {
-                        TextField("Who you're drawn to (optional)", text: $playerInterest)
-                    }
+                    TextField("Who you're drawn to (optional)", text: $playerInterest)
                 } header: {
-                    Text("Personal details")
+                    Text("You in stories (optional)")
                 } footer: {
-                    Text("Used for every new experience. They can be made up. Children get gentle, G-rated stories.")
+                    Text("All optional and can be made up. Leave the name blank and each story gives you one that fits its world.")
                 }
 
                 Section {

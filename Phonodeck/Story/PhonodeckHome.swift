@@ -64,7 +64,7 @@ struct PhonodeckHome: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Set up a new experience").font(.title3.bold())
-                        Text("A few quick questions: your time, a little about you, then a curated world or one you build yourself.")
+                        Text("A few quick questions: your time, then a curated world or one you build yourself.")
                             .font(.subheadline).opacity(0.8)
                     }
                 }

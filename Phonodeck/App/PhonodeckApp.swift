@@ -104,6 +104,7 @@ extension Color {
 struct RootView: View {
     @Environment(AppModel.self) private var app
     @AppStorage("onboarded") private var onboarded = false
+    @AppStorage("adultConfirmed") private var adult = false
 
     var body: some View {
         @Bindable var app = app
@@ -127,7 +128,7 @@ struct RootView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: Binding(get: { !onboarded && !app.vault.isLocked }, set: { if !$0 { onboarded = true } })) {
+        .fullScreenCover(isPresented: Binding(get: { (!onboarded || !adult) && !app.vault.isLocked }, set: { if !$0, adult { onboarded = true } })) {
             WelcomeView { onboarded = true; app.tab = .phonodeck }
         }
         .alert("Phonodeck", isPresented: Binding(get: { app.notice != nil }, set: { if !$0 { app.notice = nil } })) {

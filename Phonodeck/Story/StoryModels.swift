@@ -88,7 +88,7 @@ struct PlayerDetails {
     static var saved: PlayerDetails {
         let d = UserDefaults.standard
         return PlayerDetails(
-            name: d.string(forKey: "playerName") ?? "", age: d.integer(forKey: "playerAge"),
+            name: d.string(forKey: "playerName") ?? "", age: 0,
             gender: d.string(forKey: "playerGender") ?? "", interest: d.string(forKey: "playerInterest") ?? "")
     }
 }
