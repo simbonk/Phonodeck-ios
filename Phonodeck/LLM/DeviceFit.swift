@@ -11,6 +11,8 @@ struct ModelFacts: Codable, Hashable {
     var modelType: String?
     var hasSafetensors: Bool
     var looksMLX: Bool
+    /// The repo only has GGUF files (llama.cpp's format), which MLX can't load.
+    var ggufOnly: Bool? = nil
     /// Bytes of vision and audio weights that a text-only storyteller downloads but never loads
     /// (Gemma 4 and Qwen3.5 ship with image and sound encoders in the same files).
     var unusedBytes: Int64? = nil
@@ -67,6 +69,7 @@ enum HFHub {
             bytes: wanted.reduce(0) { $0 + ($1.size ?? 0) },
             hasSafetensors: files.contains { $0.rfilename.hasSuffix(".safetensors") },
             looksMLX: (info.tags ?? []).contains("mlx") || info.library_name == "mlx" || id.lowercased().hasPrefix("mlx-community/"))
+        facts.ggufOnly = !facts.hasSafetensors && files.contains { $0.rfilename.lowercased().hasSuffix(".gguf") }
 
         if let pair = try? await URLSession.shared.data(from: URL(string: "https://huggingface.co/\(id)/resolve/main/config.json")!),
            (pair.1 as? HTTPURLResponse)?.statusCode == 200,

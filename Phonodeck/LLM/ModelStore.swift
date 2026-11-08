@@ -117,6 +117,10 @@ final class ModelStore {
         if let existing = ModelCatalog.entry(id) { return .added(existing) }
         let f: ModelFacts
         do { f = try await HFHub.facts(id) } catch { return .failed(error.localizedDescription) }
+        if f.ggufOnly == true {
+            let name = id.split(separator: "/").last.map(String.init) ?? id
+            return .failed("\(name) is a GGUF model, made for llama.cpp apps. Phonodeck runs MLX models, which come as .safetensors. Search Hugging Face for \"\(name) MLX\" to find a converted copy.")
+        }
         guard f.hasSafetensors else {
             return .failed("\(id) has no .safetensors weights, so it can't run here. Look for an MLX version, usually under mlx-community.")
         }
