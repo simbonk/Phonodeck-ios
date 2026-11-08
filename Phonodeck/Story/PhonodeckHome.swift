@@ -72,22 +72,22 @@ struct PhonodeckHome: View {
                 .opacity(app.store.hasLanguageModel ? 1 : 0.5)
                 .padding(.top, 8)
 
-                let open = app.library.adventures.filter { !$0.ended }
-                if !open.isEmpty {
+                let inProgress = app.library.adventures.filter { !$0.ended }
+                if !inProgress.isEmpty {
                     BigCard {
                         withAnimation { showContinue.toggle() }
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Continue an experience").font(.title3.bold())
-                                Text("\(open.count) in progress").font(.subheadline).foregroundStyle(Theme.dim)
+                                Text("\(inProgress.count) in progress").font(.subheadline).foregroundStyle(Theme.dim)
                             }
                             Spacer()
                             Image(systemName: showContinue ? "chevron.up" : "chevron.down").foregroundStyle(Theme.dim)
                         }
                     }
                     if showContinue {
-                        ForEach(open) { a in adventureRow(a) }
+                        ForEach(inProgress) { a in adventureRow(a) }
                     }
                 }
 
