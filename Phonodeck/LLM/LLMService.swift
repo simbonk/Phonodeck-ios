@@ -49,6 +49,23 @@ final class LLMService {
     /// Memory the loaded model holds, for the fit checks.
     var loadedGB: Double { loadedID == nil ? 0 : store.neededGB(loadedID) }
 
+    /// Loads the storyteller now (the Load and Restart buttons), waiting its turn for the GPU.
+    func preload() async {
+        try? await load()
+    }
+
+    /// Loads the storyteller, waiting its turn for the GPU.
+    func load() async throws {
+        await MLXGate.shared.acquire()
+        do {
+            _ = try await ensureLoaded()
+            await MLXGate.shared.release()
+        } catch {
+            await MLXGate.shared.release()
+            throw error
+        }
+    }
+
     func unload() {
         loadTask?.cancel()
         loadTask = nil
@@ -101,7 +118,9 @@ final class LLMService {
             let task = Task { @MainActor in
                 self.busy = true
                 defer { self.busy = false }
+                await MLXGate.shared.acquire()
                 do {
+                    defer { Task { await MLXGate.shared.release() } }
                     let container = try await self.ensureLoaded()
                     var chat: [Chat.Message] = []
                     if let system, !system.isEmpty { chat.append(.system(system)) }

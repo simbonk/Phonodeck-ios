@@ -251,7 +251,10 @@ final class Dictation {
         transcribing = true
         defer { transcribing = false }
         do {
-            sttModel = try await STT.loadModel(modelRepo: dir.path, modelType: "parakeet", cache: ModelStore.hubCache)
+            let path = dir.path
+            sttModel = try await MLXGate.shared.run(urgent: true) {
+                Unchecked(value: try await STT.loadModel(modelRepo: path, modelType: "parakeet", cache: ModelStore.hubCache))
+            }.value
             sttModelID = entry.id
         } catch {
             self.error = "Couldn't load \(entry.name): \(error.localizedDescription)"
@@ -277,8 +280,10 @@ final class Dictation {
         guard let model = sttModel else { return }
         transcribing = true
         defer { transcribing = false }
-        let audio = MLXArray(samples)
-        let heard = model.generate(audio: audio).text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let boxed = Unchecked(value: model)
+        let heard = ((try? await MLXGate.shared.run(urgent: true) {
+            boxed.value.generate(audio: MLXArray(samples)).text
+        }) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !heard.isEmpty else { return }
         committed = Self.join(committed, heard)
         if sendAfter {

@@ -107,7 +107,7 @@ final class StoryEngine {
         self.forge = forge
         currentTask = Task {
             defer { busy = false; stage = "" }
-            do { _ = try await llm.ensureLoaded() } catch {
+            do { try await llm.load() } catch {
                 self.error = error.localizedDescription
                 building = false
                 forge.abort()

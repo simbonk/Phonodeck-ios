@@ -18,20 +18,17 @@ struct NarratorSetup: View {
                 OptionCard(title: e.name, tier: e.tier == .best ? "Good, slower" : "Medium", blurb: e.blurb,
                            entry: e, selected: app.store.voiceID == e.id,
                            listen: { toggleListen(e) }, listening: app.narrator.auditioningID == e.id,
-                           use: { app.narrator.unloadNeural(); app.store.voiceID = e.id }) {
-                    if app.store.installed.contains(e.id), e.voices.count > 1 {
-                        Picker("Voice", selection: Binding(
-                            get: { Narrator.neuralVoice(for: e) },
-                            set: { Narrator.setNeuralVoice($0, for: e); app.narrator.audition(e) })) {
-                            ForEach(e.voices, id: \.self) { Text(voiceLabel($0)).tag($0) }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(Theme.accent)
-                    }
+                           use: { app.narrator.unloadNeural(); app.store.voiceID = e.id })
+                if app.store.installed.contains(e.id), e.voices.count > 1, app.store.voiceID == e.id {
+                    VoiceChips(entry: e)
                 }
             }
-            if app.narrator.preparing {
-                HStack(spacing: 8) { HoloCore(size: 18); Text("Warming up the voice. The first time takes a few seconds.").font(.caption).foregroundStyle(Theme.dim) }
+            if app.narrator.preparing || (app.narrator.auditioningID != nil && app.narrator.auditioningID != "apple" && !app.narrator.playing) {
+                HStack(spacing: 8) {
+                    HoloCore(size: 18)
+                    Text(app.narrator.preparing ? "Loading the voice. The first time takes a little while." : "Getting ready to speak…")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                }
             }
             if let err = app.narrator.lastError { Text(err).font(.caption).foregroundStyle(Theme.warn) }
         }
@@ -41,6 +38,31 @@ struct NarratorSetup: View {
     private func toggleListen(_ e: ModelEntry?) {
         let id = e?.id ?? "apple"
         if app.narrator.auditioningID == id { app.narrator.stop() } else { app.narrator.lastError = nil; app.narrator.audition(e) }
+    }
+}
+
+/// The voices inside one narrator model, as chips: tap one to choose it and hear it.
+struct VoiceChips: View {
+    @Environment(AppModel.self) private var app
+    let entry: ModelEntry
+    @State private var chosen = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(entry.name) voices: tap one to hear it").font(.caption).foregroundStyle(Theme.dim)
+            FlowLayout(spacing: 8) {
+                ForEach(entry.voices, id: \.self) { v in
+                    Chip(text: voiceLabel(v), selected: v == chosen) {
+                        chosen = v
+                        Narrator.setNeuralVoice(v, for: entry)
+                        app.narrator.lastError = nil
+                        app.narrator.audition(entry)
+                    }
+                }
+            }
+        }
+        .padding(.leading, 12)
+        .onAppear { chosen = Narrator.neuralVoice(for: entry) }
     }
 }
 
@@ -206,10 +228,10 @@ struct MemoryPanel: View {
             if let e = app.store.language, app.store.hasLanguageModel {
                 row(icon: "brain", name: "Storyteller: " + e.name, state: llmState) {
                     if app.llm.loadedID == nil {
-                        Button("Load") { Task { try? await app.llm.ensureLoaded() } }.disabled(app.llm.phase == .loading)
+                        Button("Load") { Task { await app.llm.preload() } }.disabled(app.llm.phase == .loading)
                     } else {
                         Button("Unload") { app.llm.unload() }.disabled(busy)
-                        Button("Restart") { app.llm.unload(); Task { try? await app.llm.ensureLoaded() } }.disabled(busy)
+                        Button("Restart") { app.llm.unload(); Task { await app.llm.preload() } }.disabled(busy)
                     }
                 }
             }

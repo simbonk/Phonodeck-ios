@@ -96,6 +96,8 @@ final class Narrator: NSObject {
 
     /// What is auditioning right now, so the matching Listen button can show Stop.
     private(set) var auditioningID: String?
+    /// Sound is actually coming out (not just being prepared).
+    private(set) var playing = false
 
     /// Plays a sample in one voice (nil for Apple's) without changing the chosen narrator.
     func audition(_ entry: ModelEntry?, text: String = "The rain eases. Somewhere below, a door opens, and a voice you almost recognise calls your name.") {
@@ -168,6 +170,7 @@ final class Narrator: NSObject {
         preparing = false
         auditionVoice = nil
         auditioningID = nil
+        playing = false
     }
 
     /// Where a sentence ends: after . ! ? or a line break, once a few more characters have arrived
@@ -210,6 +213,7 @@ final class Narrator: NSObject {
             u.postUtteranceDelay = 0.05
             appleOutstanding += 1
             synth.speak(u)
+            playing = true
         }
     }
 
@@ -217,6 +221,7 @@ final class Narrator: NSObject {
         guard streamDone, appleOutstanding == 0, sentenceQueue.isEmpty, worker == nil, buffersOutstanding == 0 else { return }
         if speaking {
             speaking = false
+            playing = false
             let wasAudition = auditionVoice != nil
             auditionVoice = nil
             auditioningID = nil
@@ -243,7 +248,10 @@ final class Narrator: NSObject {
         }
         preparing = true
         defer { preparing = false }
-        let m = try await TTS.loadModel(modelRepo: dir.path, modelType: nil, cache: ModelStore.hubCache)
+        let path = dir.path
+        let m = try await MLXGate.shared.run(urgent: true) {
+            Unchecked(value: try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache))
+        }.value
         ttsModel = m
         ttsModelID = entry.id
         return m
@@ -259,13 +267,19 @@ final class Narrator: NSObject {
             do {
                 let model = try await self.loadNeural(entry)
                 let voice = Self.neuralVoice(for: entry)
-                let voiceArg = entry.id.contains("Qwen3-TTS") ? voice + ", a warm, expressive storyteller." : voice
+                let isQwen = entry.id.contains("Qwen3-TTS")
+                let voiceArg: String? = voice.isEmpty ? nil : isQwen ? voice + ", a warm, expressive storyteller." : voice
+                // Kokoro picks American or British pronunciation from the voice name.
+                let language: String? = isQwen ? "English" : nil
+                let boxed = Unchecked(value: model)
                 while !self.sentenceQueue.isEmpty, !Task.isCancelled, self.generation == myGeneration {
                     let sentence = self.sentenceQueue.removeFirst()
-                    let audio = try await model.generate(
-                        text: sentence, voice: voiceArg.isEmpty ? nil : voiceArg,
-                        refAudio: nil, refText: nil, language: "English")
-                    let samples = audio.asArray(Float.self)
+                    // Synthesis runs in the background, one MLX job at a time, so it can never freeze the screen.
+                    let samples = try await MLXGate.shared.run(urgent: true) {
+                        let audio = try await boxed.value.generate(
+                            text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
+                        return audio.asArray(Float.self)
+                    }
                     guard self.generation == myGeneration else { return }
                     self.schedule(samples, sampleRate: Double(model.sampleRate), generation: myGeneration)
                 }
@@ -311,6 +325,7 @@ final class Narrator: NSObject {
             }
         }
         if !player.isPlaying { player.play() }
+        playing = true
     }
 }
 
@@ -332,10 +347,13 @@ extension Narrator: AVSpeechSynthesizerDelegate {
 /// Loads a voice model once and speaks a word into nothing, so any extra files it fetches on
 /// first use (Kokoro's pronunciation dictionary) are stored for offline use.
 enum NeuralVoiceWarmup {
-    @MainActor
     static func warm(directory: URL) async throws {
-        let model = try await TTS.loadModel(modelRepo: directory.path, modelType: nil, cache: ModelStore.hubCache)
-        _ = try await model.generate(text: "Hello.", voice: "af_heart", refAudio: nil, refText: nil, language: "English")
-        MLX.Memory.clearCache()
+        let path = directory.path
+        _ = try await MLXGate.shared.run {
+            let model = try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache)
+            _ = try await model.generate(text: "Hello.", voice: "af_heart", refAudio: nil, refText: nil, language: nil)
+            MLX.Memory.clearCache()
+            return true
+        }
     }
 }
