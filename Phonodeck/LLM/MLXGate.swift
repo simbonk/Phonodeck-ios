@@ -31,7 +31,9 @@ actor MLXGate {
     nonisolated func run<T: Sendable>(urgent: Bool = false, label: String = "the storyteller", _ body: @escaping @Sendable () async throws -> T) async throws -> T {
         await acquire(urgent: urgent, label: label)
         do {
-            let v = try await Task.detached(priority: .userInitiated) { try await body() }.value
+            // Always on the same thread: MLX keeps its GPU streams and command encoders per thread,
+            // so a voice that made speech on one thread could crash when asked again on another.
+            let v = try await Task.detached(executorPreference: MLXThread.shared, priority: .userInitiated) { try await body() }.value
             await release()
             return v
         } catch {
@@ -47,6 +49,37 @@ actor MLXGate {
             let (c, label) = waiters.removeFirst()
             holder = label; heldSince = .now
             c.resume()
+        }
+    }
+}
+
+/// One long-lived thread that runs every gated piece of MLX work.
+final class MLXThread: TaskExecutor, @unchecked Sendable {
+    static let shared = MLXThread()
+
+    private let lock = NSLock()
+    private let ready = DispatchSemaphore(value: 0)
+    private var jobs: [UnownedJob] = []
+
+    private init() {
+        let thread = Thread { [unowned self] in self.loop() }
+        thread.name = "Phonodeck MLX"
+        thread.qualityOfService = .userInitiated
+        thread.stackSize = 8 << 20
+        thread.start()
+    }
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let job = UnownedJob(job)
+        lock.withLock { jobs.append(job) }
+        ready.signal()
+    }
+
+    private func loop() {
+        while true {
+            ready.wait()
+            guard let job = lock.withLock({ jobs.isEmpty ? nil : jobs.removeFirst() }) else { continue }
+            job.runSynchronously(on: asUnownedTaskExecutor())
         }
     }
 }
