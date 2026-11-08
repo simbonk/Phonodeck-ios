@@ -135,7 +135,7 @@ final class LlamaEngine: @unchecked Sendable {
 
         let chain = llama_sampler_chain_init(llama_sampler_chain_default_params())
         defer { llama_sampler_free(chain) }
-        if let p = repetitionPenalty, p != 1 { llama_sampler_chain_add(chain, llama_sampler_init_penalties(64, p, 0, 0)) }
+        if let p = repetitionPenalty, p != 1 { llama_sampler_chain_add(chain, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, p, 0, 0)) }
         if temperature <= 0 {
             llama_sampler_chain_add(chain, llama_sampler_init_greedy())
         } else {
