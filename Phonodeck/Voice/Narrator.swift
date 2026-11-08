@@ -15,6 +15,8 @@ final class Narrator: NSObject {
     private(set) var speaking = false
     private(set) var preparing = false
     var lastError: String?
+    /// What a neural voice is doing right now, shown under the Listen buttons.
+    private(set) var detail: String?
     /// Called when everything queued has been spoken (hands-free uses it to start listening).
     var onFinished: (() -> Void)?
 
@@ -171,6 +173,7 @@ final class Narrator: NSObject {
         auditionVoice = nil
         auditioningID = nil
         playing = false
+        detail = nil
     }
 
     /// Where a sentence ends: after . ! ? or a line break, once a few more characters have arrived
@@ -283,6 +286,7 @@ final class Narrator: NSObject {
                 if self.generation == myGeneration { self.worker = nil; self.checkFinished() }
             }
             do {
+                self.detail = "Loading \(entry.name)…"
                 let model = try await self.loadNeural(entry)
                 let voice = Self.neuralVoice(for: entry)
                 let isQwen = entry.id.contains("Qwen3-TTS")
@@ -297,9 +301,13 @@ final class Narrator: NSObject {
                     // Marked while a neural voice is working, so a crash here is noticed at the next launch.
                     UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
                     defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
+                    let chip = onCPU ? "processor" : "graphics chip"
+                    self.detail = "Waiting for the storyteller to finish with the graphics chip…"
+                    let started = Date()
+                    // An MLX failure becomes a Swift error (and Apple's voice takes over) instead of a crash.
                     let samples = try await MLXGate.shared.run(urgent: true) {
-                        // An MLX failure becomes a Swift error (and Apple's voice takes over) instead of a crash.
-                        try await Self.onChosenDevice(onCPU) {
+                        await MainActor.run { self.detail = "Making speech on the \(chip)…" }
+                        return try await Self.onChosenDevice(onCPU) {
                             try await withError { error in
                                 let audio = try await boxed.value.generate(
                                     text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
@@ -310,6 +318,12 @@ final class Narrator: NSObject {
                         }
                     }
                     guard self.generation == myGeneration else { return }
+                    let seconds = Double(samples.count) / Double(model.sampleRate)
+                    let loudest = samples.reduce(Float(0)) { max($0, abs($1)) }
+                    self.detail = String(format: "Made %.1f s of speech in %.1f s on the \(chip).", seconds, Date().timeIntervalSince(started))
+                    if samples.isEmpty || loudest < 0.0001 {
+                        self.lastError = "\(entry.name) made silence for that sentence (\(samples.count) samples)."
+                    }
                     self.schedule(samples, sampleRate: Double(model.sampleRate), generation: myGeneration)
                 }
             } catch is CancellationError {
@@ -344,7 +358,12 @@ final class Narrator: NSObject {
             engine.connect(player, to: engine.mainMixerNode, format: format)
             engineFormat = format
         }
-        if !engine.isRunning { try? engine.start() }
+        if !engine.isRunning {
+            do { try engine.start() } catch {
+                lastError = "Couldn't start the speaker (\(error.localizedDescription))."
+                return
+            }
+        }
         buffersOutstanding += 1
         player.scheduleBuffer(pcm, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor in

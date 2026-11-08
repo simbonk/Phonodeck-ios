@@ -30,6 +30,7 @@ struct NarratorSetup: View {
                         .font(.caption).foregroundStyle(Theme.dim)
                 }
             }
+            if let d = app.narrator.detail, app.narrator.auditioningID != nil { Text(d).font(.caption).foregroundStyle(Theme.dim) }
             if let err = app.narrator.lastError { Text(err).font(.caption).foregroundStyle(Theme.warn) }
         }
         .onDisappear { if app.narrator.auditioningID != nil { app.narrator.stop() } }
@@ -221,6 +222,7 @@ extension OptionCard where Extra == EmptyView {
 /// What is in memory right now, with Load, Unload and Restart, for when things go squirrelly.
 struct MemoryPanel: View {
     @Environment(AppModel.self) private var app
+    @State private var onCPU = Narrator.neuralOnCPU
 
     var body: some View {
         let busy = app.llm.busy || app.engine.busy
@@ -239,6 +241,9 @@ struct MemoryPanel: View {
                 row(icon: "speaker.wave.2", name: "Narrator: " + v.name,
                     state: app.narrator.preparing ? "Loading…" : app.narrator.loadedVoiceID == v.id ? String(format: "In memory · about %.1f GB", app.narrator.neuralLoadedGB) : "Not loaded (loads when it first speaks)") {
                     if app.narrator.loadedVoiceID != nil { Button("Unload") { app.narrator.unloadNeural() } }
+                }
+                Toggle(isOn: Binding(get: { onCPU }, set: { Narrator.neuralOnCPU = $0; onCPU = $0 })) {
+                    Text("Run the narrator on the processor (slower, steadier)").font(.caption)
                 }
             }
             if let l = app.store.listeningModel {
