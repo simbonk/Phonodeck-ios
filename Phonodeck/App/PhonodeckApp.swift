@@ -51,6 +51,14 @@ final class AppModel {
         self.engine = StoryEngine(llm: llm, narrator: narrator, dictation: dictation, library: library)
         self.vault = Vault()
         if let space = vault.unlocked { library.open(space) }
+        // A neural voice crashed the app last time: go back to Apple's voice rather than crash again.
+        if let id = UserDefaults.standard.string(forKey: "voiceInFlight") {
+            UserDefaults.standard.removeObject(forKey: "voiceInFlight")
+            if store.voiceID == id {
+                store.voiceID = nil
+                notice = "The \(ModelCatalog.entry(id)?.name ?? "neural") voice closed Phonodeck last time, so the narrator is back on Apple's voice. You can try it again in the Models tab."
+            }
+        }
     }
 
     func unlocked() {

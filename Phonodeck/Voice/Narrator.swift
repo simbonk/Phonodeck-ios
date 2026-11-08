@@ -249,6 +249,8 @@ final class Narrator: NSObject {
         preparing = true
         defer { preparing = false }
         let path = dir.path
+        UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
+        defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
         let m = try await MLXGate.shared.run(urgent: true) {
             Unchecked(value: try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache))
         }.value
@@ -275,6 +277,9 @@ final class Narrator: NSObject {
                 while !self.sentenceQueue.isEmpty, !Task.isCancelled, self.generation == myGeneration {
                     let sentence = self.sentenceQueue.removeFirst()
                     // Synthesis runs in the background, one MLX job at a time, so it can never freeze the screen.
+                    // Marked while a neural voice is working, so a crash here is noticed at the next launch.
+                    UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
+                    defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
                     let samples = try await MLXGate.shared.run(urgent: true) {
                         let audio = try await boxed.value.generate(
                             text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
