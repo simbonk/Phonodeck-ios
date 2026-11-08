@@ -7,6 +7,11 @@ struct StoryView: View {
     @State private var input = ""
     @State private var showWorld = false
     @State private var showReport = false
+    /// Keep the newest text in view. Off once the player scrolls up to read, back on when they return to the bottom.
+    @State private var follow = true
+    @State private var nearBottom = true
+    /// Story text size in points. Defaults a little under body size so more of a passage fits on an iPhone.
+    @AppStorage("storyTextSize") private var textSize: Double = 15
     @FocusState private var typing: Bool
 
     private var engine: StoryEngine { app.engine }
@@ -98,6 +103,12 @@ struct StoryView: View {
                 Label("Read aloud", systemImage: "speaker.wave.2")
             }
             Button { app.narrator.stop() } label: { Label("Stop reading", systemImage: "speaker.slash") }
+            ControlGroup {
+                Button { textSize = max(12, textSize - 1) } label: { Label("Smaller text", systemImage: "textformat.size.smaller") }
+                    .disabled(textSize <= 12)
+                Button { textSize = min(24, textSize + 1) } label: { Label("Larger text", systemImage: "textformat.size.larger") }
+                    .disabled(textSize >= 24)
+            }
             Button { engine.undo() } label: { Label("Undo last turn", systemImage: "arrow.uturn.backward") }
                 .disabled(!engine.canUndo)
             if !a.ended {
@@ -119,23 +130,24 @@ struct StoryView: View {
     private func transcript(_ a: Adventure) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(a.transcript) { t in
                         if t.role == .gm {
                             Text(t.text)
-                                .font(Theme.narration)
-                                .lineSpacing(4)
+                                .font(storyFont)
+                                .lineSpacing(2)
                                 .foregroundStyle(Theme.fg)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
+                                .padding(10)
                                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
                                 .textSelection(.enabled)
-                                .onTapGesture { app.narrator.speak(t.text) }
+                                .onTapGesture { toggleReading(t.text) }
                         } else {
                             Text(t.text)
+                                .font(.system(size: textSize))
                                 .foregroundStyle(Theme.fg)
-                                .padding(12)
+                                .padding(10)
                                 .background(Theme.you, in: RoundedRectangle(cornerRadius: 12))
                                 .frame(maxWidth: .infinity, alignment: .trailing)
                                 .padding(.leading, 50)
@@ -143,9 +155,9 @@ struct StoryView: View {
                     }
                     if !engine.streaming.isEmpty {
                         Text(engine.streaming)
-                            .font(Theme.narration).lineSpacing(4).foregroundStyle(Theme.fg)
+                            .font(storyFont).lineSpacing(2).foregroundStyle(Theme.fg)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
+                            .padding(10)
                             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
                             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
                     } else if let since = engine.thinkingSince {
@@ -172,15 +184,55 @@ struct StoryView: View {
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
-                .padding(12)
+                .padding(.horizontal, 10).padding(.vertical, 8)
                 .frame(maxWidth: 820)
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: engine.streaming) { proxy.scrollTo("end", anchor: .bottom) }
-            .onChange(of: a.transcript.count) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
-            .onChange(of: engine.thinkingSince) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+            .onScrollGeometryChange(for: Bool.self) { g in
+                g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 60
+            } action: { _, atBottom in
+                nearBottom = atBottom
+            }
+            // Only the player's own scrolling changes whether we follow: new text growing the page must not.
+            .onScrollPhaseChange { old, new in
+                if new == .interacting { follow = false }
+                if new == .idle, old == .interacting || old == .decelerating { follow = nearBottom }
+            }
+            .onChange(of: engine.streaming) { if follow { proxy.scrollTo("end", anchor: .bottom) } }
+            .onChange(of: a.transcript.count) {
+                if a.transcript.last?.role != .gm { follow = true }   // the player just spoke: show what comes next
+                if follow { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+            }
+            .onChange(of: engine.thinkingSince) { if follow { withAnimation { proxy.scrollTo("end", anchor: .bottom) } } }
             .onAppear { proxy.scrollTo("end", anchor: .bottom) }
+            .overlay(alignment: .bottomTrailing) {
+                if !follow {
+                    Button {
+                        follow = true
+                        withAnimation { proxy.scrollTo("end", anchor: .bottom) }
+                    } label: {
+                        Label("Latest", systemImage: "arrow.down")
+                            .font(.footnote.bold())
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .background(Theme.panel, in: Capsule())
+                            .overlay(Capsule().stroke(Theme.line))
+                    }
+                    .padding(12)
+                    .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    private var storyFont: Font { .system(size: textSize, design: .serif) }
+
+    /// Tapping a passage reads it aloud; tapping while the voice is going stops it instead of restarting.
+    private func toggleReading(_ text: String) {
+        if app.narrator.speaking || app.narrator.preparing {
+            app.narrator.stop()
+        } else {
+            app.narrator.speak(text)
         }
     }
 
