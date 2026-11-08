@@ -182,6 +182,8 @@ struct OptionCard<Extra: View>: View {
         .padding(12)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected && installed ? Theme.accent.opacity(0.7) : Theme.line))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture { if installed && !selected { use() } }
         .task { if let e = entry, app.store.facts[e.id] == nil { await app.store.loadFacts(e) } }
     }
 }

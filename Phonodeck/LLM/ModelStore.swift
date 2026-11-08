@@ -68,13 +68,17 @@ final class ModelStore {
         directory.appending(path: "models--" + id.replacingOccurrences(of: "/", with: "--"), directoryHint: .isDirectory)
     }
 
+    /// A downloaded copy with weights in it. Storytellers also need their config.json; voice and
+    /// listening models are packaged in different ways, so any weights file counts for them.
     nonisolated static func snapshotDirectory(_ id: String) -> URL? {
         let snaps = repoDirectory(id).appending(path: "snapshots", directoryHint: .isDirectory)
         let fm = FileManager.default
         guard let revs = try? fm.contentsOfDirectory(at: snaps, includingPropertiesForKeys: nil) else { return nil }
+        let needsConfig = ModelCatalog.entry(id).map { $0.kind == .language } ?? true
+        let weights = [".safetensors", ".bin", ".npz", ".pth", ".gguf"]
         return revs.first { rev in
-            fm.fileExists(atPath: rev.appending(path: "config.json").path)
-                && ((try? fm.subpathsOfDirectory(atPath: rev.path))?.contains { $0.hasSuffix(".safetensors") } ?? false)
+            (!needsConfig || fm.fileExists(atPath: rev.appending(path: "config.json").path))
+                && ((try? fm.subpathsOfDirectory(atPath: rev.path))?.contains { p in weights.contains { p.hasSuffix($0) } } ?? false)
         }
     }
 
@@ -161,6 +165,10 @@ final class ModelStore {
                         id: entry.id, revision: "main", matching: ["*"], useLatest: false, progressHandler: progress)
                 }
                 refreshInstalled()
+                if !installed.contains(entry.id) {
+                    download = .failed(id: entry.id, message: "\(entry.name) downloaded, but its files don't look like a model Phonodeck can load.")
+                    return
+                }
                 download = .idle
                 if entry.kind == .language, !hasLanguageModel { languageID = entry.id }
                 if entry.kind == .voice, voiceID == nil { voiceID = entry.id }
