@@ -443,7 +443,10 @@ final class StoryEngine {
         let maxOut = opening ? 520 : a.isShort ? 300 : 420
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
-        let notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks, opening: opening)
+        var notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks, opening: opening)
+        if !hidden, !playerNarrates, Self.moves(input) {
+            notes.insert("THE PLAYER IS MOVING: show them going where they said, the way there, and what they find when they arrive. People are where the scene puts them: someone elsewhere is found there, never suddenly beside the player.", at: playerAsks ? 1 : 0)
+        }
         let planning = gmPlans && !hidden
         func briefing(_ memories: [String], plan: String = "") -> String {
             "[GAME MASTER BRIEFING: private, for this reply only]\n"
@@ -611,7 +614,8 @@ final class StoryEngine {
         if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS (never break):\n" + limits }
         let facts = factsText(a)
         if !facts.isEmpty { prompt += "\n\n" + clip(facts, 1200) }
-        if !a.nextMove.isEmpty { prompt += "\n\nYOUR LOOK-AHEAD (written before the player spoke):\n" + clip(a.nextMove, 500) }
+        if !a.scene.isEmpty { prompt += "\n\nSCENE BEFORE THE PLAYER'S ACTION:\n" + a.scene }
+        if !a.nextMove.isEmpty { prompt += "\n\nYOUR LOOK-AHEAD (written before the player spoke; only if they went along):\n" + clip(a.nextMove, 500) }
         if let n = a.notes, !n.text.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + clip(n.text, 500) }
         else if !a.secrets.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + a.secrets.prefix(4).map { "- " + clip($0, 160) }.joined(separator: "\n") }
         if let m = a.mood.feeling { prompt += "\n\nFEELING READING: \(m)/10" + (a.mood.enjoying.isEmpty ? "" : ", enjoying " + a.mood.enjoying) + (a.mood.leavingPlot ? ", leaving the plot" : "") }
@@ -637,6 +641,7 @@ final class StoryEngine {
         let limits = limitsText(start)
         if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS:\n" + limits }
         prompt += "\n\nCURRENT FACTS:\n" + (start.facts.isEmpty ? "(none yet)" : start.facts.map { "- " + clip($0, 160) }.joined(separator: "\n"))
+        if !start.scene.isEmpty { prompt += "\n\nSCENE BEFORE THIS REPLY:\n" + start.scene }
         let people = start.cast.prefix(6).map { "- \($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc, 160) }
         if !people.isEmpty { prompt += "\n\nPEOPLE:\n" + people.joined(separator: "\n") }
         let played = start.elapsed / 60
@@ -659,6 +664,7 @@ final class StoryEngine {
         }
         now.fixes = fixes
         if let n = (m["next"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { now.nextMove = clip(n, 600) }
+        if let sc = (m["scene"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), sc.count > 10 { now.scene = clip(sc, 600) }
         adventure = now
         library.save(now)
     }
@@ -685,8 +691,16 @@ final class StoryEngine {
     static func asks(_ input: String) -> Bool {
         let t = input.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.contains("?") { return true }
-        let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b"#
+        // Also a question in the middle of a message without a question mark (dictation drops them):
+        // "I'm freaked out. What happened to my crew".
+        let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b|\b(how|what|why|who|where|when|which)\s+(happened|happens|is|are|was|were|did|do|does|can|could|should|will|would|has|have)\b"#
         return t.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// The player says they go somewhere or look for someone ("I go find the caretaker").
+    static func moves(_ input: String) -> Bool {
+        let pattern = #"(?i)\b(go|goes|going|gotta go|head|heading|walk|walking|run|running|hurry|climb|swim|follow|leave|return|go back|look for|looking for|search for|go find|try to find)\b"#
+        return input.range(of: pattern, options: .regularExpression) != nil
     }
 
     /// The player writes prose rather than commands.
@@ -765,6 +779,7 @@ final class StoryEngine {
     private func briefingText(_ a: Adventure, memories: [String], director: [String], withFacts: Bool = true) -> String {
         var lines: [String] = []
         if withFacts {
+            if !a.scene.isEmpty { lines.append("SCENE BEFORE THE PLAYER'S ACTION (only people present can speak or act; anyone elsewhere stays there until the player reaches them or they visibly arrive):\n" + a.scene); lines.append("") }
             let f = factsText(a)
             if !f.isEmpty { lines.append(f); lines.append("") }
         }
@@ -803,6 +818,7 @@ final class StoryEngine {
             let me = a.lore.first(where: \.isPlayer)?.desc ?? ""
             return [
                 "THIS IS THE OPENING SCENE. The listener cannot see anything yet: your words are their eyes. First tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and what is around them, then paint it with sound, smell, light and texture.",
+                "Say plainly who is with the player right now, and exactly where anyone else is (never \"might be\"). The player has only what the set-up and facts say they have, nothing more.",
                 me.isEmpty ? "Make clear who the player is here and why they are in this place." : "Make clear who the player is here (\(clip(me, 200))) and why they are in this place.",
                 "FEELING TO ACHIEVE: " + (a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling) + ". Set it up from the first lines.",
                 "Ignore the usual reply length: the opening may run to about 230 words.",
@@ -972,6 +988,7 @@ final class StoryEngine {
             a.facts = now.facts
             a.fixes = now.fixes
             a.nextMove = now.nextMove
+            a.scene = now.scene
             // Entries the player edited or added in the World panel meanwhile win.
             for e in now.lore where e.byPlayer {
                 if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
