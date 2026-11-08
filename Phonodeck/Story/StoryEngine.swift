@@ -32,8 +32,14 @@ final class StoryEngine {
     /// The plan and the look-ahead use the model's reasoning mode (Qwen's thinking): much slower,
     /// up to about a minute per turn, but the Game Master really works the problem first.
     var deepThinking: Bool { didSet { UserDefaults.standard.set(deepThinking, forKey: "deepThinking") } }
-    /// Words of hidden reasoning the model has written in the current step.
-    var thoughtWords: Int { llm.thoughtChars / 6 }
+    /// How far the current reasoning step is toward its room to think (0 to 1), or nil when
+    /// nothing is reasoning. About 4 characters a token.
+    var thinkingProgress: Double? {
+        guard thinkBudget > 0, llm.thoughtChars > 0 else { return nil }
+        return min(1, Double(llm.thoughtChars) / 4 / Double(thinkBudget))
+    }
+    /// The token room of the reasoning call under way (0 when none is).
+    private var thinkBudget = 0
     /// Hands-free: the microphone opens after every reply, and the send phrase sends.
     private(set) var handsFree = false
 
@@ -580,6 +586,8 @@ final class StoryEngine {
     /// then the call is made again without it.
     private func think(_ prompt: String, quickTokens: Int, deepTokens: Int, temperature: Float) async -> String {
         if deepThinking {
+            thinkBudget = deepTokens
+            defer { thinkBudget = 0 }
             let out = (try? await llm.complete(system: nil, prompt: prompt,
                                                options: .init(maxTokens: deepTokens, temperature: 0.6, repetitionPenalty: nil, thinking: true))) ?? ""
             if !out.isEmpty || Task.isCancelled { return out }
