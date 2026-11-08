@@ -283,7 +283,7 @@ final class Narrator: NSObject {
         let path = dir.path
         UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
         defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
-        let m = try await MLXGate.shared.run(urgent: true) {
+        let m = try await MLXGate.shared.run(urgent: true, label: "loading the \(entry.name) voice") {
             try await withError { error in
                 let model = try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache)
                 try error.check()
@@ -331,20 +331,22 @@ final class Narrator: NSObject {
                     UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
                     defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
                     let chip = onCPU ? "processor" : "graphics chip"
-                    self.detail = "Waiting for the storyteller to finish with the \(chip)…"
+                    self.detail = "Waiting for its turn on the \(chip)…"
                     let started = Date()
                     // Ticks while synthesis runs, so a stuck or slow step shows how long it has been.
                     let ticker = Task { @MainActor in
                         while !Task.isCancelled {
                             try? await Task.sleep(for: .seconds(5))
+                            let busy = await MLXGate.shared.status()
                             guard !Task.isCancelled, self.generation == myGeneration, let d = self.detail else { return }
                             let base = d.components(separatedBy: " (").first ?? d
-                            self.detail = base + " (\(Int(Date().timeIntervalSince(started))) s so far)"
+                            let waitingOn = base.hasPrefix("Waiting") ? busy.map { "; held by \($0)" } ?? "" : ""
+                            self.detail = base + " (\(Int(Date().timeIntervalSince(started))) s so far\(waitingOn))"
                         }
                     }
                     defer { ticker.cancel() }
                     // An MLX failure becomes a Swift error (and Apple's voice takes over) instead of a crash.
-                    let samples = try await MLXGate.shared.run(urgent: true) { () async throws -> [Float] in
+                    let samples = try await MLXGate.shared.run(urgent: true, label: "the \(entry.name) voice on the \(chip)") { () async throws -> [Float] in
                         await MainActor.run { self.detail = "Making speech on the \(chip)…" }
                         return try await Self.onChosenDevice(onCPU) {
                             try await withError { error in
@@ -455,7 +457,7 @@ extension Narrator: AVSpeechSynthesizerDelegate {
 enum NeuralVoiceWarmup {
     static func warm(directory: URL) async throws {
         let path = directory.path
-        _ = try await MLXGate.shared.run {
+        _ = try await MLXGate.shared.run(label: "preparing a downloaded voice") {
             try await withError { error in
                 let model = try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache)
                 let audio = try await model.generate(text: "Hello.", voice: "af_heart", refAudio: nil, refText: nil, language: nil)

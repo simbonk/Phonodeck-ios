@@ -53,18 +53,19 @@ final class AppModel {
         if let space = vault.unlocked { library.open(space) }
         MLXCrashRecorder.install()
         let lastError = MLXCrashRecorder.takeLast()
-        let reason = lastError.map { " (MLX said: \($0))" } ?? ""
-        // A neural voice crashed the app last time. First retry it on the processor instead of the
-        // graphics chip; if it crashes there too, go back to Apple's voice rather than crash again.
+        // The automatic switch to the processor made Kokoro hang without a sound, so it is undone
+        // once; the switch is now only ever turned on by hand.
+        if !UserDefaults.standard.bool(forKey: "neuralOnCPUReset1") {
+            UserDefaults.standard.set(true, forKey: "neuralOnCPUReset1")
+            Narrator.neuralOnCPU = false
+        }
+        // A neural voice was working when the app last closed. That is often just Xcode stopping
+        // the app, so only an actual MLX error message counts as a crash worth mentioning.
         if let id = UserDefaults.standard.string(forKey: "voiceInFlight") {
             UserDefaults.standard.removeObject(forKey: "voiceInFlight")
             let name = ModelCatalog.entry(id)?.name ?? "neural"
-            if !Narrator.neuralOnCPU {
-                Narrator.neuralOnCPU = true
-                notice = "The \(name) voice closed Phonodeck last time\(reason). It will now run on the processor instead of the graphics chip, which is a little slower but steadier. Try Listen again."
-            } else {
-                if store.voiceID == id { store.voiceID = nil }
-                notice = "The \(name) voice closed Phonodeck again, even on the processor\(reason), so the narrator is back on Apple's voice."
+            if let lastError {
+                notice = "The \(name) voice closed Phonodeck last time. MLX said: \(lastError)"
             }
         } else if let lastError {
             notice = "Phonodeck closed last time because of an MLX error: \(lastError)"

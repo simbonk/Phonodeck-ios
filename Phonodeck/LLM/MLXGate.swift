@@ -8,18 +8,28 @@ actor MLXGate {
     static let shared = MLXGate()
 
     private var held = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var waiters: [(CheckedContinuation<Void, Never>, String)] = []
+    /// What holds the gate now and since when, so a waiting voice can say what it is waiting for.
+    private(set) var holder: String?
+    private(set) var heldSince: Date?
 
-    func acquire(urgent: Bool = false) async {
-        if !held { held = true; return }
+    func acquire(urgent: Bool = false, label: String = "the storyteller") async {
+        if !held { held = true; holder = label; heldSince = .now; return }
         await withCheckedContinuation { c in
-            if urgent { waiters.insert(c, at: 0) } else { waiters.append(c) }
+            if urgent { waiters.insert((c, label), at: 0) } else { waiters.append((c, label)) }
         }
     }
 
+    /// "the storyteller (for 12 s)", or nil when the gate is free.
+    func status() -> String? {
+        guard held, let holder else { return nil }
+        let s = heldSince.map { Int(Date.now.timeIntervalSince($0)) } ?? 0
+        return "\(holder), busy for \(s) s"
+    }
+
     /// Runs `body` while holding the gate. The work itself runs off the main thread.
-    nonisolated func run<T: Sendable>(urgent: Bool = false, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
-        await acquire(urgent: urgent)
+    nonisolated func run<T: Sendable>(urgent: Bool = false, label: String = "the storyteller", _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+        await acquire(urgent: urgent, label: label)
         do {
             let v = try await Task.detached(priority: .userInitiated) { try await body() }.value
             await release()
@@ -31,7 +41,13 @@ actor MLXGate {
     }
 
     func release() {
-        if waiters.isEmpty { held = false } else { waiters.removeFirst().resume() }
+        if waiters.isEmpty {
+            held = false; holder = nil; heldSince = nil
+        } else {
+            let (c, label) = waiters.removeFirst()
+            holder = label; heldSince = .now
+            c.resume()
+        }
     }
 }
 
