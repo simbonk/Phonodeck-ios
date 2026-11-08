@@ -66,7 +66,11 @@ enum Recall {
 
     /// Relevant memories for this turn, as briefing lines, within `budget` characters.
     /// `olderTurns` are the turns not already in the conversation the model sees, with their numbers.
-    static func memories(for a: Adventure, input: String, olderTurns: [(Int, StoryTurn)], chaptersInPrompt: Int, budget: Int) async -> [String] {
+    /// `earlier` are the stories this one continues ("Same cast, new story"), nearest first: their
+    /// chapters and turns are searched too, so asking about something from a past story finds it.
+    /// Their people and places already live in this story's lore.
+    static func memories(for a: Adventure, input: String, olderTurns: [(Int, StoryTurn)], chaptersInPrompt: Int, budget: Int,
+                         earlier: [Adventure] = []) async -> [String] {
         guard budget > 200 else { return [] }
         func loreLine(_ e: LoreEntry) -> String {
             let label = e.kind == .person && !e.known && !e.role.isEmpty ? "\(e.name), known to the player only as \"\(e.role)\"" : e.name
@@ -86,6 +90,16 @@ enum Recall {
         }
         for (i, c) in a.chapters.dropLast(chaptersInPrompt).enumerated() {
             docs.append(Doc(kind: "C", text: "Chapter \(i + 1): " + c, terms: tokens(c)))
+        }
+        for s in earlier {
+            let tag = "From the earlier story \"\(s.report?.title ?? s.title)\", "
+            for (i, c) in s.chapters.enumerated() {
+                docs.append(Doc(kind: "C", text: tag + "chapter \(i + 1): " + c, terms: tokens(c)))
+            }
+            // Its last few hundred turns at most, so a long saga stays quick to search.
+            for (n, t) in s.transcript.enumerated().suffix(300) {
+                docs.append(Doc(kind: "T", text: tag + "turn \(n + 1) " + (t.role == .player ? "player" : "story") + ": " + t.text, terms: tokens(t.text)))
+            }
         }
         // Short replies ("yes", "open it") need the end of the last reply to find the right memories.
         let lastGM = a.transcript.last { $0.role == .gm }?.text ?? ""

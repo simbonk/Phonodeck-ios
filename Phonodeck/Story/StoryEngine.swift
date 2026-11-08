@@ -128,12 +128,52 @@ final class StoryEngine {
 
     // MARK: Building a world
 
-    func create(_ e: Experience, player: PlayerDetails) {
+    /// "Same cast, new story": a new story with an earlier one's cast and world. `link` is how it
+    /// connects (one of `Prompts.sequelLinks`), `hook` what happens this time (may be empty).
+    func createSequel(from src: Adventure, link: String, hook: String, minutes: Int) {
+        var e = src.setup
+        e.id = UUID()
+        e.title = ""
+        e.minutes = minutes
+        e.hook = hook.trimmingCharacters(in: .whitespacesAndNewlines)
+        e.beats = ""
+        var player = PlayerDetails.saved
+        if player.name.isEmpty { player.name = src.playerName }
+        create(e, player: player, source: src, link: link)
+    }
+
+    /// The earlier story, as the architect reads it for a sequel.
+    private func sourceWorld(_ src: Adventure) -> String {
+        var s = "EARLIER STORY: \"" + (src.report?.title ?? src.title) + "\"\nBIBLE:\n" + clip(src.bible, 1800)
+        let lore = src.lore.filter { !$0.isPlayer }.prefix(14)
+        if !lore.isEmpty { s += "\nPEOPLE, PLACES AND THINGS:\n" + lore.map { "- \($0.name) (\($0.kind.rawValue)): " + clip($0.desc, 200) }.joined(separator: "\n") }
+        if let r = src.report, !r.summary.isEmpty { s += "\nHOW IT WENT:\n" + clip(r.summary, 900) }
+        else if !src.chapters.isEmpty { s += "\nHOW IT WENT:\n" + src.chapters.suffix(4).map { "- " + clip($0, 300) }.joined(separator: "\n") }
+        if let last = src.transcript.last(where: { $0.role == .gm }) { s += "\nHOW IT ENDED:\n" + clip(last.text, 700) }
+        return s
+    }
+
+    /// The stories this one continues, nearest first (none for a fresh start or a prequel, whose
+    /// earlier events haven't happened).
+    private func earlierStories(_ a: Adventure) -> [Adventure] {
+        guard a.link.range(of: "fresh|prequel", options: [.regularExpression, .caseInsensitive]) == nil else { return [] }
+        var out: [Adventure] = []
+        var seen: Set<UUID> = [a.id]
+        var next = a.sequelOf
+        while let id = next, !seen.contains(id), let s = library.adventures.first(where: { $0.id == id }) {
+            out.append(s)
+            seen.insert(id)
+            next = s.link.range(of: "fresh|prequel", options: [.regularExpression, .caseInsensitive]) == nil ? s.sequelOf : nil
+        }
+        return out
+    }
+
+    func create(_ e: Experience, player: PlayerDetails, source: Adventure? = nil, link: String = "") {
         stopAll()
         busy = true
         building = true
         error = nil
-        let forge = Forge(name: e.title.isEmpty ? "Your world" : e.title, curated: CuratedExperiences.all.contains { $0.id == e.id })
+        let forge = Forge(name: e.title.isEmpty ? (source.map { $0.report?.title ?? $0.title } ?? "Your world") : e.title, curated: CuratedExperiences.all.contains { $0.id == e.id })
         self.forge = forge
         ComputerSounds.shared.startHum()
         currentTask = Task {
@@ -149,8 +189,10 @@ final class StoryEngine {
 
             var a = Adventure(setup: e, title: e.title.isEmpty ? "Untitled" : e.title, minutes: max(5, e.minutes))
             a.playerName = player.name
-            let request = (e.simulator ? Prompts.architect + "\n" + Prompts.architectSimulator : Prompts.architect)
-            let prompt = "PLAYER'S ANSWERS\n" + e.answers(player: player)
+            var request = (e.simulator ? Prompts.architect + "\n" + Prompts.architectSimulator : Prompts.architect)
+            if source != nil { request += "\n" + Prompts.sequel }
+            let prompt = (source.map { sourceWorld($0) + "\n\nCONNECTION TO THE EARLIER STORY: " + link + "\n\n" } ?? "")
+                + "PLAYER'S ANSWERS\n" + e.answers(player: player)
                 + "\n\nFEELING TO ACHIEVE: " + (e.feeling.isEmpty ? "surprise me" : e.feeling)
                 + "\nPLAY MODE: " + (e.simulator ? "experience (no plot)" : "story")
                 + "\nSESSION LENGTH: \(a.minutes) minutes (about \(max(3, a.minutes * 60 / 90)) player replies)."
@@ -173,6 +215,21 @@ final class StoryEngine {
             }
             guard !Task.isCancelled else { return }
             apply(plan ?? [:], to: &a, setup: e, player: player)
+            if let src = source {
+                // The returning cast and world come along; the architect's own entries stay on top.
+                a.sequelOf = src.id
+                a.link = link
+                for old in src.lore where !old.isPlayer {
+                    if let i = a.lore.firstIndex(where: { $0.name.caseInsensitiveCompare(old.name) == .orderedSame }) {
+                        if old.byPlayer { a.lore[i] = old } else { a.lore[i].known = true }
+                    } else if a.lore.count < 40 {
+                        var returning = old
+                        returning.known = true
+                        returning.updatedTurn = nil
+                        a.lore.append(returning)
+                    }
+                }
+            }
             forge.reach(Forge.stages.count - 1)
             adventure = a
             undoSnapshot = nil
@@ -389,7 +446,8 @@ final class StoryEngine {
         let keptIDs = Set(kept.map { $0.1.id })
         let older = a.transcript.enumerated().filter { !keptIDs.contains($0.element.id) }.map { ($0.offset + 1, $0.element) }
         let room = min(Self.recallChars, max(0, (budget - used) * 7 / 2))
-        let memories = hidden ? [] : await Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: min(6, a.chapters.count), budget: room)
+        let memories = hidden ? [] : await Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: min(6, a.chapters.count), budget: room,
+                                                           earlier: earlierStories(a))
         guard !Task.isCancelled else { adventure = snapshot; return }
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
 

@@ -146,6 +146,13 @@ enum Prompts {
     This is an EXPERIENCE with no plot: no threat, villain, mystery or twist. "beats" is [] and "roadmap" is []. "secrets" are small delights to discover. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
 
+    /// "Same cast, new story" (the web app's SEQUEL_RULES, shortened for small models).
+    static let sequel = """
+    This new story REUSES THE CAST AND WORLD of an earlier one (EARLIER STORY below). Keep every returning character's name, personality, way of speaking and relationships, and keep the places and items; the bible introduces them as returning. Facts the player set by hand are kept exactly. Follow the connection: for a sequel or "years later", the earlier events really happened and have consequences (changed relationships, debts, scars, reputations); for a fresh start or a prequel they have not happened, so describe everyone as they were before. Invent a NEW central plot, secrets and roadmap; never repeat the earlier plot. "lore" lists the returning people (with "known": true and fresh wants) plus any new ones; the returning cast is the heart of the story.
+    """
+
+    static let sequelLinks = ["Sequel: it picks up after the last story", "Years later", "Fresh start: same cast, new story", "Prequel: before it all began"]
+
     // MARK: Memory
 
     static let memory = """

@@ -33,7 +33,9 @@ The iPhone follows the same flow as the web app's [How the Phonodeck Works](http
 4. **The memory pass** runs after the reply: new people and places, events, where you are (and the route you took, for the mission map), which story steps are done, and how well the feeling is landing. Every 6 turns older turns fold into a chapter summary.
 5. **Housekeeping**, at most one extra call per turn and only every few turns: the hidden **showrunner's notes** (each character's wants, fears, secret and next move, open threads and a big reveal) are made after turn 2 and revised every 10 turns or after you edit the world by hand, and the **story bible** is rewritten at turns 10, 20, 30 so it stays current. When the notes exist, the director sometimes asks a character to act on their agenda.
 
-Not on the phone yet: the photo reader, Gemini's dictation clean-up, and "Same cast, new story".
+**Same cast, new story.** A saved story's menu can start a new story with its cast and world, as a sequel, years later, a fresh start or a prequel. The returning people, places and hand-set facts carry over, and for a sequel or years later, recall also searches the earlier stories' chapters and turns (following the chain back through every sequel), so asking about something from a past story finds it. This is all plain code, with no extra model call.
+
+Not on the phone yet: the photo reader and Gemini's dictation clean-up.
 
 **Memory.** None of this loads anything new. Only one model call runs at a time, and every prompt (the plan, the Game Master's, the memory pass, the notes, the bible, and the Chat tab) is checked against the 4,096-token conversation size the fit check below budgets for. If a prompt would go over, the oldest turns are dropped first (recall can still find them), so the extra steps never raise peak memory above a normal turn.
 

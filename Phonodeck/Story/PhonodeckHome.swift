@@ -9,6 +9,8 @@ struct PhonodeckHome: View {
     @State private var curatorStart: Experience?
     @State private var importing = false
     @State private var showContinue = true
+    /// The finished or saved story a "Same cast, new story" sheet is open for.
+    @State private var sameCast: Adventure?
 
     var body: some View {
         NavigationStack {
@@ -28,6 +30,12 @@ struct PhonodeckHome: View {
         }
         .fullScreenCover(isPresented: $curator) {
             CuratorView(start: curatorStart)
+        }
+        .sheet(item: $sameCast) { src in
+            SameCastSheet(source: src) { link, hook, minutes in
+                sameCast = nil
+                app.engine.createSequel(from: src, link: link, hook: hook, minutes: minutes)
+            }
         }
         .onChange(of: app.pendingExperience) { _, e in
             if let e { open(e); app.pendingExperience = nil }
@@ -134,6 +142,9 @@ struct PhonodeckHome: View {
             }
             .buttonStyle(.plain)
             Menu {
+                if app.store.hasLanguageModel {
+                    Button { sameCast = a } label: { Label("Same cast, new story", systemImage: "arrow.triangle.2.circlepath") }
+                }
                 if let url = app.library.exportFile(a.setup) {
                     ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }
                 }
@@ -223,5 +234,50 @@ struct StorytellerCard: View {
                 if let e = ModelCatalog.entry(id) { await app.store.loadFacts(e) }
             }
         }
+    }
+}
+
+/// "Same cast, new story": a short set-up for a new story with a saved story's cast and world.
+/// The new story remembers the old one: recall searches its chapters and turns as you play.
+struct SameCastSheet: View {
+    let source: Adventure
+    let build: (_ link: String, _ hook: String, _ minutes: Int) -> Void
+    @State private var link = Prompts.sequelLinks[0]
+    @State private var hook = ""
+    @State private var minutes = 20
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("How it connects", selection: $link) {
+                        ForEach(Prompts.sequelLinks, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                } header: {
+                    Text("How does the new story connect?")
+                } footer: {
+                    Text("Same cast and world either way. In a sequel or years later, the new story remembers the old one and can look back through it when you ask about the past.")
+                }
+                Section("What happens this time? (optional)") {
+                    TextField("Leave blank to be surprised", text: $hook, axis: .vertical)
+                        .lineLimit(2...4)
+                }
+                Section("Length") {
+                    Picker("Minutes", selection: $minutes) {
+                        ForEach([10, 15, 20, 30, 45, 60], id: \.self) { Text("\($0) minutes").tag($0) }
+                    }
+                }
+            }
+            .navigationTitle(source.report?.title ?? source.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Build") { build(link, hook, minutes) } }
+            }
+        }
+        .onAppear { minutes = [10, 15, 20, 30, 45, 60].min { abs($0 - source.minutes) < abs($1 - source.minutes) } ?? 20 }
     }
 }
