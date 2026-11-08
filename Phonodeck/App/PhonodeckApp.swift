@@ -136,7 +136,7 @@ struct RootView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: Binding(get: { (!onboarded || !adult) && !app.vault.isLocked }, set: { if !$0, adult { onboarded = true } })) {
+        .fullScreenCover(isPresented: Binding(get: { (!onboarded || !adult) && !app.vault.isLocked && app.notice == nil }, set: { if !$0, adult { onboarded = true } })) {
             WelcomeView { onboarded = true; app.tab = .phonodeck }
         }
         .alert("Phonodeck", isPresented: Binding(get: { app.notice != nil }, set: { if !$0 { app.notice = nil } })) {
