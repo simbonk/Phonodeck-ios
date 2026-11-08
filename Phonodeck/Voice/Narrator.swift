@@ -4,6 +4,7 @@ import MLX
 import MLXAudioCore
 import MLXAudioTTS
 import Observation
+import os
 
 /// Reads the story aloud, sentence by sentence, while the model is still writing it.
 ///
@@ -272,6 +273,11 @@ final class Narrator: NSObject {
         MLX.Memory.clearCache()
     }
 
+    /// Keeps MLX's pool of reusable GPU buffers small while only a voice is loaded.
+    static func limitCache() {
+        if MLX.Memory.cacheLimit == 0 || MLX.Memory.cacheLimit > 64 * 1024 * 1024 { MLX.Memory.cacheLimit = 64 * 1024 * 1024 }
+    }
+
     private func loadNeural(_ entry: ModelEntry) async throws -> SpeechGenerationModel {
         if let m = ttsModel, ttsModelID == entry.id { return m }
         ttsModel = nil
@@ -280,6 +286,7 @@ final class Narrator: NSObject {
         }
         preparing = true
         defer { preparing = false }
+        Self.limitCache()
         let path = dir.path
         UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
         defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
@@ -354,7 +361,11 @@ final class Narrator: NSObject {
                                     text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
                                 audio.eval()
                                 try error.check()
-                                return audio.asArray(Float.self)
+                                let samples = audio.asArray(Float.self)
+                                // MLX keeps freed GPU buffers for reuse; without a limit they pile up
+                                // across sentences until iOS closes the app for using too much memory.
+                                MLX.Memory.clearCache()
+                                return samples
                             }
                         }
                     }
@@ -362,7 +373,10 @@ final class Narrator: NSObject {
                     guard self.generation == myGeneration else { return }
                     let seconds = Double(samples.count) / Double(model.sampleRate)
                     let loudest = samples.reduce(Float(0)) { max($0, abs($1)) }
-                    self.detail = String(format: "Made %.1f s of speech in %.1f s on the \(chip).", seconds, Date().timeIntervalSince(started))
+                    let gb = { (bytes: Int) in Double(bytes) / 1_073_741_824 }
+                    self.detail = String(format: "Made %.1f s of speech in %.1f s on the \(chip). Memory %.1f GB, peak %.1f GB, %.1f GB free.",
+                                         seconds, Date().timeIntervalSince(started), gb(MLX.Memory.activeMemory), gb(MLX.Memory.peakMemory),
+                                         gb(os_proc_available_memory()))
                     if samples.isEmpty || loudest < 0.0001 {
                         self.lastError = "\(entry.name) made silence for that sentence (\(samples.count) samples)."
                     }
