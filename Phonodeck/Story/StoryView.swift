@@ -242,7 +242,8 @@ struct StoryView: View {
         VStack(spacing: 8) {
             HoloCore(size: 64)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                Text("The Phonodeck is thinking… \(Int(ctx.date.timeIntervalSince(since)))s")
+                // Names the step underway (the Game Master planning, then the storyteller writing).
+                Text((engine.stage.isEmpty ? "The Phonodeck is thinking" : engine.stage) + "… \(Int(ctx.date.timeIntervalSince(since)))s")
                     .font(.footnote.monospacedDigit()).foregroundStyle(Theme.dim)
             }
         }

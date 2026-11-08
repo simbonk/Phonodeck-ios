@@ -99,14 +99,30 @@ enum Prompts {
     """
 
     static func openingInstruction(simulator: Bool, short: Bool) -> String {
+        let stage = "Start with two or three plain, simple sentences that set the stage: where the player is (name the place), what they are doing, and what they can see around them. Then paint the scene with what they hear, smell and feel, in specific detail that could only belong to this place, so the listener can picture it with their eyes closed."
         if simulator {
-            return "Begin the experience. Write an opening of 120 to 180 words. Start with two plain sentences: where the player is, what they are doing, what they see. Then place them inside the world, painted in specific detail, delivering the FEELING TO ACHIEVE. At most one person with a distinct voice. No threat. Do not end with a list of options."
+            return "Begin the experience. This is the opening scene, so it may run longer than other replies: 150 to 230 words. " + stage + " Place the player right inside the world, already there, delivering the FEELING TO ACHIEVE and making their goal feel within reach. At most one person with a distinct voice and a touch of gentle humour. No threat, no hook, no mystery. Do not end with a list of options."
         }
         if short {
-            return "Begin the story. Write a clean, gripping opening of 80 to 130 words. Start with two plain sentences: where the player is, what they are doing, what they see. Introduce one character with a distinct voice, make the goal obvious, and end on a simple hook. Do not end with a list of options."
+            return "Begin the story. This is the opening scene: 100 to 150 words. " + stage + " Then drop the player into one clear, vivid moment, introduce one character with a distinct voice and a telling detail, make the goal obvious, and end on a simple, irresistible hook. Do not end with a list of options."
         }
-        return "Begin the adventure. Write an opening of 120 to 180 words. Start with two plain sentences: where the player is, what they are doing, what they see. Then drop the player into a vivid moment already in motion that sets up the FEELING TO ACHIEVE. Introduce at most one named character, with a want of their own. End on an unresolved hook. Do not end with a list of options."
+        return "Begin the adventure. This is the opening scene, so it may run longer than other replies: 150 to 230 words. " + stage + " Then drop the player into a vivid moment already in motion that sets up the FEELING TO ACHIEVE from the first lines. Introduce at most one named character, with a distinct voice, a want of their own and two telling details (anyone else present is known by their role). End on an unresolved hook. Do not end with a list of options."
     }
+
+    // MARK: The Game Master's plan (a short private step before each reply)
+
+    /// The web app's story model thinks before it writes (Gemini's reasoning). The phone model's own
+    /// thinking is off because it is unbounded and slow, so instead the Game Master writes a short,
+    /// capped plan first: it reviews the state, the clock, the goal and the recalled memories and
+    /// decides what this reply must do. The plan then leads the briefing for the reply itself.
+    static let gmPlan = """
+    You are the Game Master of an interactive audio story, planning your next reply in private before you write it. Read the story state, the clock, the recalled memories and what the player just did, then output ONLY these four short lines, nothing else:
+    PLAYER: what the player is doing or asking, and what they want from it (if they asked something, the concrete answer you will give)
+    BEAT: what happens in this reply, and how it delivers the FEELING TO ACHIEVE and fits the clock and the roadmap
+    USE: one memory, character, place or earlier detail from the state to bring back in this reply
+    KEEP: one fact that must stay consistent (who is present, where you are, what was said)
+    Each line at most 25 words. Plain words, no prose for the player.
+    """
 
     // MARK: Building the world
 

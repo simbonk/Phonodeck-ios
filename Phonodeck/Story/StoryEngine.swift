@@ -3,7 +3,7 @@ import Observation
 
 /// The story engine: builds the world, runs each turn, keeps the clock, remembers what
 /// happened, and writes the report card. Ported from the web app's engine.js and following the
-/// same flow (see How the Phonodeck Works): recall before each reply, one Game Master call, a
+/// same flow (see How the Phonodeck Works): recall before each reply, a short Game Master plan, the reply, a
 /// memory pass after it, and housekeeping (the showrunner's notes, a bible rewrite) every ten
 /// turns. Only one model call runs at a time and every prompt is held to the context size the
 /// fit check planned for, so the extra steps never raise peak memory.
@@ -27,6 +27,8 @@ final class StoryEngine {
 
     /// Read replies aloud as they are written.
     var narrate: Bool { didSet { UserDefaults.standard.set(narrate, forKey: "narrate") } }
+    /// The Game Master writes a short private plan before each reply (a few seconds more per turn).
+    var gmPlans: Bool { didSet { UserDefaults.standard.set(gmPlans, forKey: "gmPlans") } }
     /// Hands-free: the microphone opens after every reply, and the send phrase sends.
     private(set) var handsFree = false
 
@@ -51,6 +53,7 @@ final class StoryEngine {
         self.dictation = dictation
         self.library = library
         narrate = UserDefaults.standard.object(forKey: "narrate") as? Bool ?? true
+        gmPlans = UserDefaults.standard.object(forKey: "gmPlans") as? Bool ?? true
         narrator.onFinished = { [weak self] in self?.narrationFinished() }
         dictation.onSend = { [weak self] text in self?.send(text) }
     }
@@ -354,19 +357,24 @@ final class StoryEngine {
         clockTick(&a, hidden: hidden)
         if forceFinal { a.left = 0 }
         let system = systemPrompt(a)
-        let maxOut = a.isShort ? 300 : 420
+        let opening = hidden && a.transcript.isEmpty
+        // The opening scene paints the place, so it gets more room than an ordinary reply.
+        let maxOut = opening ? 520 : a.isShort ? 300 : 420
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
-        let notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks)
-        func briefing(_ memories: [String]) -> String {
-            "[GAME MASTER BRIEFING: private, for this reply only]\n" + briefingText(a, memories: memories, director: notes)
+        let notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks, opening: opening)
+        let planning = gmPlans && !hidden
+        func briefing(_ memories: [String], plan: String = "") -> String {
+            "[GAME MASTER BRIEFING: private, for this reply only]\n"
+                + (plan.isEmpty ? "" : "YOUR PLAN FOR THIS REPLY (you wrote it after reviewing the story; carry it out)\n" + plan + "\n\n")
+                + briefingText(a, memories: memories, director: notes)
                 + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
         }
 
         // Fit everything into the context the fit check planned for: the system prompt and the
         // briefing first, then the last few turns, then recalled memories, then older turns.
         stage = "Recalling memories"
-        let budget = LLMService.contextBudget - maxOut - 200
+        let budget = LLMService.contextBudget - maxOut - 200 - (planning ? Self.planTokens + 40 : 0)
         let fixed = Self.tokens(system) + Self.tokens(briefing([]))
         let recent = Array(a.transcript.enumerated()).dropFirst(a.summarisedTurns).suffix(10)
         let recallReserve = Self.recallChars * 2 / 7
@@ -381,17 +389,26 @@ final class StoryEngine {
         let keptIDs = Set(kept.map { $0.1.id })
         let older = a.transcript.enumerated().filter { !keptIDs.contains($0.element.id) }.map { ($0.offset + 1, $0.element) }
         let room = min(Self.recallChars, max(0, (budget - used) * 7 / 2))
-        let memories = hidden ? [] : Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: min(6, a.chapters.count), budget: room)
-        var history = kept.map { ChatTurn(role: $0.1.role == .player ? .user : .assistant, text: $0.1.text) }
-        if history.first?.role == .assistant { history.insert(ChatTurn(role: .user, text: "(The story begins.)"), at: 0) }
-        history.append(ChatTurn(role: .user, text: briefing(memories)))
+        let memories = hidden ? [] : await Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: min(6, a.chapters.count), budget: room)
+        guard !Task.isCancelled else { adventure = snapshot; return }
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
 
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
         adventure = a
         streaming = ""
-        stage = "The storyteller is thinking"
         thinkingSince = Date()
+
+        // The Game Master reviews the state and plans the reply (a separate, short model call).
+        var plan = ""
+        if planning {
+            stage = "The Game Master is planning"
+            plan = await makePlan(snapshot: a, input: input, memories: memories, notes: notes)
+            guard !Task.isCancelled else { adventure = snapshot; return }
+        }
+        var history = kept.map { ChatTurn(role: $0.1.role == .player ? .user : .assistant, text: $0.1.text) }
+        if history.first?.role == .assistant { history.insert(ChatTurn(role: .user, text: "(The story begins.)"), at: 0) }
+        history.append(ChatTurn(role: .user, text: briefing(memories, plan: plan)))
+        stage = "The storyteller is writing"
         if narrate { narrator.begin() }
         var reply = ""
         do {
@@ -444,6 +461,29 @@ final class StoryEngine {
             busy = false
             listenIfReady()
         }
+    }
+
+    /// The longest plan the Game Master may write before a reply.
+    static let planTokens = 150
+
+    /// The Game Master's private plan for the next reply: one short model call over a compact view
+    /// of the story (its own briefing, the bible, the last exchange and what the player just did).
+    /// The prompt is kept far below the context the fit check planned for, so it never raises
+    /// peak memory, and the output is capped so it adds only a few seconds.
+    private func makePlan(snapshot a: Adventure, input: String, memories: [String], notes: [String]) async -> String {
+        var prompt = Prompts.gmPlan + "\n\nSTORY BIBLE:\n" + clip(a.bible, 1400)
+        if let n = a.notes, !n.text.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + clip(n.text, 900) }
+        else if !a.secrets.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + a.secrets.prefix(4).map { "- " + clip($0, 200) }.joined(separator: "\n") }
+        if let m = a.mood.feeling { prompt += "\n\nFEELING READING: \(m)/10" + (a.mood.enjoying.isEmpty ? "" : ", enjoying " + a.mood.enjoying) + (a.mood.leavingPlot ? ", leaving the plot" : "") }
+        prompt += "\n\nSTORY STATE:\n" + clip(briefingText(a, memories: memories, director: notes), 4200)
+        let last = a.transcript.dropLast().suffix(2)   // the player's new words are the last turn
+        if !last.isEmpty { prompt += "\n\nLAST EXCHANGE:\n" + last.map { ($0.role == .player ? "PLAYER: " : "STORY: ") + clip($0.text, 900) }.joined(separator: "\n") }
+        prompt += "\n\nWHAT THE PLAYER JUST DID: " + clip(input, 800) + "\n\nYour four lines:"
+        guard let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: Self.planTokens, temperature: 0.4)) else { return "" }
+        // Keep only the plan lines, in case the model wanders into writing the story itself.
+        let lines = reply.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.range(of: #"^[-*\s]*(PLAYER|BEAT|USE|KEEP)\**:"#, options: .regularExpression) != nil }
+        return clip(lines.joined(separator: "\n"), 900)
     }
 
     /// How many characters of recalled memories a briefing can carry at most (about 550 tokens).
@@ -575,7 +615,16 @@ final class StoryEngine {
         return lines.joined(separator: "\n")
     }
 
-    private func directorNotes(_ a: Adventure, playerNarrates: Bool, playerAsks: Bool) -> [String] {
+    private func directorNotes(_ a: Adventure, playerNarrates: Bool, playerAsks: Bool, opening: Bool = false) -> [String] {
+        if opening {
+            let me = a.lore.first(where: \.isPlayer)?.desc ?? ""
+            return [
+                "THIS IS THE OPENING SCENE. The listener cannot see anything yet: your words are their eyes. First tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and what is around them, then paint it with sound, smell, light and texture.",
+                me.isEmpty ? "Make clear who the player is here and why they are in this place." : "Make clear who the player is here (\(clip(me, 200))) and why they are in this place.",
+                "FEELING TO ACHIEVE: " + (a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling) + ". Set it up from the first lines.",
+                "Ignore the usual reply length: the opening may run to about 230 words.",
+            ]
+        }
         let turn = a.playerTurns + 1
         let feeling = a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling
         let final = a.left == 0
@@ -622,7 +671,7 @@ final class StoryEngine {
                 : "SECRET ROADMAP (minute \(Int(played)) of \(a.minutes)): steer gently toward this without revealing it: " + act.goal)
         }
         if let left = a.left {
-            notes.append("TIME: about \(max(1, Int(secsLeft(a, live: false) / 60))) of \(a.minutes) minutes left (roughly \(left) more player replies after this one).")
+            notes.append("TIME (minute \(Int(played)) of \(a.minutes)): about \(max(1, Int(secsLeft(a, live: false) / 60))) of \(a.minutes) minutes left (roughly \(left) more player replies after this one).")
         }
         if final {
             notes.append("THIS IS THE FINAL REPLY. Bring it to a definitive storybook ending that lands the feeling (\(feeling)), paying off what the player actually cared about. Do not ask what they do next; end on a closing image.")
