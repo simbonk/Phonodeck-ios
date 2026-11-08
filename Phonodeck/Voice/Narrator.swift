@@ -47,6 +47,10 @@ final class Narrator: NSObject {
     private var buffersOutstanding = 0
     private var pendingBuffers: Set<UUID> = []
     private var generation = 0
+    /// When the last scheduled sentence should finish playing. Sentences queue up behind each other
+    /// on the player (Kokoro often writes faster than it speaks), so a sentence's own length is not
+    /// enough to know when it will be heard.
+    private var playbackEndsAt = Date.distantPast
 
     init(store: ModelStore) {
         self.store = store
@@ -162,6 +166,7 @@ final class Narrator: NSObject {
     /// Starts a new streamed reply.
     func begin() {
         stop()
+        lastError = nil
         streamDone = false
         buffer = ""
     }
@@ -195,6 +200,8 @@ final class Narrator: NSObject {
         player.stop()
         buffersOutstanding = 0
         pendingBuffers.removeAll()
+        playbackEndsAt = .distantPast
+        lastPlayerSample = nil
         buffer = ""
         streamDone = true
         speaking = false
@@ -436,10 +443,20 @@ final class Narrator: NSObject {
         let route = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName).joined(separator: ", ")
         detail = (detail ?? "") + " Playing through \(route.isEmpty ? "no output" : route)."
         // If the speaker never reports the sound as played, say so (with what the engine was doing)
-        // instead of showing Stop forever.
+        // instead of showing Stop forever. The deadline counts from when this sentence should start,
+        // which is after everything already queued ahead of it, not from now.
         let seconds = Double(samples.count) / sampleRate
+        let startsAt = max(Date(), playbackEndsAt)
+        playbackEndsAt = startsAt.addingTimeInterval(seconds)
+        let deadline = playbackEndsAt.addingTimeInterval(4)
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(seconds + 6))
+            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+            // Still pending but sound is still coming out: something ahead of it ran long. Keep waiting
+            // (up to a minute) while the player's clock moves, rather than declaring it lost.
+            for _ in 0..<60 {
+                guard let me = self, me.generation == myGeneration, me.pendingBuffers.contains(bufferID), me.playerIsAdvancing() else { break }
+                try? await Task.sleep(for: .seconds(1))
+            }
             guard let self, self.generation == myGeneration, self.pendingBuffers.remove(bufferID) != nil else { return }
             let session = AVAudioSession.sharedInstance()
             self.lastError = "The speaker didn't play the speech (engine running: \(self.engine.isRunning ? "yes" : "no"), "
@@ -448,6 +465,22 @@ final class Narrator: NSObject {
             self.buffersOutstanding = max(0, self.buffersOutstanding - 1)
             self.checkFinished()
         }
+    }
+
+    private var lastPlayerSample: AVAudioFramePosition?
+
+    private func playerSampleTime() -> AVAudioFramePosition? {
+        guard engine.isRunning, player.isPlaying, let node = player.lastRenderTime,
+              let t = player.playerTime(forNodeTime: node) else { return nil }
+        return t.sampleTime
+    }
+
+    /// True when the player's clock has moved since the last check (sound is still being played).
+    private func playerIsAdvancing() -> Bool {
+        guard let now = playerSampleTime() else { return false }
+        defer { lastPlayerSample = now }
+        guard let before = lastPlayerSample else { return true }
+        return now > before
     }
 }
 

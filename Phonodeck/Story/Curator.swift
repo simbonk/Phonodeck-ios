@@ -403,9 +403,15 @@ struct CuratorView: View {
     }
 
     private func chips(_ q: CuratorQuestion) -> [String] {
+        let base = baseChips(q)
+        return base + (extra[q.id] ?? []).filter { !base.contains($0) }
+    }
+
+    /// The hand-written options for a question, before any the model suggested.
+    private func baseChips(_ q: CuratorQuestion) -> [String] {
         var base = q.id == "feeling" ? feelingChips : kid && q.ck != nil ? q.ck! : short && q.cs != nil ? q.cs! : q.c
         if minor { base = base.filter { $0.range(of: "roman|love", options: [.regularExpression, .caseInsensitive]) == nil } }
-        return base + (extra[q.id] ?? []).filter { !base.contains($0) }
+        return base
     }
 
     private func parts(_ id: String) -> [String] {
@@ -446,12 +452,14 @@ struct CuratorView: View {
             default: return (answers[x.id] ?? "").isEmpty ? nil : "- \(x.q) \(answers[x.id]!)"
             }
         }.joined(separator: "\n")
-        let prompt = Prompts.suggestions(question: question.q, hint: question.h, existing: chips(question), earlier: earlier,
+        let prompt = Prompts.suggestions(question: question.q, hint: question.h, examples: baseChips(question), avoid: chips(question),
+                                         earlier: earlier, world: answers["world"] ?? "",
                                          typed: answers[question.id] ?? "", id: question.id, age: ageNow, short: short)
         do {
-            let reply = try await app.llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 220, temperature: 0.95))
-            let opts = (JSONExtract.object(reply)?["options"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let reply = try await app.llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 260, temperature: 0.8))
+            let raw = (JSONExtract.object(reply)?["options"] as? [Any] ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty && $0.count < 80 }
+            let opts = Prompts.cleanSuggestions(raw, existing: chips(question), earlierSuggestions: extra[question.id] ?? [])
             guard self.q.id == question.id else { return }
             if opts.isEmpty { if asked { message = "Couldn't think of more options just now. Try again?" } ; return }
             withAnimation { extra[question.id, default: []] += opts.prefix(8).filter { !(extra[question.id] ?? []).contains($0) } }
