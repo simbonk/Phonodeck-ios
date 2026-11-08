@@ -616,7 +616,7 @@ final class StoryEngine {
         }
         if !final && !playerNarrates { notes.append(Prompts.endings.randomElement()!) }
         // The showrunner's agendas, acted out: someone pursues what they want, on screen.
-        if !a.isShort, !calm, !wrap, !playerNarrates, let cast = a.notes?.cast, let c = cast.randomElement(), Double.random(in: 0..<1) < 0.6 {
+        if !a.isShort, !calm, !wrap, !playerNarrates, !playerAsks, let cast = a.notes?.cast, let c = cast.randomElement(), Double.random(in: 0..<1) < 0.6 {
             notes.append("Motive in action: \(c.name) wants \(c.wants)" + (c.fears.isEmpty ? "" : " and fears \(c.fears)")
                 + ". Show them pursuing it visibly in this reply (a choice, a lie, a favour, a closed door), even where it cuts against what the player wants.")
         }
