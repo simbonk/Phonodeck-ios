@@ -66,6 +66,12 @@ final class ModelStore {
     // MARK: Files
 
     /// The Hugging Face cache layout: models--org--name/snapshots/<revision>/
+    /// The downloaded .gguf file of a GGUF storyteller.
+    nonisolated static func ggufPath(_ entry: ModelEntry) -> URL? {
+        guard let file = entry.ggufFile, let dir = snapshotDirectory(entry.id) else { return nil }
+        return dir.appending(path: file)
+    }
+
     nonisolated static func repoDirectory(_ id: String) -> URL {
         directory.appending(path: "models--" + id.replacingOccurrences(of: "/", with: "--"), directoryHint: .isDirectory)
     }
@@ -76,6 +82,10 @@ final class ModelStore {
         let snaps = repoDirectory(id).appending(path: "snapshots", directoryHint: .isDirectory)
         let fm = FileManager.default
         guard let revs = try? fm.contentsOfDirectory(at: snaps, includingPropertiesForKeys: nil) else { return nil }
+        // A GGUF storyteller is one file and nothing else.
+        if let file = ModelCatalog.entry(id)?.ggufFile {
+            return revs.first { fm.fileExists(atPath: $0.appending(path: file).path) }
+        }
         let needsConfig = ModelCatalog.entry(id).map { $0.kind == .language } ?? true
         let weights = [".safetensors", ".bin", ".npz", ".pth", ".gguf"]
         return revs.first { rev in
@@ -95,6 +105,28 @@ final class ModelStore {
     }
 
     func setFacts(_ f: ModelFacts, for id: String) { facts[id] = f }
+
+    /// Download size shown in the lists.
+    func downloadGB(_ e: ModelEntry) -> Double { e.isGGUF ? e.approxGB : facts[e.id]?.gb ?? e.approxGB }
+
+    /// GGUF repos hold one file per quantization. Picks the one to offer: Q4_K_M when it fits
+    /// (the usual best balance of quality, speed and size), otherwise the next best that fits.
+    /// Returns nil when even the smallest is too big for this device.
+    func bestGGUF(id: String, facts f: ModelFacts) -> ModelEntry? {
+        guard let files = f.ggufFiles, !files.isEmpty else { return nil }
+        let preference = ["Q4_K_M", "Q4_K_S", "IQ4_XS", "IQ4_NL", "Q4_0", "Q5_K_M", "Q5_K_S", "Q3_K_L", "Q3_K_M", "IQ3_M", "Q6_K", "Q3_K_S", "IQ3_XS"]
+        let name = id.split(separator: "/").last.map(String.init) ?? id
+        func entry(_ g: GGUFFile) -> ModelEntry {
+            ModelEntry(id: id, name: name.replacingOccurrences(of: "-GGUF", with: "", options: .caseInsensitive) + " (\(g.quant))",
+                       blurb: "GGUF from Hugging Face, run with llama.cpp.", kind: .language,
+                       approxGB: g.gb, paramsB: g.gb * 2, custom: true, ggufFile: g.name)
+        }
+        func fits(_ e: ModelEntry) -> Bool { DeviceFit.report(for: e, facts: f).verdict != .tooBig }
+        for q in preference {
+            if let g = files.first(where: { $0.quant == q }), fits(entry(g)) { return entry(g) }
+        }
+        return files.sorted { $0.bytes < $1.bytes }.map(entry).first(where: fits)
+    }
 
     /// Memory the selected models occupy when loaded, used to judge what else fits beside them.
     func neededGB(_ id: String?) -> Double {
@@ -121,9 +153,21 @@ final class ModelStore {
         if let existing = ModelCatalog.entry(id) { return .added(existing) }
         let f: ModelFacts
         do { f = try await HFHub.facts(id) } catch { return .failed(error.localizedDescription) }
-        if f.ggufOnly == true {
+        if f.usesGGUF {
             let name = id.split(separator: "/").last.map(String.init) ?? id
-            return .failed("\(name) is a GGUF model, made for llama.cpp apps. Phonodeck runs MLX models, which come as .safetensors. Search Hugging Face for \"\(name) MLX\" to find a converted copy.")
+            guard kind == .language else {
+                return .failed("\(name) is a GGUF model. Phonodeck runs GGUF storytellers, but voices and listening models need MLX versions.")
+            }
+            guard let entry = bestGGUF(id: id, facts: f) else {
+                let smallest = f.ggufFiles?.map(\.gb).min() ?? 0
+                return .failed(smallest > 0
+                    ? String(format: "Even the smallest version of %@ (%.1f GB) is too big for this %@.", name, smallest, DeviceFit.deviceWord)
+                    : "\(name) has no GGUF file Phonodeck can use.")
+            }
+            facts[id] = f
+            customModels.append(entry)
+            ModelCatalog.custom = customModels
+            return .added(entry)
         }
         guard f.hasSafetensors else {
             return .failed("\(id) has no .safetensors weights, so it can't run here. Look for an MLX version, usually under mlx-community.")
@@ -198,7 +242,10 @@ final class ModelStore {
                 }
             }
             do {
-                if entry.kind == .language {
+                if let file = entry.ggufFile {
+                    _ = try await downloader.download(
+                        id: entry.id, revision: "main", matching: [file], useLatest: false, progressHandler: progress)
+                } else if entry.kind == .language {
                     _ = try await MLXLMCommon.resolve(
                         configuration: entry.configuration, from: downloader, useLatest: false, progressHandler: progress)
                 } else {

@@ -27,7 +27,8 @@ enum LLMError: LocalizedError {
     }
 }
 
-/// Loads and runs the on-device language model (MLX on the phone's GPU).
+/// Loads and runs the on-device language model on the phone's GPU: MLX for MLX models,
+/// llama.cpp (LlamaEngine) for GGUF ones.
 ///
 /// Everything else in the app goes through `stream` (text as it is written) and `complete`
 /// (the whole reply), so the inference engine could be swapped later.
@@ -43,6 +44,7 @@ final class LLMService {
 
     private let store: ModelStore
     private var container: ModelContainer?
+    private var llama: LlamaEngine?
     private var loadTask: Task<ModelContainer, Error>?
     private let tokenizerLoader: any TokenizerLoader = #huggingFaceTokenizerLoader()
 
@@ -60,7 +62,7 @@ final class LLMService {
     func load() async throws {
         await MLXGate.shared.acquire()
         do {
-            _ = try await ensureLoaded()
+            if let e = store.language, e.isGGUF { _ = try await ensureLlama(e) } else { _ = try await ensureLoaded() }
             await MLXGate.shared.release()
         } catch {
             await MLXGate.shared.release()
@@ -72,8 +74,32 @@ final class LLMService {
         loadTask?.cancel()
         loadTask = nil
         container = nil
+        llama = nil
         loadedID = nil
         MLX.Memory.clearCache()
+    }
+
+    /// Loads a GGUF storyteller into llama.cpp.
+    private func ensureLlama(_ entry: ModelEntry) async throws -> LlamaEngine {
+        if let l = llama, loadedID == entry.id { return l }
+        guard let path = ModelStore.ggufPath(entry) else { throw LLMError.notDownloaded }
+        let fit = store.report(for: entry)
+        if fit.verdict == .tooBig { throw LLMError.tooBig(fit.detail) }
+
+        unload()
+        phase = .loading
+        do {
+            let engine = try await Task.detached(priority: .userInitiated) {
+                try LlamaEngine(path: path.path, contextTokens: DeviceFit.contextTokens)
+            }.value
+            llama = engine
+            loadedID = entry.id
+            phase = .idle
+            return engine
+        } catch {
+            phase = .failed("Could not load \(entry.name): \(error.localizedDescription)")
+            throw error
+        }
     }
 
     func ensureLoaded() async throws -> ModelContainer {
@@ -126,6 +152,11 @@ final class LLMService {
                 await MLXGate.shared.acquire()
                 do {
                     defer { Task { await MLXGate.shared.release() } }
+                    if let entry = self.store.language, entry.isGGUF {
+                        try await self.streamLlama(entry, system: system, history: history, options: options, into: continuation)
+                        continuation.finish()
+                        return
+                    }
                     let container = try await self.ensureLoaded()
                     let prepared = try await Self.prepareWithinBudget(container, system: system, history: history, maxTokens: options.maxTokens)
                     let params = GenerateParameters(
@@ -154,6 +185,62 @@ final class LLMService {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// The same reply through llama.cpp, for GGUF storytellers.
+    private func streamLlama(_ entry: ModelEntry, system: String?, history: [ChatTurn], options: Options,
+                             into continuation: AsyncThrowingStream<String, Error>.Continuation) async throws {
+        let engine = try await ensureLlama(entry)
+        let prompt = Self.llamaPromptWithinBudget(engine, system: system, history: history, maxTokens: options.maxTokens)
+        let flag = CancelFlag()
+        let speed = try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                var filter = ThinkFilter()
+                let speed = try engine.generate(
+                    prompt: prompt, maxTokens: options.maxTokens, temperature: options.temperature,
+                    topP: options.topP, repetitionPenalty: options.repetitionPenalty
+                ) { text in
+                    let out = filter.feed(text)
+                    if !out.isEmpty { continuation.yield(out) }
+                    return !flag.isSet
+                }
+                let rest = filter.flush()
+                if !rest.isEmpty { continuation.yield(rest) }
+                return speed
+            }.value
+        } onCancel: {
+            flag.set()
+        }
+        lastTokensPerSecond = speed
+    }
+
+    /// llama.cpp's version of `prepareWithinBudget`: drops the oldest turns, then squeezes one long
+    /// message, until the prompt and the longest reply fit the 4K conversation memory.
+    private static func llamaPromptWithinBudget(_ engine: LlamaEngine, system: String?, history: [ChatTurn], maxTokens: Int) -> [Int32] {
+        let limit = max(512, contextBudget - maxTokens - 32)
+        var system = system
+        var turns = history
+        var tokens = engine.tokenize(engine.format(system: system, turns: turns))
+        var squeezes = 0
+        while tokens.count > limit {
+            let over = tokens.count
+            if turns.count > 1 {
+                turns.removeFirst()
+                while turns.count > 1, turns.first?.role == .assistant { turns.removeFirst() }
+            } else if squeezes < 4 {
+                squeezes += 1
+                let keep = Double(limit) / Double(over) * 0.9
+                if let s = system, s.count > (turns.first?.text.count ?? 0) {
+                    system = squeezeMiddle(s, keep: keep)
+                } else if !turns.isEmpty {
+                    turns[0].text = squeezeMiddle(turns[0].text, keep: keep)
+                }
+            } else {
+                break
+            }
+            tokens = engine.tokenize(engine.format(system: system, turns: turns))
+        }
+        return tokens
     }
 
     /// The memory for a conversation grows with every token in it, and DeviceFit only promised
