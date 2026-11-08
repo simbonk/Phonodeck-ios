@@ -23,6 +23,19 @@ All are free, and all run offline once downloaded.
 
 Small on-device models tell shorter, simpler stories than Gemini Pro, so the prompts here are a lighter version of the web app's.
 
+## How a turn works
+
+The iPhone follows the same flow as the web app's [How the Phonodeck Works](https://github.com/simbonk/phonodeck/blob/main/how-it-works.html) page:
+
+1. **Recall.** Before each reply it searches the lore, older turns and older chapter summaries for what bears on what you just said (keyword search, BM25), and puts the best few into the Game Master's private briefing. Lore you name always comes first. The web app also runs a meaning search with embeddings; the phone skips it, because that would need a second model loaded beside the storyteller.
+2. **The Game Master** writes the reply from the rules, the story bible, your hand-set facts, the chapter summaries and the showrunner's notes, plus a briefing with the mission map, the memories, the director's notes and the time left.
+3. **The memory pass** runs after the reply: new people and places, events, where you are (and the route you took, for the mission map), which story steps are done, and how well the feeling is landing. Every 6 turns older turns fold into a chapter summary.
+4. **Housekeeping**, at most one extra call per turn and only every few turns: the hidden **showrunner's notes** (each character's wants, fears, secret and next move, open threads and a big reveal) are made after turn 2 and revised every 10 turns or after you edit the world by hand, and the **story bible** is rewritten at turns 10, 20, 30 so it stays current. When the notes exist, the director sometimes asks a character to act on their agenda.
+
+Not on the phone yet: the photo reader, Gemini's dictation clean-up, and "Same cast, new story".
+
+**Memory.** None of this loads anything new. Only one model call runs at a time, and every prompt (the Game Master's, the memory pass, the notes, the bible, and the Chat tab) is checked against the 4,096-token conversation size the fit check below budgets for. If a prompt would go over, the oldest turns are dropped first (recall can still find them), so the extra steps never raise peak memory above a normal turn.
+
 ## How it decides whether a model fits
 
 iOS lets each app use only part of the phone's memory. The app asks iOS how much it may use (`os_proc_available_memory`), then adds up what a model needs: its weights, the memory for a 4,000-token conversation (worked out from the model's own `config.json`, counting only the layers that remember the whole conversation), and some working room, plus whatever voice or listening model stays loaded beside it. Gemma 4 and Qwen3.5 ship with image and sound encoders the storyteller never loads, so the app reads the weight files' headers and leaves those out. Under 70% of the budget is **Runs comfortably**, under 92% is **Will run, but tight**, and above that is **Too big for this phone**. It also estimates speed (memory bandwidth divided by model size) so you know whether narration will keep up.

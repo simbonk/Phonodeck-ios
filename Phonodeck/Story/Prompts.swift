@@ -139,6 +139,26 @@ enum Prompts {
 
     static let chapter = "Summarise these story turns in 2 or 3 plain past-tense sentences, second person (\"you\"), keeping names, promises, discoveries and anything unresolved. Output only the summary."
 
+    // MARK: Housekeeping (every 10 turns, in the background, one call per turn at most)
+
+    /// The hidden showrunner (the web app's PLAN_RULES, shortened for small models).
+    static let showrunner = """
+    You are the hidden showrunner of an interactive audio story. Output ONLY one JSON object:
+    {"voice":"2 sentences: narrator voice, a sensory palette unique to this story, and a different way of speaking for each main character",
+     "secrets":["3-5 hidden truths or mysteries the player has not discovered yet"],
+     "threads":[{"thread":"an ongoing storyline the world is pursuing","status":"seeded|active|resolved"}],
+     "big_reveal":"one major revelation or reversal to build toward",
+     "cast":[{"name":"","wants":"what they are pursuing right now","fears":"","secret":"","next_move":"a concrete thing they will do next, whether or not the player is present"}]}
+    Make them surprising, specific to THIS story, and consistent with the bible, lore and history. "cast" is only the named characters (not the player, not people known only by their role); give each a real motivation, a secret and a next_move. No commentary, no markdown.
+    """
+
+    static let showrunnerRevise = "You are UPDATING existing notes: drop secrets the player has now discovered, add fresh ones, update thread statuses, advance every next_move, and pick a new big_reveal only if the old one has happened. If PLAYER-SET FACTS are given, make every note agree with them."
+
+    static let showrunnerSimulator = "This is an EXPERIENCE with no plot: secrets are small delights to discover, threads are gentle background life, big_reveal is a lovely surprise rather than a twist, and the cast have modest, warm wants that make the place feel alive."
+
+    /// Rewrites the story bible so it stays current (the web app's refreshBible).
+    static let bibleRefresh = "Rewrite the story bible of an interactive story as a tight one-pager of at most 280 words, plain text, addressing the player character as \"you\": premise, tone, who you are, the cast, the setting, the current situation, the goal, and a short \"story so far\". Keep everything still relevant and compress old material. Keep every detail the player set by hand, even if unusual. Call anyone whose name the player has not learned yet only by their role; never write that name. Output only the bible."
+
     // MARK: Report card
 
     static let reportCard = """

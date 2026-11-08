@@ -178,6 +178,48 @@ struct Mood: Codable, Hashable {
     var leavingPlot = false
 }
 
+/// The hidden showrunner's notes: what the world is up to behind the player's back. Made after a
+/// couple of turns and revised every ten, like the web app's "GM notes". Never shown in the story.
+struct ShowrunnerNotes: Codable, Hashable {
+    struct StoryThread: Codable, Hashable {
+        var thread: String
+        var status = "seeded"
+    }
+    struct Agenda: Codable, Hashable {
+        var name: String
+        var wants = ""
+        var fears = ""
+        var secret = ""
+        var nextMove = ""
+    }
+    var voice = ""
+    var secrets: [String] = []
+    var threads: [StoryThread] = []
+    var bigReveal = ""
+    var cast: [Agenda] = []
+
+    /// As the Game Master reads them, kept short so the prompt fits on the phone.
+    var text: String {
+        var lines: [String] = []
+        if !voice.isEmpty { lines.append("Narrative voice: " + voice) }
+        if !secrets.isEmpty { lines.append("Secrets (not yet known to the player):\n" + secrets.prefix(5).map { "- " + $0 }.joined(separator: "\n")) }
+        if !threads.isEmpty { lines.append("World threads:\n" + threads.prefix(4).map { "- [\($0.status)] " + $0.thread }.joined(separator: "\n")) }
+        if !cast.isEmpty {
+            lines.append("Cast agendas (each person acts on these, on-screen or off):\n" + cast.prefix(4).map { c in
+                "- \(c.name): wants \(c.wants); fears \(c.fears)" + (c.secret.isEmpty ? "" : "; secret: \(c.secret)") + (c.nextMove.isEmpty ? "" : "; next move: \(c.nextMove)")
+            }.joined(separator: "\n"))
+        }
+        if !bigReveal.isEmpty { lines.append("Big reveal to build toward: " + bigReveal) }
+        return String(lines.joined(separator: "\n").prefix(1600))
+    }
+}
+
+/// Two places the player has moved between (the mission map).
+struct MapLink: Codable, Hashable {
+    var from: String
+    var to: String
+}
+
 struct Grade: Codable, Hashable {
     var grade: String
     var comment: String
@@ -221,6 +263,16 @@ struct Adventure: Codable, Identifiable, Hashable {
     var ended = false
     var report: ReportCard?
     var lastDirector: [String: Int] = [:]
+    /// The showrunner's hidden notes (nil until they are first made).
+    var notes: ShowrunnerNotes?
+    /// The player turn the notes were last written at, and whether a hand edit made them stale.
+    var notesTurn = 0
+    var notesStale = false
+    /// The player turn the story bible was last rewritten at.
+    var bibleTurn = 0
+    /// The mission map: places in the order they were first visited, and the moves between them.
+    var places: [String] = []
+    var links: [MapLink] = []
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -233,7 +285,8 @@ struct Adventure: Codable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
-             summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector
+             summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
+             notes, notesTurn, notesStale, bibleTurn, places, links
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -257,6 +310,9 @@ struct Adventure: Codable, Identifiable, Hashable {
         lastSendAt = try? c.decodeIfPresent(Date.self, forKey: .lastSendAt)
         turnTimes = v(.turnTimes, []); left = try? c.decodeIfPresent(Int.self, forKey: .left); ended = v(.ended, false)
         report = try? c.decodeIfPresent(ReportCard.self, forKey: .report); lastDirector = v(.lastDirector, [:])
+        notes = try? c.decodeIfPresent(ShowrunnerNotes.self, forKey: .notes)
+        notesTurn = v(.notesTurn, 0); notesStale = v(.notesStale, false); bibleTurn = v(.bibleTurn, 0)
+        places = v(.places, []); links = v(.links, [])
     }
 
     func encode(to encoder: Encoder) throws {
@@ -270,5 +326,36 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(minutes, forKey: .minutes); try c.encode(elapsed, forKey: .elapsed); try c.encodeIfPresent(lastSendAt, forKey: .lastSendAt)
         try c.encode(turnTimes, forKey: .turnTimes); try c.encodeIfPresent(left, forKey: .left); try c.encode(ended, forKey: .ended)
         try c.encodeIfPresent(report, forKey: .report); try c.encode(lastDirector, forKey: .lastDirector)
+        try c.encodeIfPresent(notes, forKey: .notes); try c.encode(notesTurn, forKey: .notesTurn)
+        try c.encode(notesStale, forKey: .notesStale); try c.encode(bibleTurn, forKey: .bibleTurn)
+        try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
+    }
+
+    /// Copies what the memory pass and housekeeping own (everything but the transcript and the clock).
+    mutating func takeMemory(from o: Adventure) {
+        bible = o.bible; location = o.location; lore = o.lore; beats = o.beats; events = o.events
+        chapters = o.chapters; summarisedTurns = o.summarisedTurns; goalProgress = o.goalProgress; mood = o.mood
+        notes = o.notes; notesTurn = o.notesTurn; notesStale = o.notesStale; bibleTurn = o.bibleTurn
+        places = o.places; links = o.links
+    }
+
+    /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
+    var mapText: String {
+        guard !places.isEmpty else { return "" }
+        let moves = links.suffix(8).map { "\($0.from) <-> \($0.to)" }
+        return "Visited: " + places.suffix(10).joined(separator: ", ") + (moves.isEmpty ? "" : ". Routes taken: " + moves.joined(separator: "; "))
+    }
+
+    /// Records a place on the map, and the route from the last place.
+    mutating func visit(_ place: String, from previous: String) {
+        let p = place.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !p.isEmpty else { return }
+        if !places.contains(where: { $0.caseInsensitiveCompare(p) == .orderedSame }) { places.append(p) }
+        let q = previous.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, q.caseInsensitiveCompare(p) != .orderedSame else { return }
+        if !places.contains(where: { $0.caseInsensitiveCompare(q) == .orderedSame }) { places.insert(q, at: 0) }
+        let seen = links.contains { ($0.from.caseInsensitiveCompare(q) == .orderedSame && $0.to.caseInsensitiveCompare(p) == .orderedSame)
+            || ($0.from.caseInsensitiveCompare(p) == .orderedSame && $0.to.caseInsensitiveCompare(q) == .orderedSame) }
+        if !seen { links.append(MapLink(from: q, to: p)); links = Array(links.suffix(24)) }
     }
 }
