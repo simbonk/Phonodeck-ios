@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage("speechRate") private var speechRate = 0.5
     @AppStorage("chatSystem") private var chatSystem = ""
     @AppStorage("sendPhrase") private var sendPhrase = ""
+    @AppStorage("computerSounds") private var computerSounds = true
     @State private var editingCode: CodeKind?
 
     enum CodeKind: Identifiable { case secret, demo; var id: Self { self } }
@@ -35,6 +36,10 @@ struct SettingsView: View {
                             .multilineTextAlignment(.trailing)
                             .textInputAutocapitalization(.never)
                     }
+                    Toggle("Computer sounds", isOn: $computerSounds)
+                        .onChange(of: computerSounds) { _, on in if !on { ComputerSounds.shared.stopHum() } }
+                } footer: {
+                    Text("Computer sounds: a chirp when the microphone opens, an acknowledging chirp when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
                 }
 
                 Section {

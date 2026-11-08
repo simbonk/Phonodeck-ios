@@ -36,6 +36,7 @@ struct ChatView: View {
             .sheet(isPresented: $showChats) { ChatList { input = "" } }
         }
         .onChange(of: dictation.text) { _, t in if dictation.listening, app.tab == .chat { input = t } }
+        .onChange(of: dictation.sent) { if app.tab == .chat { input = "" } }
         .onChange(of: chat.handsFree) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
         .onDisappear {
             // Leaving the tab hands the microphone and the narrator back to the story.
@@ -63,8 +64,8 @@ struct ChatView: View {
                         }
                         if chat.generating {
                             if chat.reply.isEmpty {
-                                HStack(spacing: 8) {
-                                    ProgressView()
+                                HStack(spacing: 10) {
+                                    HoloCore(size: 34)
                                     Text(app.llm.phase == .loading ? "Loading the model…" : "Thinking…").foregroundStyle(.secondary)
                                 }
                             } else {
@@ -106,7 +107,7 @@ struct ChatView: View {
                 } else {
                     Button {
                         typing = false
-                        if dictation.listening { dictation.stop(send: true) } else { chat.send(input) }
+                        if dictation.listening { dictation.stop(send: true) } else { ComputerSounds.shared.play(.sent); chat.send(input) }
                         input = ""
                     } label: {
                         Text("Send").bold().frame(minWidth: 70, minHeight: 40)
@@ -126,7 +127,9 @@ struct ChatView: View {
     private var handsFreeStatus: some View {
         Group {
             if chat.generating {
-                Text("Hands-free ON: thinking…")
+                HStack(spacing: 8) { HoloCore(size: 22); Text("Hands-free ON: thinking…") }
+            } else if (app.narrator.preparing || app.narrator.speaking) && !app.narrator.playing {
+                HStack(spacing: 8) { HoloCore(size: 22); Text("Hands-free ON: getting the voice ready…") }
             } else if app.narrator.speaking || app.narrator.preparing {
                 Text("Hands-free ON: speaking (mic paused).")
             } else if dictation.listening {

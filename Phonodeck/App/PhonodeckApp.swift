@@ -65,6 +65,7 @@ final class AppModel {
             guard let self else { return }
             if self.tab == .chat || self.chat.handsFree { self.chat.send(text) } else { self.engine.send(text) }
         }
+        ComputerSounds.shared.warm()
         MLXCrashRecorder.install()
         let lastError = MLXCrashRecorder.takeLast()
         // The automatic switch to the processor made Kokoro hang without a sound, so it is undone
@@ -139,6 +140,8 @@ struct RootView: View {
     @Environment(AppModel.self) private var app
     @AppStorage("onboarded") private var onboarded = false
     @AppStorage("adultConfirmed") private var adult = false
+    /// The opening splash: the holographic core spins up while the app finishes starting.
+    @State private var splash = true
 
     var body: some View {
         @Bindable var app = app
@@ -162,10 +165,20 @@ struct RootView: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: Binding(get: { (!onboarded || !adult) && !app.vault.isLocked && app.notice == nil }, set: { if !$0, adult { onboarded = true } })) {
+        .overlay {
+            if splash {
+                LaunchSplash()
+                    .transition(.opacity)
+                    .task {
+                        try? await Task.sleep(for: .seconds(1.8))
+                        withAnimation(.easeOut(duration: 0.6)) { splash = false }
+                    }
+            }
+        }
+        .fullScreenCover(isPresented: Binding(get: { !splash && (!onboarded || !adult) && !app.vault.isLocked && app.notice == nil }, set: { if !$0, adult { onboarded = true } })) {
             WelcomeView { onboarded = true; app.tab = .phonodeck }
         }
-        .alert("Phonodeck", isPresented: Binding(get: { app.notice != nil }, set: { if !$0 { app.notice = nil } })) {
+        .alert("Phonodeck", isPresented: Binding(get: { !splash && app.notice != nil }, set: { if !$0 { app.notice = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(app.notice ?? "")

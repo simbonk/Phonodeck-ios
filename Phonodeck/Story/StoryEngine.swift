@@ -73,6 +73,7 @@ final class StoryEngine {
         building = false
         thinkingSince = nil
         forge?.abort()
+        ComputerSounds.shared.stopHum()
     }
 
     /// Turns hands-free on or off. On, the story is read aloud and the microphone opens
@@ -93,6 +94,7 @@ final class StoryEngine {
     }
 
     func narrationFinished() {
+        ComputerSounds.shared.stopHum()
         listenIfReady()
     }
 
@@ -105,10 +107,12 @@ final class StoryEngine {
         error = nil
         let forge = Forge(name: e.title.isEmpty ? "Your world" : e.title, curated: CuratedExperiences.all.contains { $0.id == e.id })
         self.forge = forge
+        ComputerSounds.shared.startHum()
         currentTask = Task {
             defer { busy = false; stage = "" }
             do { try await llm.load() } catch {
                 self.error = error.localizedDescription
+                ComputerSounds.shared.stopHum()
                 building = false
                 forge.abort()
                 return
@@ -295,6 +299,7 @@ final class StoryEngine {
 
     private func runTurn(input: String, hidden: Bool, forceFinal: Bool = false) async {
         guard var a = adventure else { return }
+        ComputerSounds.shared.startHum()
         // Let the memory pass finish first, but never hold up the story for long.
         if let job = memoryJob {
             stage = "Remembering"
@@ -331,7 +336,10 @@ final class StoryEngine {
         do {
             let short = a.isShort
             for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: short ? 300 : 420, temperature: 0.85)) {
-                if stage != "" { stage = ""; thinkingSince = nil; forge?.close() }
+                if stage != "" {
+                    stage = ""; thinkingSince = nil; forge?.close()
+                    if !narrate { ComputerSounds.shared.stopHum() }   // otherwise it hums on until the voice starts
+                }
                 reply += piece
                 streaming = reply
                 if narrate { narrator.feed(piece) }
@@ -340,6 +348,7 @@ final class StoryEngine {
             if !Task.isCancelled { self.error = error.localizedDescription }
         }
         if narrate { narrator.finish() }
+        if !narrate || !narrator.speaking { ComputerSounds.shared.stopHum() }
         stage = ""
         thinkingSince = nil
         reply = Self.tidy(reply)

@@ -131,7 +131,10 @@ final class Narrator: NSObject {
     /// What is auditioning right now, so the matching Listen button can show Stop.
     private(set) var auditioningID: String?
     /// Sound is actually coming out (not just being prepared).
-    private(set) var playing = false
+    private(set) var playing = false {
+        // The thinking hum gives way as soon as the voice is heard, as on the web app.
+        didSet { if playing && !oldValue { ComputerSounds.shared.stopHum() } }
+    }
 
     /// Plays a sample in one voice (nil for Apple's) without changing the chosen narrator.
     func audition(_ entry: ModelEntry?, text: String = "The rain eases. Somewhere below, a door opens, and a voice you almost recognise calls your name.") {

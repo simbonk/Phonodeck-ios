@@ -30,6 +30,8 @@ struct StoryView: View {
             .sheet(isPresented: $showReport) { ReportCardView() }
             .onChange(of: a.report) { _, r in if r != nil { showReport = true } }
             .onChange(of: dictation.text) { _, t in if dictation.listening { input = t } }
+            // "Make it so" sent what was said: empty the box for the next turn.
+            .onChange(of: dictation.sent) { input = "" }
             .onChange(of: engine.handsFree) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
             .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         }
@@ -183,8 +185,8 @@ struct StoryView: View {
     }
 
     private func thinking(_ since: Date) -> some View {
-        VStack(spacing: 6) {
-            HoloCore(size: 44)
+        VStack(spacing: 8) {
+            HoloCore(size: 64)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text("The Phonodeck is thinking… \(Int(ctx.date.timeIntervalSince(since)))s")
                     .font(.footnote.monospacedDigit()).foregroundStyle(Theme.dim)
@@ -222,7 +224,7 @@ struct StoryView: View {
                 } else {
                     Button {
                         typing = false
-                        if dictation.listening { dictation.stop(send: true) } else { engine.send(input) }
+                        if dictation.listening { dictation.stop(send: true) } else { ComputerSounds.shared.play(.sent); engine.send(input) }
                         input = ""
                     } label: {
                         Text("Send").bold().frame(minWidth: 70, minHeight: 40)
@@ -250,8 +252,10 @@ struct StoryView: View {
     @ViewBuilder
     private var handsFreeStatus: some View {
         Group {
-            if engine.busy {
-                Text("Hands-free ON: the story is being prepared…")
+            if engine.busy && !app.narrator.playing {
+                HStack(spacing: 8) { HoloCore(size: 22); Text("Hands-free ON: the story is being prepared…") }
+            } else if (app.narrator.preparing || app.narrator.speaking) && !app.narrator.playing {
+                HStack(spacing: 8) { HoloCore(size: 22); Text("Hands-free ON: getting the voice ready…") }
             } else if app.narrator.speaking || app.narrator.preparing {
                 Text("Hands-free ON: narrator speaking (mic paused).")
             } else if dictation.listening {

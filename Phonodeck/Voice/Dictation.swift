@@ -17,6 +17,8 @@ final class Dictation {
     private(set) var listening = false
     private(set) var transcribing = false
     private(set) var text = ""
+    /// Counts each message sent from here, so the screens can empty their text box after "make it so".
+    private(set) var sent = 0
     var error: String?
     /// Called with the finished text when the player says the send phrase (or taps send).
     var onSend: ((String) -> Void)?
@@ -172,6 +174,7 @@ final class Dictation {
             return
         }
         listening = true
+        ComputerSounds.shared.play(.listen)
 
         if let model {
             Task { await self.prepareModel(model) }
@@ -210,6 +213,7 @@ final class Dictation {
 
     private func sendNow() {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        sent += 1
         if !message.isEmpty { onSend?(message) }
     }
 
@@ -342,6 +346,7 @@ final class Dictation {
         if let r = full.range(of: "\\b" + phrase + "\\b[.!,]?\\s*$", options: [.regularExpression, .caseInsensitive]) {
             text = String(full[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
             stop()
+            ComputerSounds.shared.play(.ack)
             sendNow()
             return
         }
