@@ -22,7 +22,9 @@ struct StoryView: View {
             VStack(spacing: 0) {
                 header(a)
                 transcript(a)
-                if a.ended {
+                if engine.resuming {
+                    resumingBar
+                } else if a.ended {
                     endedBar(a)
                 } else {
                     composer(a)
@@ -246,6 +248,19 @@ struct StoryView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
+    }
+
+    /// Shown in place of the reply box while the storyteller is loaded back in for a saved story.
+    private var resumingBar: some View {
+        VStack(spacing: 8) {
+            HoloCore(size: 64)
+            Text("Getting caught up on your story…")
+                .font(.footnote).foregroundStyle(Theme.dim)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(Theme.bg.overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) })
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Composer: the reply box, then Undo, Hands-free and Send

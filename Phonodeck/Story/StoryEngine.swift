@@ -18,6 +18,9 @@ final class StoryEngine {
     private(set) var building = false
     /// The build screen's progress, following the architect as it writes.
     private(set) var forge: Forge?
+    /// True while a saved story is being picked back up (the storyteller loading into memory):
+    /// the story screen shows the thinking animation instead of the reply box until it is ready.
+    private(set) var resuming = false
     /// When the storyteller started on the current reply (for the "thinking" timer).
     private(set) var thinkingSince: Date?
     var error: String?
@@ -62,6 +65,19 @@ final class StoryEngine {
         adventure = a
         undoSnapshot = nil
         refreshVocabulary()
+        error = nil
+        // Get the storyteller into memory now, so the first reply isn't a long silent wait.
+        busy = true
+        resuming = true
+        currentTask = Task {
+            do { try await llm.load() } catch {
+                if !Task.isCancelled { self.error = error.localizedDescription }
+            }
+            guard !Task.isCancelled else { return }
+            busy = false
+            resuming = false
+            listenIfReady()
+        }
     }
 
     func close() {
@@ -78,6 +94,7 @@ final class StoryEngine {
         streaming = ""
         busy = false
         building = false
+        resuming = false
         thinkingSince = nil
         forge?.abort()
         housekeepingJob?.cancel()
