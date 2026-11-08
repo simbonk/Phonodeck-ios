@@ -181,22 +181,77 @@ enum Prompts {
     // MARK: The set-up wizard
 
     /// Asks for more option chips that fit the earlier answers.
-    static func suggestions(question: String, hint: String, existing: [String], earlier: String, typed: String, id: String, age: Int, short: Bool) -> String {
-        var s = "Suggest 6 NEW options for a question in the set-up of an interactive audio story. Output ONLY JSON: {\"options\":[\"...\"]}.\n"
+    /// Asks for more option chips. Small on-device models copy whatever pattern they are shown, so they
+    /// see only the hand-written examples (never their own earlier suggestions, which snowball into
+    /// "A pulse in the pulse"), and the player's earlier answers come first, as the thing to build on.
+    static func suggestions(question: String, hint: String, examples: [String], avoid: [String], earlier: String, world: String,
+                            typed: String, id: String, age: Int, short: Bool) -> String {
+        var s = "You help someone set up an interactive audio story by suggesting answers to one question.\n\n"
+        s += "WHAT THEY HAVE CHOSEN SO FAR:\n" + (earlier.isEmpty ? "(nothing yet)" : earlier) + "\n\n"
+        s += "QUESTION: \(question) (\(hint))\n"
+        s += "EXAMPLES OF GOOD ANSWERS (generic, not yet tailored): " + examples.joined(separator: "; ") + "\n\n"
+        s += "Write 6 NEW answers. "
         if id == "feeling" {
-            s += "The options are FEELINGS someone might want to come away with from a really good story, each a specific, evocative emotional experience of 3 to 9 words (like \"The thrill of getting away with something\", \"Cosy safety while a storm rages outside\"). Make them varied: warm, thrilling, bittersweet, triumphant, peaceful."
-            if !typed.isEmpty { s += " The player typed \"\(typed.prefix(200))\": offer richer, more specific variations of that feeling." }
+            s += "Each is a FEELING someone might want to come away with from a really good story: a specific, evocative emotional experience of 3 to 9 words (like \"The thrill of getting away with something\"). Make them varied: warm, thrilling, bittersweet, triumphant, peaceful."
+            if !typed.isEmpty { s += " They typed \"\(typed.prefix(200))\": offer richer, more specific variations of that feeling." }
         } else {
-            s += "Match the style of the existing options: short, broad categories of 1 to 5 words, at the same level of detail. Do not invent character names or plot details."
-            if id == "world" { s += " The options are specific eras and places, each with a time and a place (like \"Venice during Carnival, 1750\"). No trademarked film, TV or game worlds." }
-            if id == "goal" { s += " The options are things to DO there (2 to 6 words)." }
-            if id == "play" { s += " The options are gameplay styles (like \"Heist planning\", \"Social intrigue\", \"Chase scenes\")." }
+            let setting = world.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !setting.isEmpty, id != "world" {
+                s += "Every answer must clearly belong in \(setting.prefix(120)): use its people, jobs, places and dangers, so someone could tell which world it is from the answer alone. "
+            } else {
+                s += "Each answer should fit what they have chosen so far. "
+            }
+            switch id {
+            case "world": s += "Each is a specific era and place, with a time and a place (like \"Venice during Carnival, 1750\"). No trademarked film, TV or game worlds."
+            case "who": s += "Each is a concrete role, job or background a person could really have there (like \"A field surgeon\" or \"A blockade runner\"), 2 to 6 words. No metaphors."
+            case "where": s += "Each is a concrete starting place there, 2 to 7 words."
+            case "goal": s += "Each is something to DO there, 2 to 6 words."
+            case "play": s += "Each is a gameplay style (like \"Heist planning\", \"Social intrigue\")."
+            default: s += "Each is short and plain, 1 to 6 words, at the same level of detail as the examples. No character names, no metaphors."
+            }
+            if !typed.isEmpty { s += " They have typed \"\(typed.prefix(160))\": suggest answers in that direction." }
         }
         if age > 0 { s += age < 13 ? " The player is \(age), a child: G-rated, playful, no romance, nothing frightening." : age < 18 ? " The player is \(age), a teenager: PG, no romance." : " The player is \(age): suit that age." }
-        if short { s += " It is a SHORT story: keep options simple and grounded, on Earth, today or in a familiar period of history." }
-        s += "\nThey should fit the earlier answers in spirit and must not repeat the existing options.\n\nEARLIER ANSWERS:\n" + (earlier.isEmpty ? "(none yet)" : earlier)
-        s += "\n\nQUESTION: \(question) (\(hint))\nEXISTING OPTIONS: " + existing.joined(separator: "; ")
+        if short { s += " It is a SHORT story: keep answers simple and grounded, on Earth, today or in a familiar period of history." }
+        s += " Use a different sentence pattern for each answer, and never repeat a word inside one answer."
+        if !avoid.isEmpty { s += "\nDo not repeat any of these: " + avoid.joined(separator: "; ") }
+        s += "\n\nOutput ONLY JSON: {\"options\":[\"...\"]}"
         return s
+    }
+
+    /// Drops suggestions that show a small model has fallen into a loop: a word repeated inside one
+    /// option ("A mirror in the mirror"), or the same template over and over ("A spark in the dark",
+    /// "A flame in the ashes", ...). At most two options may share a phrase template such as
+    /// "a _ in the _"; plain ones like "A field surgeon" are not limited.
+    /// `existing` is every chip already shown (for duplicates); `earlierSuggestions` are the
+    /// model's own earlier ones (for templates).
+    static func cleanSuggestions(_ options: [String], existing: [String], earlierSuggestions: [String]) -> [String] {
+        let small: Set<String> = ["a", "an", "the", "in", "of", "on", "at", "to", "and", "or", "with", "from", "for", "by", "but", "who", "my", "your"]
+        func words(_ s: String) -> [String] {
+            s.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+        }
+        func template(_ s: String) -> String {
+            let w = words(s)
+            return "\(w.count):" + w.map { small.contains($0) ? $0 : "_" }.joined(separator: " ")
+        }
+        /// Only phrase-like templates count, with two or more small words after the first word.
+        func limited(_ s: String) -> Bool { words(s).dropFirst().filter { small.contains($0) }.count >= 2 }
+        var counts: [String: Int] = [:]
+        for e in earlierSuggestions where limited(e) { counts[template(e), default: 0] += 1 }
+        let seen = Set(existing.map { $0.lowercased() })
+        var out: [String] = []
+        for o in options {
+            let content = words(o).filter { !small.contains($0) }
+            guard !content.isEmpty, Set(content).count == content.count, !seen.contains(o.lowercased()),
+                  !out.contains(where: { $0.lowercased() == o.lowercased() }) else { continue }
+            if limited(o) {
+                let t = template(o)
+                guard counts[t, default: 0] < 2 else { continue }
+                counts[t, default: 0] += 1
+            }
+            out.append(o)
+        }
+        return out
     }
 
     static let feelingIdeas = [
