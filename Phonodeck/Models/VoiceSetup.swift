@@ -4,6 +4,7 @@ import SwiftUI
 /// Kokoro (medium) and Qwen3-TTS (good, slower) can be downloaded and heard right here.
 struct NarratorSetup: View {
     @Environment(AppModel.self) private var app
+    @State private var onCPU = Narrator.neuralOnCPU
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -30,9 +31,18 @@ struct NarratorSetup: View {
                         .font(.caption).foregroundStyle(Theme.dim)
                 }
             }
-            if let d = app.narrator.detail, app.narrator.auditioningID != nil { Text(d).font(.caption).foregroundStyle(Theme.dim) }
+            // Stays after the sample ends, so you can see what happened if nothing was heard.
+            if let d = app.narrator.detail { Text(d).font(.caption).foregroundStyle(Theme.dim) }
             if let err = app.narrator.lastError { Text(err).font(.caption).foregroundStyle(Theme.warn) }
+            if ModelCatalog.voice.contains(where: { app.store.installed.contains($0.id) }) {
+                Toggle(isOn: Binding(get: { onCPU }, set: { Narrator.neuralOnCPU = $0; onCPU = $0 })) {
+                    Text("Run neural voices on the processor (slower; only if the graphics chip keeps failing)")
+                        .font(.caption).foregroundStyle(Theme.dim)
+                }
+                .tint(Theme.accent)
+            }
         }
+        .onAppear { onCPU = Narrator.neuralOnCPU }
         .onDisappear { if app.narrator.auditioningID != nil { app.narrator.stop() } }
     }
 

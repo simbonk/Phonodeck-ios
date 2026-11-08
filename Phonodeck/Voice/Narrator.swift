@@ -14,9 +14,18 @@ import Observation
 final class Narrator: NSObject {
     private(set) var speaking = false
     private(set) var preparing = false
-    var lastError: String?
-    /// What a neural voice is doing right now, shown under the Listen buttons.
-    private(set) var detail: String?
+    var lastError: String? {
+        didSet { if let lastError, lastError != oldValue { NSLog("Phonodeck narrator problem: %@", lastError) } }
+    }
+    /// What a neural voice is doing right now, shown under the Listen buttons (and in Xcode's console).
+    private(set) var detail: String? {
+        didSet {
+            // The "s so far" ticks would flood the console, so only new steps are logged.
+            if let detail, detail.components(separatedBy: " (").first != oldValue?.components(separatedBy: " (").first {
+                NSLog("Phonodeck narrator: %@", detail)
+            }
+        }
+    }
     /// Called when everything queued has been spoken (hands-free uses it to start listening).
     var onFinished: (() -> Void)?
 
@@ -242,6 +251,7 @@ final class Narrator: NSObject {
     private func checkFinished() {
         guard streamDone, appleOutstanding == 0, sentenceQueue.isEmpty, worker == nil, buffersOutstanding == 0 else { return }
         if speaking {
+            if usingNeural { detail = (detail ?? "") + " Finished." }
             speaking = false
             playing = false
             let wasAudition = auditionVoice != nil
@@ -357,6 +367,7 @@ final class Narrator: NSObject {
                     self.schedule(samples, sampleRate: Double(model.sampleRate), generation: myGeneration)
                 }
             } catch is CancellationError {
+                if self.generation == myGeneration { self.lastError = "The \(entry.name) voice was cancelled before it spoke." }
             } catch {
                 self.lastError = "The \(entry.name) voice failed (\(error.localizedDescription)); using Apple's voice instead."
                 let leftover = self.sentenceQueue
