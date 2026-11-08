@@ -41,6 +41,9 @@ final class Narrator: NSObject {
     private var ttsModelID: String?
     private var sentenceQueue: [String] = []
     private var worker: Task<Void, Never>?
+    /// True while a neural voice still has sentences to turn into speech (it needs the GPU for
+    /// that; playing the finished audio does not). Background story work waits for this.
+    var synthesizing: Bool { worker != nil || (activeVoiceModel != nil && !sentenceQueue.isEmpty) }
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private var engineFormat: AVAudioFormat?
