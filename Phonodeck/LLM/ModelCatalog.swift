@@ -44,7 +44,7 @@ enum ModelCatalog {
             kind: .language, approxGB: 1.8, paramsB: 3.2),
         ModelEntry(
             id: "mlx-community/Qwen3.5-4B-MLX-4bit", name: "Qwen3.5 4B",
-            blurb: "Recommended. The newer Qwen: follows the story and your choices far better than Qwen3, and stays quick on an 8 GB iPhone or iPad.",
+            blurb: "Recommended. The newer Qwen: follows the story and your choices far better than Qwen3, and fits comfortably on recent iPhones and iPads.",
             kind: .language, approxGB: 2.9, paramsB: 4.0),
         ModelEntry(
             id: "mlx-community/gemma-4-e2b-it-4bit", name: "Gemma 4 E2B",
@@ -52,11 +52,11 @@ enum ModelCatalog {
             kind: .language, approxGB: 3.6, paramsB: 2.3),
         ModelEntry(
             id: "mlx-community/gemma-4-e4b-it-4bit", name: "Gemma 4 E4B",
-            blurb: "Google's small open model. Warm, natural prose; try it if Qwen feels flat. Wants about 5 GB free.",
+            blurb: "Google's small open model. Warm, natural prose, but needs about 5 GB, more than most iPhones give an app beside a neural voice.",
             kind: .language, approxGB: 5.1, paramsB: 4.0),
         ModelEntry(
             id: "mlx-community/Qwen3.5-9B-MLX-4bit", name: "Qwen3.5 9B",
-            blurb: "The best storyteller that fits on a phone: richer, more consistent stories. Wants 12 GB (iPhone 17 Pro, or an iPad Pro with 16 GB).",
+            blurb: "Richer, more consistent stories, but needs about 6.5 GB. iOS caps apps near 6 GB even on a 12 GB iPhone, so this is for iPads with 16 GB.",
             kind: .language, approxGB: 5.9, paramsB: 9.0),
         ModelEntry(
             id: "mlx-community/Qwen3-4B-4bit", name: "Qwen3 4B",

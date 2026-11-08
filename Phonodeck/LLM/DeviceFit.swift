@@ -187,23 +187,27 @@ enum DeviceFit {
     }
 
     /// Memory this app is using right now (what iOS counts against its limit).
+    /// In decimal GB, like the model sizes, so the two compare directly.
     static var footprintGB: Double {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
         let r = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
         }
-        return r == KERN_SUCCESS ? Double(info.phys_footprint) / 1_073_741_824 : 0
+        return r == KERN_SUCCESS ? Double(info.phys_footprint) / 1_000_000_000 : 0
     }
 
     /// Room the app has for models: its whole memory limit (what it uses now plus what it may
-    /// still take) less about 0.5 GB for the app itself, sound and the screen. Using the whole
-    /// limit means a voice sample that just played, or memory MLX is holding on to, doesn't make
-    /// a model look too big.
+    /// still take) less about 0.6 GB for the app itself, sound and the screen. Using the whole
+    /// limit means a voice sample that just played doesn't make a model look too big.
+    ///
+    /// iOS caps each app far below the phone's RAM: about 6 GB on a 12 GB iPhone 17 Pro Max,
+    /// whatever the entitlements. Going over it closes the app without warning, so the checks
+    /// below leave a wide margin.
     static var modelBudgetGB: Double {
         let b = os_proc_available_memory()
-        let limit = b > 0 ? Double(b) / 1_073_741_824 + footprintGB : ramGB * 0.55
-        return max(0.5, limit - 0.5)
+        let limit = b > 0 ? Double(b) / 1_000_000_000 + footprintGB : min(ramGB * 0.5, 6)
+        return max(0.5, limit - 0.6)
     }
 
     static var deviceName: String {
@@ -239,7 +243,9 @@ enum DeviceFit {
             let layers = f.kvLayers ?? Double(l)
             kv = layers * Double(2 * h * d * 2 * contextTokens) / 1_000_000_000
         }
-        return weights * 1.05 + kv + 0.4
+        // Loading briefly needs more than the weights (MLX evaluates them in chunks, and the
+        // tokenizer and prompt cache sit beside them), hence the 10% and 0.6 GB of working room.
+        return weights * 1.1 + kv + 0.6
     }
 
     /// Rough generation speed: a phone reads all the weights once per token, so speed is
@@ -257,7 +263,7 @@ enum DeviceFit {
         let budget = modelBudgetGB
         let total = need + otherLoadedGB
         let ratio = total / max(budget, 0.1)
-        let verdict: Verdict = ratio < 0.7 ? .comfortable : ratio < 0.92 ? .tight : .tooBig
+        let verdict: Verdict = ratio < 0.75 ? .comfortable : ratio < 0.9 ? .tight : .tooBig
         let wps = wordsPerSecond(for: entry, facts: facts)
         var detail = String(format: "Needs about %.1f GB", need)
         if otherLoadedGB > 0.05 { detail += String(format: " (plus %.1f GB for the other model)", otherLoadedGB) }
