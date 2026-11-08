@@ -16,11 +16,13 @@ struct ChatTurn: Codable, Hashable {
 
 enum LLMError: LocalizedError {
     case noModel, notDownloaded
+    case tooBig(String)
 
     var errorDescription: String? {
         switch self {
         case .noModel: "No storyteller model is selected yet. Open the Models tab and download one."
         case .notDownloaded: "The selected model is not on this phone. Open the Models tab and download it again."
+        case .tooBig(let why): "\(why) Pick a smaller storyteller in the Models tab."
         }
     }
 }
@@ -79,6 +81,9 @@ final class LLMService {
         if let c = container, loadedID == entry.id { return c }
         if let t = loadTask { return try await t.value }
         guard let dir = ModelStore.snapshotDirectory(entry.id) else { throw LLMError.notDownloaded }
+        // Loading a model over the app's memory limit closes the app instantly, so refuse it.
+        let fit = store.report(for: entry)
+        if fit.verdict == .tooBig { throw LLMError.tooBig(fit.detail) }
 
         unload()
         phase = .loading

@@ -36,6 +36,18 @@ extension HFHub {
     }
 }
 
+extension HFHub {
+    /// The same search in every format, to tell "no MLX version" apart from "no such model".
+    static func searchAnyFormat(_ text: String) async throws -> [HubHit] {
+        var c = URLComponents(string: "https://huggingface.co/api/models")!
+        c.queryItems = [URLQueryItem(name: "search", value: text), URLQueryItem(name: "sort", value: "downloads"),
+                        URLQueryItem(name: "direction", value: "-1"), URLQueryItem(name: "limit", value: "20")]
+        let (data, resp) = try await URLSession.shared.data(from: c.url!)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return try JSONDecoder().decode([HubHit].self, from: data)
+    }
+}
+
 /// Search Hugging Face by keyword and add a model with one tap. Each result shows its size and
 /// whether it fits this device, worked out the same way as the built-in models.
 struct ModelSearchSection: View {
@@ -81,7 +93,17 @@ struct ModelSearchSection: View {
         defer { searching = false }
         do {
             hits = try await HFHub.search(q, kind: kind)
-            if hits.isEmpty { message = "No MLX models match \"\(q)\". Try fewer or different words." }
+            if hits.isEmpty {
+                // Many community models (uncensored and roleplay fine-tunes especially) are only
+                // published as GGUF for llama.cpp. Say so, rather than suggesting nothing exists.
+                let others = (try? await HFHub.searchAnyFormat(q)) ?? []
+                if others.isEmpty {
+                    message = "Nothing on Hugging Face matches \"\(q)\". Try fewer or different words."
+                } else {
+                    let names = others.prefix(3).map(\.name).joined(separator: ", ")
+                    message = "No MLX version matches \"\(q)\" yet. \(others.count == 20 ? "20+" : "\(others.count)") models match in other formats (usually GGUF, for llama.cpp apps), such as \(names). Phonodeck can't run those until someone converts them to MLX."
+                }
+            }
         } catch {
             hits = []
             message = "Couldn't reach Hugging Face: \(error.localizedDescription)"
