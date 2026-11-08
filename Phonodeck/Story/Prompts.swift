@@ -120,11 +120,13 @@ enum Prompts {
     /// capped plan first: it reviews the state, the clock, the goal and the recalled memories and
     /// decides what this reply must do. The plan then leads the briefing for the reply itself.
     static let gmPlan = """
-    You are the Game Master of an interactive audio story, planning your next reply in private before you write it. Read everything below carefully: the bible, the facts, your look-ahead from last turn, the clock, the recalled memories and what the player just did. Your look-ahead was written before the player spoke: keep what still fits and change what doesn't. Then output ONLY these six short lines, nothing else:
+    You are the Game Master of an interactive audio story, planning your next reply in private before you write it. Read everything below carefully: the bible, the facts, your look-ahead from last turn, the clock, the recalled memories and what the player just did. Your look-ahead was written before the player spoke: use it only if the player went along with it. What the player says they do always wins.
+    If the player goes somewhere or looks for someone, this reply shows them doing it: they travel, and they find people where the scene says those people are. Nobody who is elsewhere simply appears beside them.
+    Then output ONLY these six short lines, nothing else:
     PLAYER: what the player is doing or asking, and what they want from it
     ANSWER: if they asked anything, the concrete, factual answer the reply gives first (names, places, what happened); otherwise "none"
     BEAT: the one thing that happens in this reply, and how it delivers the FEELING TO ACHIEVE and moves the story one step along the roadmap for this minute
-    WHO: who is in the scene (only people already present or clearly arriving), with their pronouns
+    WHO: where the player ends up in this reply, who is with them there and where exactly, with pronouns (people elsewhere stay where they are)
     USE: one memory, character, place or earlier detail to bring back
     AVOID: one thing this reply must not do (break a fact, add a stranger, end on a riddle, repeat a phrase, anything the player ruled out)
     Each line at most 30 words. Plain words, no prose for the player.
@@ -170,8 +172,9 @@ enum Prompts {
     {"fixes":["0-3 slips in the latest reply to quietly correct from now on, each as the true version, e.g. 'Teina is a woman (she/her), not he' or 'You are barefoot: you have no boots' or 'There was no storm'"],
      "facts":["the full updated list of 6-12 short facts that must stay true: keep the old ones that still hold, add what this exchange established (names learned, promises, who is present, what the player now has)"],
      "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
+     "scene":"where the player is now; who is with them and exactly where (or alone); where each other named person is; what the player is wearing and carrying",
      "next":"2 sentences: what the next reply should do if the player goes along (the next small step on the roadmap toward the feeling, with the people already present), and one concrete detail to use"}
-    A slip is anything that contradicts the bible, the facts or the limits: a changed pronoun, an object the player does not have, danger in a story without danger, a new stranger from nowhere, a riddle in place of an answer. No commentary.
+    A slip is anything that contradicts the bible, the facts, the scene or the limits: a changed pronoun, an object the player does not have, danger in a story without danger, someone appearing who was elsewhere, a new stranger from nowhere, a riddle in place of an answer, ignoring where the player said they were going. Keep the scene exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
     """
 
     // MARK: Memory
