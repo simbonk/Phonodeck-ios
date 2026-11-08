@@ -7,6 +7,7 @@ struct WelcomeView: View {
     @AppStorage("playerName") private var playerName = ""
     @AppStorage("adultConfirmed") private var adult = false
     @State private var page = 0
+    @State private var showModels = false
     var onDone: () -> Void
 
     var body: some View {
@@ -52,31 +53,40 @@ struct WelcomeView: View {
             .frame(maxWidth: 620)
         }
         .background(Theme.bg.ignoresSafeArea())
+        .sheet(isPresented: $showModels) {
+            ModelsView()
+                .overlay(alignment: .topTrailing) {
+                    Button("Done") { showModels = false }.bold().padding(.horizontal, 20).padding(.top, 14)
+                }
+        }
     }
 
+    /// Sized to fit on one iPhone screen without scrolling.
     private var intro: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack { Spacer(); HoloCore(size: 110); Spacer() }.padding(.vertical, 10)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack { Spacer(); HoloCore(size: 72); Spacer() }
             Text("PHONODECK")
-                .font(.system(size: 32, weight: .bold)).tracking(5)
+                .font(.system(size: 28, weight: .bold)).tracking(5)
                 .foregroundStyle(Theme.accent)
                 .shadow(color: Theme.accent.opacity(0.5), radius: 8)
-            Text("Interactive stories you play with your voice. Pick a world, or build your own, and a storyteller narrates while you decide what happens.")
-                .foregroundStyle(Theme.fg)
-            Caps(text: "Before you start").padding(.top, 6)
-            tip("speaker.wave.2.fill", "Turn the sound up", "The story is read aloud. If you hear nothing, check that Silent Mode is off.")
+            Text("Interactive stories you play with your voice. Pick a world or build your own; the storyteller narrates while you decide what happens.")
+                .font(.callout).foregroundStyle(Theme.fg)
+            Caps(text: "Before you start").padding(.top, 2)
+            tip("speaker.wave.2.fill", "Turn the sound up", "Stories are read aloud. Check Silent Mode is off.")
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "mic.fill").foregroundStyle(Theme.rec).frame(width: 26)
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Go hands-free").bold().foregroundStyle(Theme.fg)
-                    Text("Tap the hands-free button in a story and just talk. When you're done, say").foregroundStyle(Theme.dim)
-                    MagicPhrase(phrase: Dictation.sendPhrase, font: .headline)
-                    Text("and your words are sent. You can change the phrase in Settings.").foregroundStyle(Theme.dim)
+                    FlowLayout(spacing: 5) {
+                        Text("Tap Hands-free and talk. Say").foregroundStyle(Theme.dim)
+                        MagicPhrase(phrase: Dictation.sendPhrase, font: .subheadline.bold())
+                        Text("to send.").foregroundStyle(Theme.dim)
+                    }
                 }
                 .font(.subheadline)
             }
-            tip("globe", "Open the World", "The globe in a story shows your mission, the story bible, and every character, place and item it has collected. You can edit any of it.")
-            tip("lock.fill", "It stays here", "Everything runs on this \(DeviceFit.deviceWord). Once the storyteller is downloaded, nothing you say leaves it, and it works in Airplane Mode.")
+            tip("globe", "Open the World", "The globe shows your mission and every character, place and item. Edit any of it.")
+            tip("lock.fill", "It stays here", "Runs on this \(DeviceFit.deviceWord). Nothing you say leaves it, even in Airplane Mode.")
         }
     }
 
@@ -102,7 +112,7 @@ struct WelcomeView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("The storyteller is a language model that runs on this \(DeviceFit.deviceWord). This one is picked to fit it. Then choose how the story sounds and how it hears you. Everything here can be changed later in the Models tab.")
                 .font(.subheadline).foregroundStyle(Theme.dim)
-            StorytellerCard()
+            StorytellerCard(showOthers: { showModels = true })
             NarratorSetup().padding(.top, 10)
             ListeningSetup().padding(.top, 10)
             if app.store.hasLanguageModel {
@@ -114,7 +124,7 @@ struct WelcomeView: View {
     private func tip(_ icon: String, _ title: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon).foregroundStyle(Theme.accent).frame(width: 26)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title).bold().foregroundStyle(Theme.fg)
                 Text(text).foregroundStyle(Theme.dim)
             }

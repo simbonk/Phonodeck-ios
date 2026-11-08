@@ -98,12 +98,12 @@ final class ModelStore {
         return DeviceFit.need(for: e, facts: facts[e.id])
     }
 
-    func report(for entry: ModelEntry, loadedGB: Double) -> DeviceFit.Report {
+    func report(for entry: ModelEntry) -> DeviceFit.Report {
         // Everything else that stays loaded while you play.
         let partner = [languageID, voiceID, listeningID]
             .filter { id in ModelCatalog.entry(id)?.kind != entry.kind }
             .reduce(0) { $0 + neededGB($1) }
-        return DeviceFit.report(for: entry, facts: facts[entry.id], otherLoadedGB: partner, alreadyLoadedGB: loadedGB)
+        return DeviceFit.report(for: entry, facts: facts[entry.id], otherLoadedGB: partner)
     }
 
     // MARK: Custom models from a link

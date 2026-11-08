@@ -117,8 +117,7 @@ private struct HitRow: View {
                     if !facts.hasSafetensors {
                         Text("No MLX weights").font(.caption).foregroundStyle(.red)
                     } else {
-                        let loaded = app.llm.loadedGB + app.narrator.neuralLoadedGB + app.dictation.loadedGB
-                        let r = app.store.report(for: entry, loadedGB: loaded)
+                        let r = app.store.report(for: entry)
                         HStack(spacing: 4) {
                             Image(systemName: r.verdict.symbol)
                             Text(r.verdict.label)

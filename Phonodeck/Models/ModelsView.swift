@@ -72,7 +72,7 @@ struct ModelsView: View {
         Section {
             LabeledContent("This \(DeviceFit.deviceWord)", value: DeviceFit.deviceName)
             LabeledContent("Memory", value: String(format: "%.0f GB", DeviceFit.ramGB.rounded()))
-            LabeledContent("Phonodeck may use", value: String(format: "about %.1f GB", DeviceFit.availableGB + app.llm.loadedGB + app.narrator.neuralLoadedGB + app.dictation.loadedGB))
+            LabeledContent("Room for models", value: String(format: "about %.1f GB", DeviceFit.modelBudgetGB))
             if case .failed(_, let message) = store.download {
                 Text(message).foregroundStyle(.red).font(.footnote)
             }
@@ -120,8 +120,7 @@ struct ModelsView: View {
     // MARK: Rows
 
     private func report(_ e: ModelEntry) -> DeviceFit.Report {
-        let loaded = app.llm.loadedGB + app.narrator.neuralLoadedGB + app.dictation.loadedGB
-        return store.report(for: e, loadedGB: loaded)
+        store.report(for: e)
     }
 
     private func isSelected(_ e: ModelEntry) -> Bool {

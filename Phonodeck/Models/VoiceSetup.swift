@@ -70,19 +70,22 @@ struct VoiceChips: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("\(entry.name) voices: tap one to hear it").font(.caption).foregroundStyle(Theme.dim)
-            FlowLayout(spacing: 8) {
-                ForEach(entry.voices, id: \.self) { v in
-                    Chip(text: voiceLabel(v), selected: v == chosen) {
-                        chosen = v
-                        Narrator.setNeuralVoice(v, for: entry)
-                        app.narrator.lastError = nil
-                        app.narrator.audition(entry)
+            // One row that scrolls sideways, so the list doesn't push the other voices far down.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(entry.voices, id: \.self) { v in
+                        Chip(text: voiceName(v), selected: v == chosen) {
+                            chosen = v
+                            Narrator.setNeuralVoice(v, for: entry)
+                            app.narrator.lastError = nil
+                            app.narrator.audition(entry)
+                        }
                     }
                 }
             }
+            Text(chosen.isEmpty ? "Tap a voice to hear it." : "\(voiceLabel(chosen)). Tap another to hear it.")
+                .font(.caption).foregroundStyle(Theme.dim)
         }
-        .padding(.leading, 12)
         .onAppear { chosen = Narrator.neuralVoice(for: entry) }
     }
 }
@@ -190,7 +193,7 @@ struct OptionCard<Extra: View>: View {
             }
             Text(blurb).font(.caption).foregroundStyle(Theme.dim)
             if let e = entry, !installed {
-                let r = app.store.report(for: e, loadedGB: app.llm.loadedGB + app.narrator.neuralLoadedGB + app.dictation.loadedGB)
+                let r = app.store.report(for: e)
                 HStack(spacing: 4) {
                     Image(systemName: r.verdict.symbol)
                     Text(r.verdict.label)
@@ -328,6 +331,13 @@ struct MemoryPanel: View {
             HStack(spacing: 6) { buttons() }.buttonStyle(.bordered).font(.caption)
         }
     }
+}
+
+/// "af_heart" → "Heart"; other names are shown as they are.
+func voiceName(_ v: String) -> String {
+    let parts = v.split(separator: "_")
+    guard parts.count == 2, parts[0].count == 2 else { return v }
+    return parts[1].prefix(1).uppercased() + parts[1].dropFirst()
 }
 
 /// "af_heart" → "Heart (American, female)"; other names are shown as they are.

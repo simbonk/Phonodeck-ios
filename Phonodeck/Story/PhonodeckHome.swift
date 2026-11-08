@@ -162,17 +162,20 @@ struct PhonodeckHome: View {
 /// start screen and in the welcome until a storyteller is installed.
 struct StorytellerCard: View {
     @Environment(AppModel.self) private var app
+    /// Set in the welcome, where the Models tab is hidden behind it: opens the full list in a sheet.
+    var showOthers: (() -> Void)? = nil
 
+    /// The best storyteller that runs comfortably here, best first; then one that is tight.
     private var entry: ModelEntry {
-        let rec = ModelCatalog.entry(ModelCatalog.recommendedLanguageID) ?? ModelCatalog.language[0]
-        let r = app.store.report(for: rec, loadedGB: 0)
-        if r.verdict == .tooBig, let small = ModelCatalog.language.first { return small }
-        return rec
+        let order = ModelCatalog.storytellerPreference.compactMap { ModelCatalog.entry($0) }
+        if let e = order.first(where: { app.store.report(for: $0).verdict == .comfortable }) { return e }
+        if let e = order.first(where: { app.store.report(for: $0).verdict == .tight }) { return e }
+        return ModelCatalog.language[0]
     }
 
     var body: some View {
         let e = entry
-        let r = app.store.report(for: e, loadedGB: 0)
+        let r = app.store.report(for: e)
         let installed = app.store.installed.contains(e.id)
         VStack(alignment: .leading, spacing: 8) {
             Caps(text: "Step 1: download your storyteller")
@@ -207,7 +210,7 @@ struct StorytellerCard: View {
                     .foregroundStyle(Theme.onAccent)
                     .disabled(app.store.isDownloading)
                     Spacer()
-                    Button("Other models") { app.tab = .models }.font(.footnote)
+                    Button("Other models") { if let showOthers { showOthers() } else { app.tab = .models } }.font(.footnote)
                 }
                 Text("Downloads are big, so use Wi-Fi. After this, Phonodeck works in Airplane Mode.").font(.caption).foregroundStyle(Theme.dim)
             }
@@ -215,6 +218,10 @@ struct StorytellerCard: View {
         .padding(16)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.accent.opacity(0.6)))
-        .task { if app.store.facts[e.id] == nil { await app.store.loadFacts(e) } }
+        .task {
+            for id in ModelCatalog.storytellerPreference where app.store.facts[id] == nil {
+                if let e = ModelCatalog.entry(id) { await app.store.loadFacts(e) }
+            }
+        }
     }
 }

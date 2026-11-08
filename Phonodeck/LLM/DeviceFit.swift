@@ -186,6 +186,26 @@ enum DeviceFit {
         return b > 0 ? Double(b) / 1_073_741_824 : ramGB * 0.55
     }
 
+    /// Memory this app is using right now (what iOS counts against its limit).
+    static var footprintGB: Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let r = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return r == KERN_SUCCESS ? Double(info.phys_footprint) / 1_073_741_824 : 0
+    }
+
+    /// Room the app has for models: its whole memory limit (what it uses now plus what it may
+    /// still take) less about 0.5 GB for the app itself, sound and the screen. Using the whole
+    /// limit means a voice sample that just played, or memory MLX is holding on to, doesn't make
+    /// a model look too big.
+    static var modelBudgetGB: Double {
+        let b = os_proc_available_memory()
+        let limit = b > 0 ? Double(b) / 1_073_741_824 + footprintGB : ramGB * 0.55
+        return max(0.5, limit - 0.5)
+    }
+
     static var deviceName: String {
         var info = utsname()
         uname(&info)
@@ -232,10 +252,9 @@ enum DeviceFit {
 
     /// - Parameter otherLoadedGB: memory held by models that stay loaded alongside this one
     ///   (the narrator voice while the storyteller runs, and the other way round).
-    /// - Parameter alreadyLoadedGB: memory this app's models hold right now, which counts toward the budget.
-    static func report(for entry: ModelEntry, facts: ModelFacts?, otherLoadedGB: Double = 0, alreadyLoadedGB: Double = 0) -> Report {
+    static func report(for entry: ModelEntry, facts: ModelFacts?, otherLoadedGB: Double = 0) -> Report {
         let need = need(for: entry, facts: facts)
-        let budget = availableGB + alreadyLoadedGB
+        let budget = modelBudgetGB
         let total = need + otherLoadedGB
         let ratio = total / max(budget, 0.1)
         let verdict: Verdict = ratio < 0.7 ? .comfortable : ratio < 0.92 ? .tight : .tooBig
