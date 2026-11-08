@@ -35,6 +35,7 @@ final class Narrator: NSObject {
     private let player = AVAudioPlayerNode()
     private var engineFormat: AVAudioFormat?
     private var buffersOutstanding = 0
+    private var pendingBuffers: Set<UUID> = []
     private var generation = 0
 
     init(store: ModelStore) {
@@ -42,6 +43,23 @@ final class Narrator: NSObject {
         super.init()
         synth.delegate = self
         engine.attach(player)
+        // The audio route or session can change under the engine (another app, dictation, a headset);
+        // the engine then stops silently and queued speech would never play.
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.engineChanged() }
+        }
+    }
+
+    private func engineChanged() {
+        engineFormat = nil
+        guard buffersOutstanding > 0 else { return }
+        detail = (detail ?? "") + " The audio route changed; restarting the speaker."
+        do {
+            try engine.start()
+            player.play()
+        } catch {
+            lastError = "The speaker stopped when the audio route changed (\(error.localizedDescription))."
+        }
     }
 
     // MARK: Settings
@@ -166,6 +184,7 @@ final class Narrator: NSObject {
         worker = nil
         player.stop()
         buffersOutstanding = 0
+        pendingBuffers.removeAll()
         buffer = ""
         streamDone = true
         speaking = false
@@ -302,10 +321,20 @@ final class Narrator: NSObject {
                     UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
                     defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
                     let chip = onCPU ? "processor" : "graphics chip"
-                    self.detail = "Waiting for the storyteller to finish with the graphics chip…"
+                    self.detail = "Waiting for the storyteller to finish with the \(chip)…"
                     let started = Date()
+                    // Ticks while synthesis runs, so a stuck or slow step shows how long it has been.
+                    let ticker = Task { @MainActor in
+                        while !Task.isCancelled {
+                            try? await Task.sleep(for: .seconds(5))
+                            guard !Task.isCancelled, self.generation == myGeneration, let d = self.detail else { return }
+                            let base = d.components(separatedBy: " (").first ?? d
+                            self.detail = base + " (\(Int(Date().timeIntervalSince(started))) s so far)"
+                        }
+                    }
+                    defer { ticker.cancel() }
                     // An MLX failure becomes a Swift error (and Apple's voice takes over) instead of a crash.
-                    let samples = try await MLXGate.shared.run(urgent: true) {
+                    let samples = try await MLXGate.shared.run(urgent: true) { () async throws -> [Float] in
                         await MainActor.run { self.detail = "Making speech on the \(chip)…" }
                         return try await Self.onChosenDevice(onCPU) {
                             try await withError { error in
@@ -317,6 +346,7 @@ final class Narrator: NSObject {
                             }
                         }
                     }
+                    ticker.cancel()
                     guard self.generation == myGeneration else { return }
                     let seconds = Double(samples.count) / Double(model.sampleRate)
                     let loudest = samples.reduce(Float(0)) { max($0, abs($1)) }
@@ -365,15 +395,32 @@ final class Narrator: NSObject {
             }
         }
         buffersOutstanding += 1
+        let bufferID = UUID()
+        pendingBuffers.insert(bufferID)
         player.scheduleBuffer(pcm, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.generation == myGeneration else { return }
+                guard let self, self.generation == myGeneration, self.pendingBuffers.remove(bufferID) != nil else { return }
                 self.buffersOutstanding = max(0, self.buffersOutstanding - 1)
                 self.checkFinished()
             }
         }
         if !player.isPlaying { player.play() }
         playing = true
+        let route = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName).joined(separator: ", ")
+        detail = (detail ?? "") + " Playing through \(route.isEmpty ? "no output" : route)."
+        // If the speaker never reports the sound as played, say so (with what the engine was doing)
+        // instead of showing Stop forever.
+        let seconds = Double(samples.count) / sampleRate
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds + 6))
+            guard let self, self.generation == myGeneration, self.pendingBuffers.remove(bufferID) != nil else { return }
+            let session = AVAudioSession.sharedInstance()
+            self.lastError = "The speaker didn't play the speech (engine running: \(self.engine.isRunning ? "yes" : "no"), "
+                + "player playing: \(self.player.isPlaying ? "yes" : "no"), output: \(route.isEmpty ? "none" : route), "
+                + "volume \(Int(session.outputVolume * 100))%, category \(session.category.rawValue.replacingOccurrences(of: "AVAudioSessionCategory", with: "")))."
+            self.buffersOutstanding = max(0, self.buffersOutstanding - 1)
+            self.checkFinished()
+        }
     }
 }
 
