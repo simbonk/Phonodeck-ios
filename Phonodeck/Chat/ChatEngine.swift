@@ -95,6 +95,7 @@ final class ChatEngine {
         turn += 1
         let myTurn = turn
         if speak { narrator.begin() }
+        ComputerSounds.shared.startHum()
         task = Task {
             do {
                 let custom = UserDefaults.standard.string(forKey: "chatSystem") ?? ""
@@ -104,6 +105,7 @@ final class ChatEngine {
                     : custom
                 for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: 900, temperature: 0.7)) {
                     guard turn == myTurn else { return }
+                    if reply.isEmpty && !speak { ComputerSounds.shared.stopHum() }
                     reply += piece
                     if speak { narrator.feed(piece) }
                 }
@@ -120,6 +122,7 @@ final class ChatEngine {
             generating = false
             task = nil
             if speak && !Task.isCancelled { narrator.finish() }
+            if !speak || !narrator.speaking { ComputerSounds.shared.stopHum() }
             // Nothing to read aloud (an error or an empty reply): listen again straight away.
             listenIfReady()
         }
@@ -140,5 +143,6 @@ final class ChatEngine {
         reply = ""
         narrator.stop()
         dictation.stop()
+        ComputerSounds.shared.stopHum()
     }
 }

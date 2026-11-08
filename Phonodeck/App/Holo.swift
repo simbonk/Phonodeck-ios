@@ -228,3 +228,23 @@ struct Caps: View {
         Text(text.uppercased()).font(.caption.bold()).tracking(1.2).foregroundStyle(color)
     }
 }
+
+/// The opening screen: the holographic core spins up and the name condenses out of the light,
+/// on the same deep navy as the launch screen, so the app never flashes white while it starts.
+struct LaunchSplash: View {
+    var body: some View {
+        ZStack {
+            Theme.bg.ignoresSafeArea()
+            VStack(spacing: 22) {
+                HoloCore(size: 130)
+                Materialize(text: "PHONODECK", font: .title2.bold(), color: Theme.accent)
+                    .tracking(4)
+                Text("Powering up the holo-emitters…")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.dim)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Phonodeck is starting")
+    }
+}
