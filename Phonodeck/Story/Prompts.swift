@@ -143,7 +143,7 @@ enum Prompts {
      "beats":["3-5 short story steps in order"],
      "player":{"name":"the player character's name","desc":"one line: who they are here"},
      "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"two telling details","wants":"for a person: what they want"}],
- "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, what the player has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
+     "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, what the player has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
      "secrets":["2-4 hidden truths the player has not discovered"],
      "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}]}
     Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly.
