@@ -5,6 +5,12 @@ import SwiftUI
 struct NarratorSetup: View {
     @Environment(AppModel.self) private var app
     @State private var onCPU = Narrator.neuralOnCPU
+    /// In the Models tab: also list added voice models and offer Delete.
+    var manage = false
+
+    private var voices: [ModelEntry] {
+        manage ? ModelCatalog.voice + app.store.customModels.filter { $0.kind == .voice } : ModelCatalog.voice
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -15,11 +21,15 @@ struct NarratorSetup: View {
                        entry: nil, selected: app.store.voiceID == nil,
                        listen: { toggleListen(nil) }, listening: app.narrator.auditioningID == "apple",
                        use: { app.narrator.unloadNeural(); app.store.voiceID = nil })
-            ForEach(ModelCatalog.voice) { e in
-                OptionCard(title: e.name, tier: e.tier == .best ? "Good, slower" : "Medium", blurb: e.blurb,
+            ForEach(voices) { e in
+                OptionCard(title: e.name, tier: e.tier == .best ? "Good, slower" : e.tier == .medium ? "Medium" : "Added", blurb: e.blurb,
                            entry: e, selected: app.store.voiceID == e.id,
                            listen: { toggleListen(e) }, listening: app.narrator.auditioningID == e.id,
-                           use: { app.narrator.unloadNeural(); app.store.voiceID = e.id })
+                           use: { app.narrator.unloadNeural(); app.store.voiceID = e.id }) {
+                    if manage {
+                        DeleteModelButton(entry: e) { if app.store.voiceID == e.id || app.narrator.loadedVoiceID == e.id { app.narrator.unloadNeural() } }
+                    }
+                }
                 if app.store.installed.contains(e.id), e.voices.count > 1, app.store.voiceID == e.id {
                     VoiceChips(entry: e)
                 }
@@ -81,6 +91,12 @@ struct VoiceChips: View {
 struct ListeningSetup: View {
     @Environment(AppModel.self) private var app
     @State private var testing = false
+    /// In the Models tab: also list added listening models and offer Delete.
+    var manage = false
+
+    private var models: [ModelEntry] {
+        manage ? ModelCatalog.listening + app.store.customModels.filter { $0.kind == .listening } : ModelCatalog.listening
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -90,10 +106,14 @@ struct ListeningSetup: View {
             OptionCard(title: "Apple dictation", tier: "Quick", blurb: "Built in. Shows words as you speak.",
                        entry: nil, selected: app.store.listeningID == nil,
                        use: { stopTest(); app.dictation.unloadModel(); app.store.listeningID = nil })
-            ForEach(ModelCatalog.listening) { e in
-                OptionCard(title: e.name, tier: e.tier == .best ? "Better" : "Light", blurb: e.blurb,
+            ForEach(models) { e in
+                OptionCard(title: e.name, tier: e.tier == .best ? "Better" : e.tier == nil ? "Added" : "Light", blurb: e.blurb,
                            entry: e, selected: app.store.listeningID == e.id,
-                           use: { stopTest(); app.dictation.unloadModel(); app.store.listeningID = e.id })
+                           use: { stopTest(); app.dictation.unloadModel(); app.store.listeningID = e.id }) {
+                    if manage {
+                        DeleteModelButton(entry: e) { stopTest(); if app.store.listeningID == e.id { app.dictation.unloadModel() } }
+                    }
+                }
             }
             test
         }
@@ -226,6 +246,27 @@ extension OptionCard where Extra == EmptyView {
          listen: (() -> Void)? = nil, listening: Bool = false, use: @escaping () -> Void) {
         self.init(title: title, tier: tier, blurb: blurb, entry: entry, selected: selected,
                   listen: listen, listening: listening, use: use, extra: { EmptyView() })
+    }
+}
+
+/// Deletes a downloaded model's files (after `before` lets go of it), asking first.
+struct DeleteModelButton: View {
+    @Environment(AppModel.self) private var app
+    let entry: ModelEntry
+    let before: () -> Void
+    @State private var confirming = false
+
+    var body: some View {
+        Button(role: .destructive) { confirming = true } label: { Image(systemName: "trash") }
+            .buttonStyle(.bordered)
+            .confirmationDialog("Delete \(entry.name) from this \(DeviceFit.deviceWord)?", isPresented: $confirming, titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    before()
+                    app.store.delete(entry)
+                }
+            } message: {
+                Text("You can download it again later.")
+            }
     }
 }
 

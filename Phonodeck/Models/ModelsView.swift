@@ -33,26 +33,17 @@ struct ModelsView: View {
                     Text("The language model that runs your stories and chats. Bigger models write richer stories but answer more slowly.")
                 }
 
+                // The same cards as the welcome setup, so choosing and trying a voice works the same way in both.
                 Section {
-                    builtInRow(
-                        title: "Apple voice", subtitle: "Fast: built in, starts instantly, no download.",
-                        selected: store.voiceID == nil, listenID: "apple") { app.narrator.unloadNeural(); store.voiceID = nil }
-                    ForEach(ModelCatalog.voice + store.customModels.filter { $0.kind == .voice }) { row($0) }
-                } header: {
-                    Text("Narrator voice")
+                    NarratorSetup(manage: true).buttonStyle(.borderless)   // keeps each button in the row separate
                 } footer: {
-                    Text("All three work offline. Neural voices sound more human but use memory alongside the storyteller.")
+                    Text("All of these work offline. Neural voices sound more human but use memory alongside the storyteller.")
                 }
 
                 Section {
-                    builtInRow(
-                        title: "Apple dictation", subtitle: "Quick: built in, shows words as you speak. Offline on most recent iPhones.",
-                        selected: store.listeningID == nil) { store.listeningID = nil }
-                    ForEach(ModelCatalog.listening + store.customModels.filter { $0.kind == .listening }) { row($0) }
-                } header: {
-                    Text("Listening")
+                    ListeningSetup(manage: true).buttonStyle(.borderless)
                 } footer: {
-                    Text("How Phonodeck hears you. Say \"make it so\" to send.")
+                    Text("Say \"make it so\" to send.")
                 }
 
                 addSection
@@ -209,23 +200,6 @@ struct ModelsView: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    private func builtInRow(title: String, subtitle: String, selected: Bool, listenID: String? = nil, choose: @escaping () -> Void) -> some View {
-        HStack {
-            Button(action: choose) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(title).font(.headline)
-                        Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
-                }
-            }
-            .buttonStyle(.plain)
-            if let listenID { listenButton(listenID, nil) }
-        }
     }
 
     /// Plays a sample in that voice without changing the chosen one.
