@@ -281,9 +281,14 @@ final class Narrator: NSObject {
                     UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
                     defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
                     let samples = try await MLXGate.shared.run(urgent: true) {
-                        let audio = try await boxed.value.generate(
-                            text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
-                        return audio.asArray(Float.self)
+                        // An MLX failure becomes a Swift error (and Apple's voice takes over) instead of a crash.
+                        try await withError { error in
+                            let audio = try await boxed.value.generate(
+                                text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
+                            audio.eval()
+                            try error.check()
+                            return audio.asArray(Float.self)
+                        }
                     }
                     guard self.generation == myGeneration else { return }
                     self.schedule(samples, sampleRate: Double(model.sampleRate), generation: myGeneration)
@@ -355,10 +360,14 @@ enum NeuralVoiceWarmup {
     static func warm(directory: URL) async throws {
         let path = directory.path
         _ = try await MLXGate.shared.run {
-            let model = try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache)
-            _ = try await model.generate(text: "Hello.", voice: "af_heart", refAudio: nil, refText: nil, language: nil)
-            MLX.Memory.clearCache()
-            return true
+            try await withError { error in
+                let model = try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache)
+                let audio = try await model.generate(text: "Hello.", voice: "af_heart", refAudio: nil, refText: nil, language: nil)
+                audio.eval()
+                try error.check()
+                MLX.Memory.clearCache()
+                return true
+            }
         }
     }
 }

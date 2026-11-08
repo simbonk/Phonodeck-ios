@@ -281,9 +281,19 @@ final class Dictation {
         transcribing = true
         defer { transcribing = false }
         let boxed = Unchecked(value: model)
-        let heard = ((try? await MLXGate.shared.run(urgent: true) {
-            boxed.value.generate(audio: MLXArray(samples)).text
-        }) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let heard: String
+        do {
+            heard = try await MLXGate.shared.run(urgent: true) {
+                try withError { error in
+                    let text = boxed.value.generate(audio: MLXArray(samples)).text
+                    try error.check()
+                    return text
+                }
+            }.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            self.error = "\(entry.name) couldn't listen (\(error.localizedDescription)). Switch to Apple dictation in the Models tab."
+            return
+        }
         guard !heard.isEmpty else { return }
         committed = Self.join(committed, heard)
         if sendAfter {
