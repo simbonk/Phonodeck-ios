@@ -82,7 +82,32 @@ final class Narrator: NSObject {
         return Self.appleVoices.first { $0.language == "en-US" } ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
-    private var usingNeural: Bool { store.voiceModel != nil }
+    /// A voice being auditioned (the Listen buttons), used instead of the chosen one until the next stop.
+    private var auditionVoice: Audition?
+    private enum Audition { case apple, neural(ModelEntry) }
+    private var activeVoiceModel: ModelEntry? {
+        switch auditionVoice {
+        case .apple: nil
+        case .neural(let e): e
+        case nil: store.voiceModel
+        }
+    }
+    private var usingNeural: Bool { activeVoiceModel != nil }
+
+    /// What is auditioning right now, so the matching Listen button can show Stop.
+    private(set) var auditioningID: String?
+
+    /// Plays a sample in one voice (nil for Apple's) without changing the chosen narrator.
+    func audition(_ entry: ModelEntry?, text: String = "The rain eases. Somewhere below, a door opens, and a voice you almost recognise calls your name.") {
+        begin()
+        auditionVoice = entry.map { .neural($0) } ?? .apple
+        auditioningID = entry?.id ?? "apple"
+        feed(text)
+        finish()
+    }
+
+    /// The neural voice held in memory, if any.
+    var loadedVoiceID: String? { ttsModelID }
 
     // MARK: Audio session
 
@@ -141,6 +166,8 @@ final class Narrator: NSObject {
         streamDone = true
         speaking = false
         preparing = false
+        auditionVoice = nil
+        auditioningID = nil
     }
 
     /// Where a sentence ends: after . ! ? or a line break, once a few more characters have arrived
@@ -190,7 +217,10 @@ final class Narrator: NSObject {
         guard streamDone, appleOutstanding == 0, sentenceQueue.isEmpty, worker == nil, buffersOutstanding == 0 else { return }
         if speaking {
             speaking = false
-            onFinished?()
+            let wasAudition = auditionVoice != nil
+            auditionVoice = nil
+            auditioningID = nil
+            if !wasAudition { onFinished?() }
         }
     }
 
@@ -220,7 +250,7 @@ final class Narrator: NSObject {
     }
 
     private func startWorker() {
-        guard worker == nil, let entry = store.voiceModel else { return }
+        guard worker == nil, let entry = activeVoiceModel else { return }
         let myGeneration = generation
         worker = Task { @MainActor in
             defer {

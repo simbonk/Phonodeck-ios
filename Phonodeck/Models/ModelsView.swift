@@ -15,6 +15,16 @@ struct ModelsView: View {
             List {
                 deviceSection
 
+                if store.hasLanguageModel {
+                    Section {
+                        MemoryPanel()
+                    } header: {
+                        Text("In memory")
+                    } footer: {
+                        Text("If replies get strange or slow, Restart reloads the storyteller fresh. Unloading frees memory; models load again by themselves when needed.")
+                    }
+                }
+
                 Section {
                     ForEach(ModelCatalog.language + store.customModels.filter { $0.kind == .language }) { row($0) }
                 } header: {
@@ -26,7 +36,7 @@ struct ModelsView: View {
                 Section {
                     builtInRow(
                         title: "Apple voice", subtitle: "Fast: built in, starts instantly, no download.",
-                        selected: store.voiceID == nil) { store.voiceID = nil }
+                        selected: store.voiceID == nil, listenID: "apple") { app.narrator.unloadNeural(); store.voiceID = nil }
                     ForEach(ModelCatalog.voice + store.customModels.filter { $0.kind == .voice }) { row($0) }
                 } header: {
                     Text("Narrator voice")
@@ -171,6 +181,7 @@ struct ModelsView: View {
             } else {
                 HStack {
                     if installed {
+                        if e.kind == .voice { listenButton(e.id, e) }
                         if !isSelected(e) { Button("Use") { select(e) }.buttonStyle(.borderedProminent) }
                         Button("Delete", role: .destructive) {
                             if isSelected(e) {
@@ -200,18 +211,32 @@ struct ModelsView: View {
         .padding(.vertical, 4)
     }
 
-    private func builtInRow(title: String, subtitle: String, selected: Bool, choose: @escaping () -> Void) -> some View {
-        Button(action: choose) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+    private func builtInRow(title: String, subtitle: String, selected: Bool, listenID: String? = nil, choose: @escaping () -> Void) -> some View {
+        HStack {
+            Button(action: choose) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(title).font(.headline)
+                        Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
                 }
-                Spacer()
-                if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
             }
+            .buttonStyle(.plain)
+            if let listenID { listenButton(listenID, nil) }
         }
-        .foregroundStyle(.primary)
+    }
+
+    /// Plays a sample in that voice without changing the chosen one.
+    private func listenButton(_ id: String, _ e: ModelEntry?) -> some View {
+        let on = app.narrator.auditioningID == id
+        return Button {
+            if on { app.narrator.stop() } else { app.narrator.audition(e) }
+        } label: {
+            Label(on ? "Stop" : "Listen", systemImage: on ? "stop.fill" : "play.fill")
+        }
+        .buttonStyle(.bordered)
     }
 
     private func color(_ v: DeviceFit.Verdict) -> Color {

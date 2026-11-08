@@ -258,6 +258,9 @@ final class Dictation {
         }
     }
 
+    /// The listening model held in memory, if any.
+    var loadedModelID: String? { sttModelID }
+
     func unloadModel() {
         sttModel = nil
         sttModelID = nil

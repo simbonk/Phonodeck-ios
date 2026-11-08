@@ -69,7 +69,7 @@ Xcode opens the project and starts fetching packages (you'll see "Resolving Pack
 ### 5. First launch
 
 1. A short welcome explains hands-free play, confirms you are 18 or over (Phonodeck is adults only), and offers the recommended storyteller. On Wi-Fi, tap **Download** (green "Runs comfortably" means it fits).
-2. Optional: in the **Models** tab, download **Kokoro** for a more natural narrator and **Parakeet Small** for offline listening.
+2. On the same screen, tap **Listen** to hear each narrator voice. Apple's is ready at once; download **Kokoro** (medium) or **Qwen3-TTS** (good, slower) and listen again. Below that, pick how it hears you and tap **Try listening** to test it.
 3. On the **Phonodeck** tab, tap **Set up a new experience** and follow the wizard. The first scene takes about a minute while the model loads and designs the world.
 
 ### Updating later
@@ -91,6 +91,7 @@ With a free Apple ID, apps you install yourself stop opening after 7 days. Just 
 - **"CodeSign failed" with "unable to build chain to self-signed root":** pull the latest code (`git pull`); the app now targets iOS 26, which avoids the extra library whose signing step trips over this.
 - **"errSecInternalComponent" on a work or managed Mac:** the login keychain won't let `codesign` use the key. Put the signing certificate in its own keychain (for example `phonodeck-signing.keychain-db`) and, after a restart, unlock it with `security unlock-keychain ~/Library/Keychains/phonodeck-signing.keychain-db`.
 - **`git pull` says local changes to project.pbxproj would be overwritten:** run `git checkout -- Phonodeck.xcodeproj`, pull, then pick your Team again in Signing & Capabilities.
+- **Replies get strange or slow:** in the **Models** tab, under **In memory**, tap **Restart** next to the storyteller (or Unload to free memory).
 - **The app closes while loading a model:** the model is too big for the phone's memory; pick a smaller one in the Models tab.
 - **Silent narrator:** check the volume. Apple voices sound much better after you download a Premium or Enhanced voice in **Settings > Accessibility > Spoken Content > Voices**.
 
