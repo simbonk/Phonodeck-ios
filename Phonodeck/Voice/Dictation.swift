@@ -35,6 +35,10 @@ final class Dictation {
     private var task: SFSpeechRecognitionTask?
     /// Text from earlier segments (Apple ends a segment after a minute or a long pause).
     private var committed = ""
+    /// What the current Apple segment has heard so far. Apple can end a segment after a pause with an
+    /// error and no result, and on-device recognition sometimes starts a fresh transcription mid-segment
+    /// after a pause; either way the words heard before the pause must be kept, not replaced.
+    private var segment = ""
     private var session = 0
 
     // Downloaded model
@@ -151,6 +155,7 @@ final class Dictation {
             }
         }
         committed = ""
+        segment = ""
         text = ""
         if model != nil { error = nil }
 
@@ -211,6 +216,7 @@ final class Dictation {
     func clear() {
         text = ""
         committed = ""
+        segment = ""
     }
 
     // MARK: Apple
@@ -226,18 +232,36 @@ final class Dictation {
         if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
         box.endRequest()
         box.setRequest(req)
+        segment = ""
         task = recognizer.recognitionTask(with: req) { [weak self] result, err in
             let heard = result?.bestTranscription.formattedString
             let final = result?.isFinal ?? false
             Task { @MainActor in
                 guard let self, self.session == mySession, self.listening else { return }
-                if let heard { self.update(Self.join(self.committed, heard)) }
+                if let heard {
+                    if Self.restarted(from: self.segment, to: heard) { self.committed = Self.join(self.committed, self.segment) }
+                    self.segment = heard
+                    self.update(Self.join(self.committed, heard))
+                }
+                guard self.session == mySession, self.listening else { return }   // the send phrase may have sent it
                 if final || err != nil {
-                    if let heard, !heard.isEmpty { self.committed = Self.join(self.committed, heard) }
+                    if !self.segment.isEmpty { self.committed = Self.join(self.committed, self.segment) }
+                    self.segment = ""
                     self.beginAppleSegment()
                 }
             }
         }
+    }
+
+    /// True when a new partial result is a fresh transcription rather than a revision of the last one:
+    /// it is shorter and does not begin the way the last one did.
+    static func restarted(from old: String, to new: String) -> Bool {
+        func words(_ s: String) -> [String] {
+            s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        }
+        let a = words(old), b = words(new)
+        guard a.count >= 2, b.count < a.count else { return false }
+        return Array(a.prefix(min(2, b.count))) != Array(b.prefix(2))
     }
 
     // MARK: Downloaded model
