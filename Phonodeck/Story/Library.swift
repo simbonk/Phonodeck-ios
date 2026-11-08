@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Saved adventures, imported experiences and the chat history of the open space
+/// Saved adventures, imported experiences and the chats of the open space
 /// (your own, or the demo). Everything is plain JSON in that space's folder.
 @Observable
 @MainActor
@@ -9,12 +9,13 @@ final class Library {
     private(set) var space: Vault.Space = .mine
     private(set) var adventures: [Adventure] = []
     private(set) var imported: [Experience] = []
-    var chat: [ChatTurn] = [] { didSet { if !quiet { saveChat() } } }
-    private var quiet = false
+    /// Chats with the model, newest first.
+    private(set) var chats: [Conversation] = []
 
     private var folder: URL { Vault.folder(space) }
     private var adventuresFolder: URL { dir("Adventures") }
     private var experiencesFolder: URL { dir("Experiences") }
+    private var chatsFolder: URL { dir("Chats") }
 
     private func dir(_ name: String) -> URL {
         let u = folder.appending(path: name, directoryHint: .isDirectory)
@@ -34,23 +35,21 @@ final class Library {
             .sorted { $0.updated > $1.updated }
         imported = files(in: experiencesFolder).compactMap { try? dec.decode(Experience.self, from: Data(contentsOf: $0)) }
             .sorted { $0.title < $1.title }
-        quiet = true
-        if let d = try? Data(contentsOf: folder.appending(path: "chat.json")),
-           let c = try? dec.decode([ChatTurn].self, from: d) {
-            chat = c
-        } else {
-            chat = []
+        chats = files(in: chatsFolder).compactMap { try? dec.decode(Conversation.self, from: Data(contentsOf: $0)) }
+            .sorted { $0.updated > $1.updated }
+        // The single chat from before there could be several becomes the first saved chat.
+        let old = folder.appending(path: "chat.json")
+        if let d = try? Data(contentsOf: old), let turns = try? dec.decode([ChatTurn].self, from: d) {
+            if !turns.isEmpty { save(Conversation(turns: turns)) }
+            try? FileManager.default.removeItem(at: old)
         }
-        quiet = false
     }
 
     /// Forgets everything in memory (the files stay) while the app is locked.
     func unload() {
-        quiet = true
         adventures = []
         imported = []
-        chat = []
-        quiet = false
+        chats = []
     }
 
     private func files(in dir: URL) -> [URL] {
@@ -124,9 +123,32 @@ final class Library {
 
     // MARK: Chat
 
-    private func saveChat() {
-        if let d = try? Self.encoder.encode(chat) {
-            try? d.write(to: folder.appending(path: "chat.json"), options: .atomic)
+    func save(_ c: Conversation) {
+        var c = c
+        c.updated = Date()
+        if let d = try? Self.encoder.encode(c) {
+            try? d.write(to: chatsFolder.appending(path: c.id.uuidString + ".json"), options: .atomic)
         }
+        chats.removeAll { $0.id == c.id }
+        chats.insert(c, at: 0)
+    }
+
+    func delete(_ c: Conversation) {
+        try? FileManager.default.removeItem(at: chatsFolder.appending(path: c.id.uuidString + ".json"))
+        chats.removeAll { $0.id == c.id }
+    }
+}
+
+/// One chat with the model in the Chat tab.
+struct Conversation: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var turns: [ChatTurn] = []
+    var updated = Date()
+
+    /// The first thing you said, shortened.
+    var title: String {
+        let first = turns.first { $0.role == .user }?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !first.isEmpty else { return "New chat" }
+        return first.count > 50 ? String(first.prefix(50)) + "…" : first
     }
 }

@@ -240,27 +240,11 @@ struct StoryView: View {
         .background(Theme.bg.overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) })
     }
 
-    /// Off: a glowing teal outline with a light sweeping across it, so it stands out until used.
-    /// On and listening: solid red and pulsing. On but paused (narrator speaking, story loading): red outline.
     private var handsFreeButton: some View {
-        let on = engine.handsFree
-        let live = on && dictation.listening
-        return Button {
+        HandsFreeButton(on: engine.handsFree, listening: dictation.listening) {
             typing = false
-            engine.setHandsFree(!on)
-        } label: {
-            Label(on ? "Hands-free ON" : "Hands-free", systemImage: "headphones")
-                .font(.body.bold())
-                .frame(maxWidth: .infinity, minHeight: 40)
-                .foregroundStyle(live ? .white : on ? Theme.rec : Theme.accent)
-                .background(live ? Theme.rec : Color.clear, in: Capsule())
-                .overlay(Capsule().stroke(on ? Theme.rec : Theme.accent, lineWidth: 2))
-                .shadow(color: on ? .clear : Theme.accent.opacity(0.45), radius: 8)
-                .modifier(Sheen(active: !on))
-                .modifier(Pulse(active: live))
+            engine.setHandsFree(!engine.handsFree)
         }
-        .buttonStyle(.plain)
-        .accessibilityHint("The microphone stays on; say \(Dictation.sendPhrase) to send")
     }
 
     @ViewBuilder
