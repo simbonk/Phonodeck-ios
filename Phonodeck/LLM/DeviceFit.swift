@@ -18,6 +18,8 @@ struct ModelFacts: Codable, Hashable {
     var unusedBytes: Int64? = nil
     /// How many layers' worth of conversation memory the model keeps, when it isn't simply `layers`.
     var kvLayers: Double? = nil
+    /// The repo asks people to sign in and accept its terms before downloading (a "gated" model).
+    var gated: Bool? = nil
 
     /// Download size.
     var gb: Double { Double(bytes) / 1_000_000_000 }
@@ -30,11 +32,23 @@ enum HFHub {
     static let browseVoiceURL = URL(string: "https://huggingface.co/models?library=mlx&pipeline_tag=text-to-speech&sort=trending")!
 
     /// Bumped when ModelFacts learns something new, so older cached facts are fetched again.
-    private static let cacheKey = "modelFacts.v2"
+    private static let cacheKey = "modelFacts.v3"
 
     /// Weight names a text-only model skips when it loads (mirrors MLX's Gemma 4 and Qwen3.5 loaders).
     static let unusedPrefixes = ["vision_tower", "multi_modal_projector", "audio_tower", "embed_audio",
                                  "embed_vision", "vision_embedder", "visual"]
+
+    /// A request to Hugging Face, signed with the person's token when they've added one.
+    static func request(_ url: URL) -> URLRequest {
+        var req = URLRequest(url: url)
+        if let t = HFToken.value { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        return req
+    }
+
+    static func get(_ url: URL) async throws -> (Data, HTTPURLResponse?) {
+        let (data, resp) = try await URLSession.shared.data(for: request(url))
+        return (data, resp as? HTTPURLResponse)
+    }
 
     static func cached(_ id: String) -> ModelFacts? {
         guard let d = UserDefaults.standard.data(forKey: cacheKey),
@@ -53,10 +67,30 @@ enum HFHub {
     /// Reads the file list (with sizes) and config.json of a public repo.
     static func facts(_ id: String) async throws -> ModelFacts {
         struct Sibling: Decodable { let rfilename: String; let size: Int64? }
-        struct Info: Decodable { let siblings: [Sibling]?; let tags: [String]?; let library_name: String? }
+        struct Info: Decodable {
+            let siblings: [Sibling]?; let tags: [String]?; let library_name: String?
+            /// false, or "auto"/"manual" when the repo is gated.
+            let gated: Bool?
+            enum CodingKeys: String, CodingKey { case siblings, tags, library_name, gated }
+            init(from d: Decoder) throws {
+                let c = try d.container(keyedBy: CodingKeys.self)
+                siblings = try? c.decode([Sibling].self, forKey: .siblings)
+                tags = try? c.decode([String].self, forKey: .tags)
+                library_name = try? c.decode(String.self, forKey: .library_name)
+                if let b = try? c.decode(Bool.self, forKey: .gated) { gated = b }
+                else if (try? c.decode(String.self, forKey: .gated)) != nil { gated = true }
+                else { gated = nil }
+            }
+        }
         let infoURL = URL(string: "https://huggingface.co/api/models/\(id)?blobs=true")!
-        let (data, resp) = try await URLSession.shared.data(from: infoURL)
-        guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+        let (data, resp) = try await get(infoURL)
+        switch resp?.statusCode ?? 0 {
+        case 200: break
+        case 401, 403:
+            throw NSError(domain: "Phonodeck", code: 401, userInfo: [NSLocalizedDescriptionKey: HFToken.value == nil
+                ? "\(id) is private or gated. Add a Hugging Face token (Models tab, at the bottom) and try again."
+                : "Hugging Face won't show \(id) to your token. If it's gated, open its page and accept its terms first."])
+        default:
             throw NSError(domain: "Phonodeck", code: 404, userInfo: [NSLocalizedDescriptionKey: "Hugging Face has no public model called \"\(id)\"."])
         }
         let info = try JSONDecoder().decode(Info.self, from: data)
@@ -70,13 +104,19 @@ enum HFHub {
             hasSafetensors: files.contains { $0.rfilename.hasSuffix(".safetensors") },
             looksMLX: (info.tags ?? []).contains("mlx") || info.library_name == "mlx" || id.lowercased().hasPrefix("mlx-community/"))
         facts.ggufOnly = !facts.hasSafetensors && files.contains { $0.rfilename.lowercased().hasSuffix(".gguf") }
+        facts.gated = info.gated
 
-        if let pair = try? await URLSession.shared.data(from: URL(string: "https://huggingface.co/\(id)/resolve/main/config.json")!),
-           (pair.1 as? HTTPURLResponse)?.statusCode == 200,
+        if let pair = try? await get(URL(string: "https://huggingface.co/\(id)/resolve/main/config.json")!),
+           pair.1?.statusCode == 200,
            let top = try? JSONSerialization.jsonObject(with: pair.0) as? [String: Any] {
             var cfg = top
             if let text = cfg["text_config"] as? [String: Any] { cfg.merge(text) { _, new in new } }
             facts.modelType = cfg["model_type"] as? String
+            // MLX conversions record how they were quantized ("bits" and "group_size"), even when
+            // the uploader forgot to tag the repo as MLX.
+            if let q = top["quantization"] as? [String: Any], q["group_size"] != nil, q["bits"] != nil {
+                facts.looksMLX = true
+            }
             facts.layers = cfg["num_hidden_layers"] as? Int
             let heads = cfg["num_attention_heads"] as? Int
             facts.kvHeads = (cfg["num_key_value_heads"] as? Int) ?? heads
@@ -117,7 +157,7 @@ enum HFHub {
         let path = file.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? file
         let url = URL(string: "https://huggingface.co/\(id)/resolve/main/\(path)")!
         func range(_ from: Int, _ to: Int) async throws -> Data {
-            var req = URLRequest(url: url)
+            var req = request(url)
             req.setValue("bytes=\(from)-\(to)", forHTTPHeaderField: "Range")
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard (resp as? HTTPURLResponse)?.statusCode == 206, data.count == to - from + 1 else {
@@ -299,4 +339,17 @@ enum DeviceFit {
         "iPad16,3": "iPad Pro 11\" (M4)", "iPad16,4": "iPad Pro 11\" (M4)", "iPad16,5": "iPad Pro 13\" (M4)", "iPad16,6": "iPad Pro 13\" (M4)",
         "arm64": "Simulator", "x86_64": "Simulator",
     ]
+}
+
+/// An optional Hugging Face access token, kept in the Keychain. Only gated or private models
+/// need one; everything else downloads without signing in.
+enum HFToken {
+    private static let key = "huggingFaceToken"
+    static var value: String? {
+        get { Keychain.read(key).flatMap { $0.isEmpty ? nil : $0 } }
+        set {
+            let t = newValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if t.isEmpty { Keychain.delete(key) } else { Keychain.write(key, t) }
+        }
+    }
 }

@@ -48,6 +48,7 @@ struct ModelsView: View {
 
                 ModelSearchSection().buttonStyle(.borderless)
                 addSection
+                HFTokenSection()
             }
             .navigationTitle("Models")
             .task {
@@ -73,8 +74,22 @@ struct ModelsView: View {
             LabeledContent("This \(DeviceFit.deviceWord)", value: DeviceFit.deviceName)
             LabeledContent("Memory", value: String(format: "%.0f GB", DeviceFit.ramGB.rounded()))
             LabeledContent("Room for models", value: String(format: "about %.1f GB", DeviceFit.modelBudgetGB))
+            // Whatever is downloading, wherever it was started, with a way to stop it.
+            if case .downloading(let id, let fraction) = store.download {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: fraction) {
+                        Text("Downloading \(ModelCatalog.entry(id)?.name ?? id)").font(.subheadline.bold())
+                    } currentValueLabel: {
+                        Text(fraction > 0 ? "\(Int(fraction * 100))% · keep Phonodeck open until it finishes" : "Starting…")
+                    }
+                    Button("Cancel download", role: .cancel) { store.cancelDownload() }.font(.caption)
+                }
+            }
             if case .failed(_, let message) = store.download {
-                Text(message).foregroundStyle(.red).font(.footnote)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).font(.footnote)
+                    Button("Dismiss") { store.dismissDownloadError() }.font(.caption)
+                }
             }
         } footer: {
             Text("iOS gives each app only part of the \(DeviceFit.deviceWord)'s memory. Each model below shows whether it fits alongside the others you've picked. Downloads are big, so use Wi-Fi.")
@@ -193,7 +208,11 @@ struct ModelsView: View {
                     Spacer()
                     Link(destination: e.url) { Image(systemName: "arrow.up.right.square") }
                     if e.custom {
-                        Button(role: .destructive) { store.removeCustom(e) } label: { Image(systemName: "trash") }
+                        // Removes the files too, including a half-finished download.
+                        Button(role: .destructive) {
+                            if isSelected(e) && e.kind == .language { app.llm.unload() }
+                            store.removeCustom(e)
+                        } label: { Label("Remove", systemImage: "trash") }
                     }
                 }
                 .padding(.top, 2)

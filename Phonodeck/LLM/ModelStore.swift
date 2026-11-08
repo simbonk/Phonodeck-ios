@@ -46,7 +46,9 @@ final class ModelStore {
     }()
 
     nonisolated static let hubCache = HubCache(cacheDirectory: directory)
-    let downloader: any Downloader = #hubDownloader(HubClient(cache: ModelStore.hubCache))
+    /// Signs downloads with the person's Hugging Face token when they've added one (for gated models).
+    let downloader: any Downloader = #hubDownloader(HubClient(
+        host: HubClient.defaultHost, tokenProvider: .custom { HFToken.value }, cache: ModelStore.hubCache))
 
     init() {
         languageID = UserDefaults.standard.string(forKey: "activeModel")
@@ -91,6 +93,8 @@ final class ModelStore {
     func loadFacts(_ entry: ModelEntry) async {
         if let f = try? await HFHub.facts(entry.id) { facts[entry.id] = f }
     }
+
+    func setFacts(_ f: ModelFacts, for id: String) { facts[id] = f }
 
     /// Memory the selected models occupy when loaded, used to judge what else fits beside them.
     func neededGB(_ id: String?) -> Double {
@@ -143,6 +147,39 @@ final class ModelStore {
         ModelCatalog.custom = customModels
     }
 
+    /// Adds a search result to the lists (if it isn't there yet) and starts downloading it.
+    /// Returns a message when it can't.
+    func addAndDownload(id: String, kind: ModelEntry.Kind) async -> String? {
+        let entry: ModelEntry
+        switch await addCustom(link: id, kind: kind) {
+        case .failed(let m): return m
+        case .added(let e): entry = e
+        }
+        if installed.contains(entry.id) { return nil }
+        if isDownloading { return "Another model is downloading. Wait for it to finish, or cancel it at the top of this page." }
+        startDownload(entry)
+        return nil
+    }
+
+    func dismissDownloadError() { if case .failed = download { download = .idle } }
+
+    /// What went wrong, in words that say what to do about it.
+    private func explain(_ error: Error, _ entry: ModelEntry) -> String {
+        let text = error.localizedDescription
+        let lower = text.lowercased()
+        let refused = ["401", "403", "unauthorized", "forbidden", "gated", "authentication"].contains { lower.contains($0) }
+        if refused || (facts[entry.id]?.gated == true && HFToken.value == nil) {
+            return HFToken.value == nil
+                ? "Hugging Face refused to send \(entry.name). It's gated: add a Hugging Face token at the bottom of this page, accept the model's terms on its page, then try again."
+                : "Hugging Face refused to send \(entry.name) with your token. Open the model's page, accept its terms, and try again."
+        }
+        if (error as? URLError)?.code == .notConnectedToInternet { return "The download of \(entry.name) stopped: there's no internet connection." }
+        if lower.contains("space") && lower.contains("disk") || (error as NSError).code == NSFileWriteOutOfSpaceError {
+            return "There isn't enough free storage for \(entry.name). Free some space in the \(DeviceFit.deviceWord)'s Settings > General > Storage."
+        }
+        return "The download of \(entry.name) stopped: \(text)"
+    }
+
     // MARK: Download, select, delete
 
     var isDownloading: Bool { if case .downloading = download { return true } else { return false } }
@@ -181,7 +218,7 @@ final class ModelStore {
             } catch is CancellationError {
                 download = .idle
             } catch {
-                download = .failed(id: entry.id, message: "The download of \(entry.name) stopped: \(error.localizedDescription)")
+                download = .failed(id: entry.id, message: explain(error, entry))
             }
         }
     }
