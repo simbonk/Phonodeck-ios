@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 
 /// Lets only one piece of MLX work (the storyteller, a narrator sentence, a listening pass,
 /// loading a model) use the GPU at a time. Running two at once can stall or crash the app.
@@ -36,3 +37,27 @@ actor MLXGate {
 
 /// Carries a model object into background work. The gate makes sure only one task uses it at a time.
 struct Unchecked<T>: @unchecked Sendable { let value: T }
+
+/// Remembers the last MLX failure that would close the app, so the next launch can say what it was.
+/// MLX reports some failures from outside the task that started the work, where `withError` can't
+/// catch them; those still end the app, but the reason is no longer lost.
+enum MLXCrashRecorder {
+    static let key = "lastMLXError"
+
+    static func install() {
+        setErrorHandler({ message, _ in
+            let text = message.map { String(cString: $0) } ?? "unknown MLX error"
+            UserDefaults.standard.set(text, forKey: MLXCrashRecorder.key)
+            UserDefaults.standard.synchronize()
+            NSLog("Phonodeck MLX error: %@", text)
+            fatalError(text)
+        })
+    }
+
+    /// The failure from last time, if there was one. Reading it clears it.
+    static func takeLast() -> String? {
+        let text = UserDefaults.standard.string(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key)
+        return text
+    }
+}

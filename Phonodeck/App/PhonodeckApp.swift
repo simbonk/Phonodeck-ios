@@ -51,13 +51,23 @@ final class AppModel {
         self.engine = StoryEngine(llm: llm, narrator: narrator, dictation: dictation, library: library)
         self.vault = Vault()
         if let space = vault.unlocked { library.open(space) }
-        // A neural voice crashed the app last time: go back to Apple's voice rather than crash again.
+        MLXCrashRecorder.install()
+        let lastError = MLXCrashRecorder.takeLast()
+        let reason = lastError.map { " (MLX said: \($0))" } ?? ""
+        // A neural voice crashed the app last time. First retry it on the processor instead of the
+        // graphics chip; if it crashes there too, go back to Apple's voice rather than crash again.
         if let id = UserDefaults.standard.string(forKey: "voiceInFlight") {
             UserDefaults.standard.removeObject(forKey: "voiceInFlight")
-            if store.voiceID == id {
-                store.voiceID = nil
-                notice = "The \(ModelCatalog.entry(id)?.name ?? "neural") voice closed Phonodeck last time, so the narrator is back on Apple's voice. You can try it again in the Models tab."
+            let name = ModelCatalog.entry(id)?.name ?? "neural"
+            if !Narrator.neuralOnCPU {
+                Narrator.neuralOnCPU = true
+                notice = "The \(name) voice closed Phonodeck last time\(reason). It will now run on the processor instead of the graphics chip, which is a little slower but steadier. Try Listen again."
+            } else {
+                if store.voiceID == id { store.voiceID = nil }
+                notice = "The \(name) voice closed Phonodeck again, even on the processor\(reason), so the narrator is back on Apple's voice."
             }
+        } else if let lastError {
+            notice = "Phonodeck closed last time because of an MLX error: \(lastError)"
         }
     }
 

@@ -252,11 +252,27 @@ final class Narrator: NSObject {
         UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
         defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
         let m = try await MLXGate.shared.run(urgent: true) {
-            Unchecked(value: try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache))
+            try await withError { error in
+                let model = try await TTS.loadModel(modelRepo: path, modelType: nil, cache: ModelStore.hubCache)
+                try error.check()
+                return Unchecked(value: model)
+            }
         }.value
         ttsModel = m
         ttsModelID = entry.id
         return m
+    }
+
+    /// Set after a neural voice closed the app on the graphics chip: it then runs on the processor,
+    /// which is slower but avoids the GPU path that failed.
+    static var neuralOnCPU: Bool {
+        get { UserDefaults.standard.bool(forKey: "neuralOnCPU") }
+        set { UserDefaults.standard.set(newValue, forKey: "neuralOnCPU") }
+    }
+
+    nonisolated private static func onChosenDevice<R>(_ cpu: Bool, _ body: () async throws -> R) async throws -> R {
+        if cpu { return try await Device.withDefaultDevice(.cpu, body) }
+        return try await body()
     }
 
     private func startWorker() {
@@ -274,6 +290,7 @@ final class Narrator: NSObject {
                 // Kokoro picks American or British pronunciation from the voice name.
                 let language: String? = isQwen ? "English" : nil
                 let boxed = Unchecked(value: model)
+                let onCPU = Self.neuralOnCPU
                 while !self.sentenceQueue.isEmpty, !Task.isCancelled, self.generation == myGeneration {
                     let sentence = self.sentenceQueue.removeFirst()
                     // Synthesis runs in the background, one MLX job at a time, so it can never freeze the screen.
@@ -282,12 +299,14 @@ final class Narrator: NSObject {
                     defer { UserDefaults.standard.removeObject(forKey: "voiceInFlight") }
                     let samples = try await MLXGate.shared.run(urgent: true) {
                         // An MLX failure becomes a Swift error (and Apple's voice takes over) instead of a crash.
-                        try await withError { error in
-                            let audio = try await boxed.value.generate(
-                                text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
-                            audio.eval()
-                            try error.check()
-                            return audio.asArray(Float.self)
+                        try await Self.onChosenDevice(onCPU) {
+                            try await withError { error in
+                                let audio = try await boxed.value.generate(
+                                    text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
+                                audio.eval()
+                                try error.check()
+                                return audio.asArray(Float.self)
+                            }
                         }
                     }
                     guard self.generation == myGeneration else { return }
