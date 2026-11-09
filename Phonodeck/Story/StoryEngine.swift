@@ -594,6 +594,9 @@ final class StoryEngine {
         stage = ""
         thinkingSince = nil
         reply = Self.tidy(reply)
+        // Small models slip the player's name into speech before anyone has heard it. Until the
+        // player says it, it is taken out of the saved reply, so the slip never feeds later turns.
+        if !nameTold(a), !a.cast.contains(where: \.known) { reply = Self.dropName(a.playerName, from: reply) }
         guard !reply.isEmpty, !Task.isCancelled else {
             streaming = ""
             adventure = snapshot
@@ -975,6 +978,26 @@ final class StoryEngine {
     static func sameEvent(_ a: String, _ b: String) -> Bool {
         func what(_ s: String) -> String { (s.split(separator: ":", maxSplits: 1).last.map(String.init) ?? s).lowercased().trimmingCharacters(in: .whitespaces) }
         return what(a) == what(b)
+    }
+
+    /// Takes a name used to address someone out of a reply: "You are safe now, Simon." becomes
+    /// "You are safe now." and "Simon, come here" becomes "Come here".
+    static func dropName(_ name: String, from s: String) -> String {
+        let first = name.split(separator: " ").first.map(String.init) ?? name
+        guard first.count > 1 else { return s }
+        let n = NSRegularExpression.escapedPattern(for: first)
+        var out = s.replacingOccurrences(of: ",\\s*" + n + "\\b", with: "", options: .regularExpression)
+        // "Simon, come here" becomes "Come here" (capitalised only where a sentence or a quote begins).
+        if let re = try? NSRegularExpression(pattern: "\\b" + n + ",\\s*([a-z])") {
+            for m in re.matches(in: out, range: NSRange(location: 0, length: (out as NSString).length)).reversed() {
+                let ns = out as NSString
+                let letter = ns.substring(with: m.range(at: 1))
+                let before = ns.substring(to: m.range.location).trimmingCharacters(in: .whitespaces)
+                let starts = before.isEmpty || ".!?\"“\n".contains(before.last!)
+                out = ns.replacingCharacters(in: m.range, with: starts ? letter.uppercased() : letter)
+            }
+        }
+        return out
     }
 
     /// Whether the player has told the story their name (or someone already knew them).

@@ -145,7 +145,7 @@ enum Prompts {
      "beats":["3-5 short story steps in order"],
      "player":{"name":"the player character's name","desc":"one line: who they are here"},
      "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"two telling details","wants":"for a person: what they want"}],
-     "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, what the player has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
+     "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, exactly what the player is wearing (one outfit, with colours) and has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
      "time":"when the story opens: time of day, day and season, e.g. 'Early morning, the day after the storm, late summer'",
      "timeline":["2-4 things that already happened, each with exactly when, e.g. 'Last night: the storm wrecked your boat on the reef'"],
      "people":[{"name":"","where":"exactly where they are when the story opens","doing":"what they are doing"}],
