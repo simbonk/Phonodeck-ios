@@ -140,7 +140,7 @@ enum Prompts {
     You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text, with the keys in exactly this order:
     {"title":"a short title",
      "bible":"180-300 words, written to the player as 'you': premise, tone, who the player is and what they have with them, the setting in concrete detail (what is there and what is not), the goal, what stands in the way",
-     "location":"the opening place",
+     "location":"the opening place's short name, 1-4 words, the first of places",
      "places":[{"name":"","desc":"one line"}],
      "beats":["3-5 short story steps in order"],
      "player":{"name":"the player character's name","desc":"one line: who they are here"},
@@ -188,7 +188,7 @@ enum Prompts {
     static let memory = """
     You keep the memory of an interactive story. From the latest exchange, output ONLY one JSON object:
     {"events":["0-2 notable events, past tense"],
-     "location":"where the player is now",
+     "location":"the short name of the place the player is in now, 1-4 words (use a place name from the story if there is one)",
      "lore":[{"name":"real name","type":"person|place|item|faction","role":"for a person: how the story refers to them","desc":"one or two sentences, updated"}],
      "beats_done":["exact text of any story steps the player completed"],
      "goal_progress":"one short sentence",

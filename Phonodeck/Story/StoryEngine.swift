@@ -267,8 +267,7 @@ final class StoryEngine {
         func str(_ k: String, _ d: [String: Any]? = nil) -> String { ((d ?? plan)[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         if !str("title").isEmpty, e.title.isEmpty { a.title = str("title") }
         a.bible = str("bible").isEmpty ? e.describe + "\n\n" + e.answers(player: player) : str("bible")
-        a.location = str("location").isEmpty ? e.place : str("location")
-        a.visit(a.location, from: "")
+        let openingPlace = str("location").isEmpty ? e.place : str("location")
 
         // The player
         let p = plan["player"] as? [String: Any]
@@ -283,8 +282,10 @@ final class StoryEngine {
             let name = (place as? String) ?? str("name", d)
             if !name.isEmpty { addLore(&a, LoreEntry(name: name, kind: .place, desc: str("desc", d))) }
         }
+        a.location = Self.placeName(openingPlace, known: a.lore.filter { $0.kind == .place }.map(\.name))
+        a.visit(a.location, from: "")
         if !a.location.isEmpty, !a.lore.contains(where: { $0.name.caseInsensitiveCompare(a.location) == .orderedSame }) {
-            addLore(&a, LoreEntry(name: a.location, kind: .place, desc: ""))
+            addLore(&a, LoreEntry(name: a.location, kind: .place, desc: openingPlace == a.location ? "" : openingPlace))
         }
         let cap = (a.minutes >= 30 ? 3 : 2) + 1
         var people = 0
@@ -961,6 +962,34 @@ final class StoryEngine {
         return out
     }
 
+    /// A place's short name. Models sometimes write a whole description where a name belongs ("A white
+    /// coral beach at sunrise. The sand is powdery..."): a known place it mentions wins ("The Beach"),
+    /// otherwise the first few words of its first phrase ("White coral beach").
+    static func placeName(_ raw: String, known: [String]) -> String {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.count <= 40, !s.contains(". ") { return s.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+        let lower = s.lowercased()
+        func core(_ n: String) -> String {
+            let l = n.lowercased()
+            for art in ["the ", "a ", "an "] where l.hasPrefix(art) { return String(l.dropFirst(art.count)) }
+            return l
+        }
+        let hit = known.filter { k in
+            let c = core(k)
+            return c.count > 2 && lower.range(of: "\\b" + NSRegularExpression.escapedPattern(for: c) + "\\b", options: .regularExpression) != nil
+        }.max { core($0).count < core($1).count }
+        if let hit { return hit }
+        var phrase = s.components(separatedBy: CharacterSet(charactersIn: ".,;:!?")).first ?? s
+        for cut in [" at ", " with ", " where ", " that ", " which ", " under ", " near "] {
+            if let r = phrase.range(of: cut, options: .caseInsensitive) { phrase = String(phrase[..<r.lowerBound]) }
+        }
+        var words = phrase.split(separator: " ").map(String.init)
+        if let f = words.first, ["a", "an"].contains(f.lowercased()) { words.removeFirst() }
+        let name = words.prefix(5).joined(separator: " ")
+        guard !name.isEmpty else { return String(s.prefix(40)) }
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+
     /// People positions from a model's JSON: [{name, where, doing, heading}].
     static func whereabouts(_ raw: Any?) -> [Whereabout] {
         ((raw as? [[String: Any]]) ?? []).compactMap { d in
@@ -1181,7 +1210,8 @@ final class StoryEngine {
 
         a.events.append(contentsOf: ((m["events"] as? [String]) ?? []).prefix(2))
         a.events = Array(a.events.suffix(30))
-        if let loc = (m["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !loc.isEmpty {
+        if let raw = (m["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let loc = Self.placeName(raw, known: a.lore.filter { $0.kind == .place }.map(\.name) + a.places)
             a.visit(loc, from: a.location)
             a.location = loc
         }
