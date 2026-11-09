@@ -153,12 +153,26 @@ enum Prompts {
     This is an EXPERIENCE with no plot: no threat, villain, mystery or twist. "beats" is []. "roadmap" is a GENTLE ARC of 3-4 warm steps toward the player's goal and the feeling (for example: a first meeting, sharing a task or a meal, a story told by the fire, a small outing together, a moment that seals the bond), timed across the session. Each step says what the people and the place offer, never what the player does, says or feels. "secrets" are small delights to discover. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
 
-    /// "Same cast, new story" (the web app's SEQUEL_RULES, shortened for small models).
-    static let sequel = """
-    This new story REUSES THE CAST AND WORLD of an earlier one (EARLIER STORY below). Keep every returning character's name, personality, way of speaking and relationships, and keep the places and items; the bible introduces them as returning. Facts the player set by hand are kept exactly. Follow the connection: for a sequel or "years later", the earlier events really happened and have consequences (changed relationships, debts, scars, reputations); for a fresh start or a prequel they have not happened, so describe everyone as they were before. Invent a NEW central plot, secrets and roadmap; never repeat the earlier plot. "lore" lists the returning people (with "known": true and fresh wants) plus any new ones; the returning cast is the heart of the story.
+    /// Continue: the next part of a finished story, with the same player, cast and world (the web
+    /// app's SEQUEL_RULES, shortened for small models).
+    static let continuation = """
+    This is the NEXT PART of an earlier story (EARLIER STORY below), with the same player, cast and world. Everything in the earlier story really happened and has consequences (changed relationships, debts, scars, reputations). Keep every returning character's name, personality, way of speaking and relationships, and keep the places and items; the bible introduces them as returning. Facts the player set by hand are kept exactly. Follow the connection: "right where it left off" starts in the same place and moment the earlier story ended, with the same people present; "some time later" moves time forward and the bible says how much. Grow a NEW central plot, secrets and roadmap from what the ending left open (loose threads, promises, unanswered questions, consequences); never repeat the earlier plot. "lore" lists the returning people (with "known": true and what they want now) plus any new ones; the returning cast is the heart of the story.
     """
 
-    static let sequelLinks = ["Sequel: it picks up after the last story", "Years later", "Fresh start: same cast, new story", "Prequel: before it all began"]
+    /// How a new part connects to the one before. The first is the default.
+    static let continueLinks = ["Right where it left off", "Some time later"]
+
+    /// The opening of a continued part: a short "last time" recap for the listener, then the scene.
+    static func continueOpening(link: String, recap: String, simulator: Bool, short: Bool) -> String {
+        let words = short ? "100 to 150 words" : "150 to 230 words"
+        let pickUp = link.lowercased().contains("later")
+            ? "Then say plainly how much time has passed and where the player is now (name the place), and paint the scene with what they see, hear, smell and feel."
+            : "Then pick up exactly where it ended: the same place, the same moment, the same people present. Paint the scene with what the player sees, hears, smells and feels."
+        let end = simulator
+            ? "Deliver the FEELING TO ACHIEVE. No threat, no hook, no mystery. Do not end with a list of options."
+            : "Let a thread the ending left open pull the player into this part's new trouble, and end on an unresolved hook. Do not end with a list of options."
+        return "Begin the next part of the story. This is the opening scene: \(words). Start with a recap for the listener in two or three short sentences beginning \"Last time,\" that reminds them what happened (PREVIOUSLY below), in second person. " + pickUp + " " + end + "\n\nPREVIOUSLY: " + recap
+    }
 
     // MARK: The look-ahead (while the reply is read aloud)
 

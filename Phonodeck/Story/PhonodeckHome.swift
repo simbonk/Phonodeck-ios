@@ -9,8 +9,8 @@ struct PhonodeckHome: View {
     @State private var curatorStart: Experience?
     @State private var importing = false
     @State private var showContinue = true
-    /// The finished or saved story a "Same cast, new story" sheet is open for.
-    @State private var sameCast: Adventure?
+    /// The finished story the next part (Continue) is being set up from.
+    @State private var continuing: Adventure?
 
     var body: some View {
         NavigationStack {
@@ -31,10 +31,10 @@ struct PhonodeckHome: View {
         .fullScreenCover(isPresented: $curator) {
             CuratorView(start: curatorStart)
         }
-        .sheet(item: $sameCast) { src in
-            SameCastSheet(source: src) { link, hook, minutes in
-                sameCast = nil
-                app.engine.createSequel(from: src, link: link, hook: hook, minutes: minutes)
+        .sheet(item: $continuing) { src in
+            ContinueSheet(source: src) { link, hook, minutes in
+                continuing = nil
+                app.engine.continueStory(from: src, link: link, hook: hook, minutes: minutes)
             }
         }
         .onChange(of: app.pendingExperience) { _, e in
@@ -91,7 +91,7 @@ struct PhonodeckHome: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Continue an experience").font(.title3.bold())
+                                Text("Your experiences").font(.title3.bold())
                                 Text("\(inProgress.count) in progress").font(.subheadline).foregroundStyle(Theme.dim)
                             }
                             Spacer()
@@ -177,8 +177,8 @@ struct PhonodeckHome: View {
             }
             .buttonStyle(.plain)
             Menu {
-                if app.store.hasLanguageModel {
-                    Button { sameCast = a } label: { Label("Remix story", systemImage: "arrow.triangle.2.circlepath") }
+                if app.store.hasLanguageModel && a.ended {
+                    Button { continuing = a } label: { Label("Continue the story", systemImage: "arrow.right.circle") }
                 }
                 if let url = app.library.exportFile(a.setup) {
                     ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }
@@ -209,7 +209,7 @@ struct PhonodeckHome: View {
 
     private func storyTitle(_ a: Adventure) -> String { a.report?.title ?? a.title }
 
-    /// The stories a "Same cast, new story" grew from, nearest first: the history behind this card.
+    /// The earlier parts this story continues, nearest first: the history behind this card.
     private func earlier(_ a: Adventure) -> [Adventure] {
         var out: [Adventure] = []
         var seen: Set<UUID> = [a.id]
@@ -222,7 +222,7 @@ struct PhonodeckHome: View {
         return out
     }
 
-    /// The newest story made from this one, if any, so an older card can point forward.
+    /// The newest part continuing this one, if any, so an older card can point forward.
     private func continuedIn(_ a: Adventure) -> Adventure? {
         app.library.adventures.filter { $0.sequelOf == a.id }.max { $0.created < $1.created }
     }
@@ -230,10 +230,11 @@ struct PhonodeckHome: View {
     /// How this story connects to the one it came from, in a few words.
     private func linkVerb(_ a: Adventure) -> String {
         let l = a.link.lowercased()
+        // Stories made before Continue may say prequel, years later or fresh start.
         if l.contains("prequel") { return "Prequel to" }
-        if l.contains("years") { return "Years after" }
+        if l.contains("years") || l.contains("later") { return "Some time after" }
         if l.contains("fresh") { return "Same cast as" }
-        return "Sequel to"
+        return "Continues"
     }
 
     /// The story's history as a short chain: what it continues (and what that continued), and
@@ -345,47 +346,57 @@ struct StorytellerCard: View {
     }
 }
 
-/// "Same cast, new story": a short set-up for a new story with a saved story's cast and world.
-/// The new story remembers the old one: recall searches its chapters and turns as you play.
-struct SameCastSheet: View {
+/// Continue: a short set-up for the next part of a finished story, linked to it on Home. Same
+/// player, cast and world; the new part opens with a "last time" recap and picks up the facts,
+/// timeline and (right where it left off) the scene and who is where. Recall searches the earlier
+/// parts as you play.
+struct ContinueSheet: View {
     let source: Adventure
     let build: (_ link: String, _ hook: String, _ minutes: Int) -> Void
-    @State private var link = Prompts.sequelLinks[0]
+    @State private var link = Prompts.continueLinks[0]
     @State private var hook = ""
-    @State private var minutes = 20
+    @State private var minutes = 10
     @Environment(\.dismiss) private var dismiss
+
+    static let lengths = [10, 20, 30, 45, 60, 90, 120, 180, 240]
+
+    static func label(_ m: Int) -> String {
+        if m < 60 { return "\(m) minutes" }
+        if m % 60 == 0 { return m == 60 ? "1 hour" : "\(m / 60) hours" }
+        return String(format: "%.1f hours", Double(m) / 60)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("How it connects", selection: $link) {
-                        ForEach(Prompts.sequelLinks, id: \.self) { Text($0).tag($0) }
+                    Picker("Length", selection: $minutes) {
+                        ForEach(Self.lengths, id: \.self) { Text(Self.label($0)).tag($0) }
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
                 } header: {
-                    Text("How does the new story connect?")
+                    Text("How long is the next part?")
                 } footer: {
-                    Text("Same cast and world either way. In a sequel or years later, the new story remembers the old one and can look back through it when you ask about the past.")
+                    Text("The Game Master paces the story to this length and lands the ending near the end.")
                 }
-                Section("What happens this time? (optional)") {
+                Section("Where does it pick up?") {
+                    Picker("Where it picks up", selection: $link) {
+                        ForEach(Prompts.continueLinks, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+                Section("What happens next? (optional)") {
                     TextField("Leave blank to be surprised", text: $hook, axis: .vertical)
                         .lineLimit(2...4)
                 }
-                Section("Length") {
-                    Picker("Minutes", selection: $minutes) {
-                        ForEach([10, 15, 20, 30, 45, 60], id: \.self) { Text("\($0) minutes").tag($0) }
-                    }
-                }
             }
-            .navigationTitle(source.report?.title ?? source.title)
+            .navigationTitle("Continue")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Build") { build(link, hook, minutes) } }
+                ToolbarItem(placement: .confirmationAction) { Button("Continue") { build(link, hook, minutes) }.bold() }
             }
         }
-        .onAppear { minutes = [10, 15, 20, 30, 45, 60].min { abs($0 - source.minutes) < abs($1 - source.minutes) } ?? 20 }
+        .presentationDetents([.medium, .large])
     }
 }

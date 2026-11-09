@@ -66,7 +66,7 @@ enum Recall {
 
     /// Relevant memories for this turn, as briefing lines, within `budget` characters.
     /// `olderTurns` are the turns not already in the conversation the model sees, with their numbers.
-    /// `earlier` are the stories this one continues ("Same cast, new story"), nearest first: their
+    /// `earlier` are the earlier parts this story continues (Continue), nearest first: their
     /// chapters and turns are searched too, so asking about something from a past story finds it.
     /// Their people and places already live in this story's lore.
     static func memories(for a: Adventure, input: String, olderTurns: [(Int, StoryTurn)], chaptersInPrompt: Int, budget: Int,
