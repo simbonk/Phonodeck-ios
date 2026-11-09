@@ -68,30 +68,32 @@ struct StoryView: View {
                         Text(a.title).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
                     }
                     Spacer(minLength: 6)
-                    HStack(spacing: 0) {
-                        HStack(spacing: 4) {
-                            Image(systemName: a.ended ? "checkmark.circle" : "timer").font(.subheadline.weight(.semibold))
-                            Text(a.ended ? "done" : "\(left) min").font(.subheadline.bold().monospacedDigit())
-                        }
-                        .lineLimit(1)
-                        .fixedSize()
-                        .padding(.horizontal, 9).padding(.vertical, 5)
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel(a.ended ? "Complete" : "\(left) minutes left")
-                        if !a.ended {
-                            Button { engine.addTime(10) } label: {
-                                Text("+10").font(.subheadline.bold()).lineLimit(1).fixedSize().padding(.horizontal, 8).padding(.vertical, 5)
-                                    .background(color.opacity(0.16))
+                    if !a.ended {
+                        HStack(spacing: 0) {
+                            HStack(spacing: 4) {
+                                Image(systemName: a.ended ? "checkmark.circle" : "timer").font(.subheadline.weight(.semibold))
+                                Text(a.ended ? "done" : "\(left) min").font(.subheadline.bold().monospacedDigit())
                             }
-                            .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 1.5) }
-                            .accessibilityLabel("Add 10 minutes")
+                            .lineLimit(1)
+                            .fixedSize()
+                            .padding(.horizontal, 9).padding(.vertical, 5)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(a.ended ? "Complete" : "\(left) minutes left")
+                            if !a.ended {
+                                Button { engine.addTime(10) } label: {
+                                    Text("+10").font(.subheadline.bold()).lineLimit(1).fixedSize().padding(.horizontal, 8).padding(.vertical, 5)
+                                        .background(color.opacity(0.16))
+                                }
+                                .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 1.5) }
+                                .accessibilityLabel("Add 10 minutes")
+                            }
                         }
+                        .foregroundStyle(color)
+                        .overlay(Capsule().stroke(color, lineWidth: 1.5))
+                        .clipShape(Capsule())
+                        .fixedSize()
+                        .layoutPriority(1)
                     }
-                    .foregroundStyle(color)
-                    .overlay(Capsule().stroke(color, lineWidth: 1.5))
-                    .clipShape(Capsule())
-                    .fixedSize()
-                    .layoutPriority(1)
                     Button { showWorld = true } label: {
                         Image(systemName: "globe").font(.title3)
                     }
@@ -132,7 +134,7 @@ struct StoryView: View {
             Button { engine.undo() } label: { Label("Undo last turn", systemImage: "arrow.uturn.backward") }
                 .disabled(!engine.canUndo)
             if !a.ended {
-                Button { engine.endNow() } label: { Label("End the story now", systemImage: "flag.checkered") }
+                Button { engine.endNow() } label: { Label("Finish the experience now", systemImage: "flag.checkered") }
             }
             Button { remixing = a } label: { Label("Remix story", systemImage: "arrow.triangle.2.circlepath") }
                 .disabled(engine.busy || a.transcript.isEmpty)
@@ -235,20 +237,12 @@ struct StoryView: View {
             }
             .onChange(of: engine.thinkingSince) { if follow { withAnimation { proxy.scrollTo("end", anchor: .bottom) } } }
             .onAppear { proxy.scrollTo("end", anchor: .bottom) }
-            .overlay(alignment: .bottomTrailing) {
+            .overlay(alignment: .bottom) {
                 if !follow {
-                    Button {
+                    LatestButton {
                         follow = true
                         withAnimation { proxy.scrollTo("end", anchor: .bottom) }
-                    } label: {
-                        Label("Latest", systemImage: "arrow.down")
-                            .font(.footnote.bold())
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(Theme.panel, in: Capsule())
-                            .overlay(Capsule().stroke(Theme.line))
                     }
-                    .padding(12)
-                    .transition(.opacity)
                 }
             }
         }
@@ -382,16 +376,27 @@ struct StoryView: View {
     }
 
     private func endedBar(_ a: Adventure) -> some View {
-        HStack {
-            Button { remixing = a } label: { Label("Remix story", systemImage: "arrow.triangle.2.circlepath") }
+        // Two equal buttons: Remix (outlined) and keep going (solid). The reply box and microphone
+        // come back once more time is added.
+        HStack(spacing: 10) {
+            Button { remixing = a } label: {
+                Label("Remix", systemImage: "arrow.triangle.2.circlepath")
+                    .lineLimit(1).frame(maxWidth: .infinity, minHeight: 40)
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.accent)
+            Button { engine.addTime(10) } label: {
+                Label("+10 min", systemImage: "plus")
+                    .bold().lineLimit(1).frame(maxWidth: .infinity, minHeight: 40)
+            }
             .buttonStyle(.borderedProminent)
             .tint(Theme.accent)
             .foregroundStyle(Theme.onAccent)
-            Button("+10 min, keep going") { engine.addTime(10) }
-                .buttonStyle(.bordered)
-            Spacer()
-            Button("Menu") { engine.close() }
+            .accessibilityLabel("Add 10 minutes and keep going")
         }
-        .padding()
+        .padding(12)
+        .frame(maxWidth: 820)
+        .frame(maxWidth: .infinity)
+        .background(Theme.bg.overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) })
     }
 }

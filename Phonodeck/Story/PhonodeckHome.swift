@@ -53,12 +53,16 @@ struct PhonodeckHome: View {
     private var home: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text("PHONODECK")
-                    .font(.system(size: 30, weight: .bold))
-                    .tracking(4)
-                    .foregroundStyle(Theme.accent)
-                    .shadow(color: Theme.accent.opacity(0.5), radius: 8)
-                    .padding(.top, 12)
+                HStack(alignment: .center) {
+                    Text("PHONODECK")
+                        .font(.system(size: 30, weight: .bold))
+                        .tracking(4)
+                        .foregroundStyle(Theme.accent)
+                        .shadow(color: Theme.accent.opacity(0.5), radius: 8)
+                    Spacer()
+                    importMenu
+                }
+                .padding(.top, 12)
                 Text("Your story, your vibe. Everything is remembered, and it all happens on this device.")
                     .font(.subheadline).foregroundStyle(Theme.dim)
 
@@ -104,16 +108,6 @@ struct PhonodeckHome: View {
                     Caps(text: "Finished", color: Theme.dim).padding(.top, 14)
                     ForEach(finished) { a in adventureRow(a) }
                 }
-
-                Caps(text: "Shared experiences", color: Theme.dim).padding(.top, 14)
-                Text("Experiences travel as small .phonodeck files. Share one from a story's menu; anyone with Phonodeck can open it. Experiences shared with you appear in the set-up, next to the curated ones.")
-                    .font(.footnote).foregroundStyle(Theme.dim)
-                Button {
-                    importing = true
-                } label: {
-                    Label("Import an experience file", systemImage: "square.and.arrow.down")
-                }
-                .buttonStyle(.bordered)
             }
             .padding(20)
             .frame(maxWidth: 680)
@@ -126,14 +120,48 @@ struct PhonodeckHome: View {
         }
     }
 
+    /// Importing a shared experience is occasional, so it sits behind a small button by the title.
+    private var importMenu: some View {
+        Menu {
+            Section("Experiences travel as small .phonodeck files. Share one from a story's ••• menu. Ones shared with you appear in the set-up.") {
+                Button { importing = true } label: { Label("Import an experience file", systemImage: "square.and.arrow.down") }
+            }
+        } label: {
+            Image(systemName: "square.and.arrow.down")
+                .font(.title3)
+                .foregroundStyle(Theme.accent)
+                .frame(width: 44, height: 44)
+        }
+        .accessibilityLabel("Import an experience")
+    }
+
     private func adventureRow(_ a: Adventure) -> some View {
         HStack(spacing: 8) {
             Button {
                 app.engine.open(a)
             } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(a.report?.title ?? a.title).font(.headline).foregroundStyle(Theme.fg)
-                    Text(subtitle(a)).font(.caption).foregroundStyle(Theme.dim).lineLimit(2)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(a.report?.title ?? a.title).font(.headline).foregroundStyle(Theme.fg)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 4)
+                        Text(a.updated.formatted(.dateTime.month(.abbreviated).day()))
+                            .font(.caption).foregroundStyle(Theme.dim)
+                    }
+                    if let line = subtitle(a) {
+                        Text(line).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
+                    }
+                    let tags = badges(a)
+                    if !tags.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(tags, id: \.self) { t in
+                                Text(t).font(.caption2.bold()).lineLimit(1)
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .background(Theme.accent.opacity(0.14), in: Capsule())
+                                    .foregroundStyle(Theme.accent)
+                            }
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
@@ -155,17 +183,20 @@ struct PhonodeckHome: View {
         }
     }
 
-    private func subtitle(_ a: Adventure) -> String {
-        var bits = [a.setup.simulator ? "Experience" : "Story"]
-        if a.ended {
-            bits.append("Finished" + (a.report.map { " · you got \($0.player.grade)" } ?? ""))
-        } else {
-            bits.append("\(Int(a.elapsed / 60)) of \(a.minutes) min")
-        }
-        if !a.setup.feeling.isEmpty { bits.append(a.setup.feeling) }
+    /// Where the story is now, and for one in progress how far through it is.
+    private func subtitle(_ a: Adventure) -> String? {
+        var bits: [String] = []
+        if !a.ended { bits.append("\(Int(a.elapsed / 60)) of \(a.minutes) min") }
         if !a.location.isEmpty { bits.append(a.location) }
-        bits.append(a.updated.formatted(date: .abbreviated, time: .omitted))
-        return bits.joined(separator: " · ")
+        return bits.isEmpty ? nil : bits.joined(separator: " · ")
+    }
+
+    /// The vibe, and the grade a finished story earned.
+    private func badges(_ a: Adventure) -> [String] {
+        var tags: [String] = []
+        if !a.setup.feeling.isEmpty { tags.append(a.setup.feeling) }
+        if a.ended, let g = a.report?.player.grade { tags.append("Grade \(g)") }
+        return tags
     }
 }
 

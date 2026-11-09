@@ -194,6 +194,11 @@ struct OptionCard<Extra: View>: View {
     @State private var confirmingDownload = false
 
     private var installed: Bool { entry.map { app.store.installed.contains($0.id) } ?? true }
+    /// Not downloaded, and it wouldn't fit beside the models in use: no Download, and the card is dimmed.
+    private var blocked: Bool {
+        guard let e = entry, !installed else { return false }
+        return app.store.report(for: e).verdict == .tooBig
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -211,7 +216,8 @@ struct OptionCard<Extra: View>: View {
                 let r = app.store.report(for: e)
                 HStack(spacing: 4) {
                     Image(systemName: r.verdict.symbol)
-                    Text(r.verdict.label)
+                    // Models that can't load at all are already left out, so this is about the others in use.
+                    Text(r.verdict == .tooBig ? "Won't fit beside the models you use" : r.verdict.label)
                     Text(String(format: "· %.1f GB download", app.store.facts[e.id]?.gb ?? e.approxGB)).foregroundStyle(Theme.dim)
                 }
                 .font(.caption)
@@ -226,7 +232,9 @@ struct OptionCard<Extra: View>: View {
                 }
             } else {
                 HStack(spacing: 10) {
-                    if !installed, let e = entry {
+                    if blocked {
+                        Text("Switch to smaller models to make room.").font(.caption).foregroundStyle(Theme.dim)
+                    } else if !installed, let e = entry {
                         Button {
                             // Ask first when it would be tight beside the other models.
                             if app.store.report(for: e).verdict == .comfortable { app.store.startDownload(e) } else { confirmingDownload = true }
@@ -255,6 +263,7 @@ struct OptionCard<Extra: View>: View {
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
         // strokeBorder keeps the outline inside the card, so a list row can't clip its edge.
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected && installed ? Theme.accent.opacity(0.7) : Theme.line, lineWidth: 1))
+        .opacity(blocked ? 0.6 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onTapGesture { if installed && !selected { use() } }
         .task { if let e = entry, app.store.facts[e.id] == nil { await app.store.loadFacts(e) } }

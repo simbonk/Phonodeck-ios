@@ -147,20 +147,12 @@ struct ChatView: View {
                 }
                 .onChange(of: chat.current.id) { follow = true; proxy.scrollTo("end", anchor: .bottom) }
                 .onAppear { proxy.scrollTo("end", anchor: .bottom) }
-                .overlay(alignment: .bottomTrailing) {
+                .overlay(alignment: .bottom) {
                     if !follow {
-                        Button {
+                        LatestButton {
                             follow = true
                             withAnimation { proxy.scrollTo("end", anchor: .bottom) }
-                        } label: {
-                            Label("Latest", systemImage: "arrow.down")
-                                .font(.footnote.bold())
-                                .padding(.horizontal, 12).padding(.vertical, 8)
-                                .background(Theme.panel, in: Capsule())
-                                .overlay(Capsule().stroke(Theme.line))
                         }
-                        .padding(12)
-                        .transition(.opacity)
                     }
                 }
             }

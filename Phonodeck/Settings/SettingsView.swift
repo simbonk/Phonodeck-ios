@@ -18,13 +18,13 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Your name in stories", text: $playerName)
-                    TextField("Gender (your own words)", text: $playerGender)
-                    TextField("Who you're drawn to (optional)", text: $playerInterest)
+                    profileRow("Name", "Given by each story", $playerName)
+                    profileRow("Gender", "Your own words", $playerGender)
+                    profileRow("Attracted to", "Anyone", $playerInterest)
                 } header: {
                     Text("You in stories (optional)")
                 } footer: {
-                    Text("All optional and can be made up. Leave the name blank and each story gives you one that fits its world.")
+                    Text("All optional and can be made up. Leave the name blank and each story gives you one that fits its world. Gender shapes how characters see and address you; Attracted to tells the story who your romantic interests might be.")
                 }
 
                 Section {
@@ -68,16 +68,6 @@ struct SettingsView: View {
                     Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen), which can take up to about a minute a turn.")
                 }
 
-                Section {
-                    modelRow(.thinking, app.store.hasLanguageModel ? app.store.language?.name ?? "None" : "None")
-                    modelRow(.listening, app.store.listeningModel?.name ?? "Apple dictation")
-                    modelRow(.speaking, app.store.voiceModel?.name ?? "Apple voice")
-                } header: {
-                    Text("Models")
-                } footer: {
-                    Text("Choose, try and download models in the Models tab.")
-                }
-
                 if app.vault.unlocked == .mine {
                     passcodeSection
                 } else {
@@ -101,15 +91,12 @@ struct SettingsView: View {
         }
     }
 
-    /// A model in use, as a row that opens the Models tab where it is chosen.
-    private func modelRow(_ t: ModelsTab, _ name: String) -> some View {
-        Button { app.openModels(t) } label: {
-            HStack {
-                Text(t.title).foregroundStyle(Theme.fg)
-                Spacer()
-                Text(name).foregroundStyle(.secondary).lineLimit(1)
-                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
-            }
+    /// A labelled profile field: the label on the left, what you typed on the right.
+    private func profileRow(_ label: String, _ placeholder: String, _ text: Binding<String>) -> some View {
+        LabeledContent(label) {
+            TextField(placeholder, text: text)
+                .multilineTextAlignment(.trailing)
+                .foregroundStyle(Theme.fg)
         }
     }
 

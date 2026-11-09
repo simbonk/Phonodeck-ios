@@ -79,11 +79,17 @@ struct WorldView: View {
             .font(.footnote).foregroundStyle(Theme.dim)
         if !a.storyTime.isEmpty || !a.whereabouts.isEmpty {
             Caps(text: "Right now").padding(.top, 8)
+            if !a.storyTime.isEmpty {
+                // The story's clock as one badge, above who is where.
+                Label(a.storyTime, systemImage: "clock")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Theme.accent.opacity(0.14), in: Capsule())
+            }
+            if !a.whereabouts.isEmpty {
             card {
                 VStack(alignment: .leading, spacing: 6) {
-                    if !a.storyTime.isEmpty {
-                        Label(a.storyTime, systemImage: "clock").font(.subheadline).foregroundStyle(Theme.accent)
-                    }
                     ForEach(a.whereabouts) { w in
                         VStack(alignment: .leading, spacing: 1) {
                             Text(w.name).font(.subheadline.bold()).foregroundStyle(Theme.fg)
@@ -92,6 +98,7 @@ struct WorldView: View {
                         }
                     }
                 }
+            }
             }
         }
         if !a.timeline.isEmpty {
@@ -173,16 +180,21 @@ struct WorldView: View {
             .font(.footnote).foregroundStyle(Theme.dim)
         TextEditor(text: $bible)
             .font(.callout)
+            .foregroundStyle(Theme.fg)
             .scrollContentBackground(.hidden)
             .frame(minHeight: 360)
             .padding(8)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
-        HStack {
-            Button("Save story") { saveBible() }
-                .buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(Theme.onAccent)
-                .disabled(bible == a.bible)
-            if bible == a.bible { Text("Up to date.").font(.caption).foregroundStyle(Theme.dim) }
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(bible == a.bible ? Theme.line : Theme.accent.opacity(0.6)))
+        // Save appears only once something has been changed.
+        if bible != a.bible {
+            HStack {
+                Button("Save story") { saveBible() }
+                    .buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(Theme.onAccent)
+                Button("Discard changes") { bible = a.bible }
+                    .buttonStyle(.bordered)
+            }
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
