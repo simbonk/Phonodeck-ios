@@ -200,6 +200,8 @@ final class Dictation {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         guard send else { return }
+        // Tapping send while listening counts as "make it so": the same chirp.
+        ComputerSounds.shared.play(.ack, after: Self.ackDelay)
         if wasModel {
             let tail = box.takeAll()
             Task {
@@ -210,6 +212,9 @@ final class Dictation {
             sendNow()
         }
     }
+
+    /// How long the acknowledging chirp waits after the microphone shuts, for the audio route to settle.
+    private static let ackDelay = 0.25
 
     private func sendNow() {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -346,7 +351,7 @@ final class Dictation {
         if let r = full.range(of: "\\b" + phrase + "\\b[.!,]?\\s*$", options: [.regularExpression, .caseInsensitive]) {
             text = String(full[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
             stop()
-            ComputerSounds.shared.play(.ack)
+            ComputerSounds.shared.play(.ack, after: Self.ackDelay)
             sendNow()
             return
         }
