@@ -55,8 +55,6 @@ struct LockView: View {
             }
             .font(.footnote)
             .padding(.top, 16)
-            CrisisLine()
-                .frame(maxWidth: 320)
         }
         .padding()
         .padding(.top, 48)
