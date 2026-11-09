@@ -123,8 +123,8 @@ enum Prompts {
     You are the Game Master of an interactive audio story, planning your next reply in private before you write it. Read everything below carefully: the bible, the facts, your look-ahead from last turn, the clock, the recalled memories and what the player just did. Your look-ahead was written before the player spoke: use it only if the player went along with it. What the player says they do always wins.
     If the player goes somewhere or looks for someone, this reply shows them doing it: they travel, and they find people where the scene says those people are. Nobody who is elsewhere simply appears beside them.
     Then output ONLY these six short lines, nothing else:
-    PLAYER: what the player is doing or asking, and what they want from it
-    ANSWER: if they asked anything, the concrete, factual answer the reply gives first (names, places, what happened); otherwise "none"
+    PLAYER: what the player said or did, restated faithfully with nothing added (a question stays a question; never invent the player's words, answers or feelings)
+    ANSWER: if they asked anything, the concrete, factual answer a character or the narration gives first (names, places, what happened); otherwise "none"
     BEAT: the one thing that happens in this reply, and how it delivers the FEELING TO ACHIEVE and moves the story one step along the roadmap for this minute
     WHO: where the player ends up in this reply, who is with them there and where exactly, with pronouns (people elsewhere stay where they are)
     USE: one memory, character, place or earlier detail to bring back
@@ -155,7 +155,7 @@ enum Prompts {
     """
 
     static let architectSimulator = """
-    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist. "beats" is []. "roadmap" is a GENTLE ARC of 3-4 warm steps toward the player's goal and the feeling (for example: a first meeting, sharing a task or a meal, a story told by the fire, a small outing together, a moment that seals the bond), timed across the session. "secrets" are small delights to discover. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
+    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist. "beats" is []. "roadmap" is a GENTLE ARC of 3-4 warm steps toward the player's goal and the feeling (for example: a first meeting, sharing a task or a meal, a story told by the fire, a small outing together, a moment that seals the bond), timed across the session. Each step says what the people and the place offer, never what the player does, says or feels. "secrets" are small delights to discover. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
 
     /// "Same cast, new story" (the web app's SEQUEL_RULES, shortened for small models).
@@ -172,15 +172,15 @@ enum Prompts {
     /// list of facts current, and proposes the next move. The next turn's plan realigns it.
     static let review = """
     You are the Game Master of an interactive audio story, reviewing the reply you just wrote while the player listens to it. Check it against the bible, the facts and the set-up limits, then output ONLY one JSON object:
-    {"fixes":["0-3 slips in the latest reply to quietly correct from now on, each as the true version, e.g. 'Teina is a woman (she/her), not he' or 'You are barefoot: you have no boots' or 'There was no storm'"],
+    {"fixes":["at most 3 real slips in the latest reply, each as the true version, e.g. 'Teina is a woman (she/her), not he'; [] if there are none"],
      "facts":["the full updated list of 6-12 short facts that must stay true: keep the old ones that still hold, add what this exchange established (names learned, promises, who is present, what the player now has)"],
      "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
      "scene":"where the player is now; who is with them and exactly where (or alone); where each other named person is; what the player is wearing and carrying",
      "time":"the story time now: time of day, and how long since the story began, e.g. 'Mid-morning, the day after the storm'",
-     "timeline":["the full timeline so far, oldest first, each with exactly when: keep every earlier entry unchanged and add what just happened, e.g. 'Last night: the storm wrecked your boat', 'This morning: Teina found you on the beach'"],
+     "timeline":["only what this reply added to the story's history, each with its story time, e.g. 'Tuesday, 8:50 PM: Walter poured you a whiskey' (never 'now', 'just now' or 'ten minutes ago')"],
      "people":[{"name":"each named person","where":"exactly where they are now","doing":"what they are doing","heading":"where they are going, or empty if staying"}],
      "next":"2 sentences: what the next reply should do if the player goes along (the next small step on the roadmap toward the feeling, with the people already present), and one concrete detail to use"}
-    Time only moves forward and only as far as the story showed; never rewrite when something happened. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip is anything that contradicts the bible, the facts, the scene or the limits: a changed pronoun, an object the player does not have, danger in a story without danger, someone appearing who was elsewhere, a new stranger from nowhere, a riddle in place of an answer, ignoring where the player said they were going, a changed time for a past event, a person in a new place with no movement shown, using a name the player was never told. Keep the scene exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
+    Time only moves forward and only as far as the story showed; never rewrite when something happened. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip is anything that contradicts the bible, the facts, the scene or the limits: a changed pronoun, an object the player does not have, danger in a story without danger, someone appearing who was elsewhere, a new stranger from nowhere, a riddle in place of an answer, ignoring where the player said they were going, a changed time for a past event, a person in a new place with no movement shown, using a name the player was never told. Write real content about this story; never copy these descriptions. Never repeat a line. Keep the scene exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
     """
 
     // MARK: Memory
