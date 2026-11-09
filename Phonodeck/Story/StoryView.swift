@@ -7,7 +7,8 @@ struct StoryView: View {
     @Environment(AppModel.self) private var app
     @State private var input = ""
     @State private var showWorld = false
-    @State private var showReport = false
+    /// The story a remix (same cast, new story) is being set up from.
+    @State private var remixing: Adventure?
     /// Keep the newest text in view. Off once the player scrolls up to read, back on when they return to the bottom.
     @State private var follow = true
     @State private var nearBottom = true
@@ -35,8 +36,12 @@ struct StoryView: View {
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
             .sheet(isPresented: $showWorld) { WorldView() }
-            .sheet(isPresented: $showReport) { ReportCardView() }
-            .onChange(of: a.report) { _, r in if r != nil { showReport = true } }
+            .sheet(item: $remixing) { src in
+                SameCastSheet(source: src) { link, hook, minutes in
+                    remixing = nil
+                    engine.createSequel(from: src, link: link, hook: hook, minutes: minutes)
+                }
+            }
             .onChange(of: dictation.text) { _, t in if dictation.listening { input = t } }
             // "Make it so" sent what was said: empty the box for the next turn.
             .onChange(of: dictation.sent) { input = "" }
@@ -129,9 +134,8 @@ struct StoryView: View {
             if !a.ended {
                 Button { engine.endNow() } label: { Label("End the story now", systemImage: "flag.checkered") }
             }
-            if a.report != nil {
-                Button { showReport = true } label: { Label("Report card", systemImage: "rosette") }
-            }
+            Button { remixing = a } label: { Label("Remix story", systemImage: "arrow.triangle.2.circlepath") }
+                .disabled(engine.busy || a.transcript.isEmpty)
             if let url = app.library.exportFile(a.setup) {
                 ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }
             }
@@ -192,9 +196,9 @@ struct StoryView: View {
                         Text("The story hasn't started yet. Go back and build it again.").foregroundStyle(Theme.dim).italic()
                             .frame(maxWidth: .infinity)
                     }
-                    if a.ended && a.report != nil {
-                        Button { showReport = true } label: {
-                            Text("The adventure is complete. Tap here to see your report card.").italic()
+                    if a.ended {
+                        Button { remixing = a } label: {
+                            Text("The adventure is complete. Tap here to remix it: same cast, a new story.").italic()
                         }
                         .frame(maxWidth: .infinity)
                     }
@@ -379,9 +383,7 @@ struct StoryView: View {
 
     private func endedBar(_ a: Adventure) -> some View {
         HStack {
-            Button("Report card") {
-                if a.report == nil { Task { await engine.writeReportCard() } } else { showReport = true }
-            }
+            Button { remixing = a } label: { Label("Remix story", systemImage: "arrow.triangle.2.circlepath") }
             .buttonStyle(.borderedProminent)
             .tint(Theme.accent)
             .foregroundStyle(Theme.onAccent)
@@ -391,70 +393,5 @@ struct StoryView: View {
             Button("Menu") { engine.close() }
         }
         .padding()
-    }
-}
-
-struct ReportCardView: View {
-    @Environment(AppModel.self) private var app
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                if let a = app.engine.adventure, let r = a.report {
-                    VStack(alignment: .leading, spacing: 18) {
-                        Caps(text: "Adventure complete", color: Theme.dim)
-                        Text(r.title).font(.largeTitle.bold()).foregroundStyle(Theme.accent)
-                        Text(r.summary).font(Theme.narration).foregroundStyle(Theme.fg)
-                        gradeCard("How the Phonodeck did", sub: "The feeling: " + a.setup.feeling, r.storyteller)
-                        gradeCard("How you did", sub: nil, r.player)
-                        if !r.next.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Caps(text: "Next time")
-                                Text(r.next).foregroundStyle(Theme.fg)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
-                        }
-                        HStack {
-                            Button("Read it to me") { app.narrator.speak(r.summary + " " + r.player.comment) }
-                                .buttonStyle(.bordered)
-                            Spacer()
-                            Button("Menu") { dismiss(); app.engine.close() }
-                                .buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(Theme.onAccent)
-                        }
-                    }
-                    .padding()
-                } else {
-                    VStack(spacing: 12) {
-                        HoloCore(size: 60)
-                        Text("Writing your report card…").foregroundStyle(Theme.dim)
-                    }
-                    .padding(40)
-                }
-            }
-            .background(Theme.bg)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Close") { dismiss() } } }
-        }
-    }
-
-    private func gradeCard(_ title: String, sub: String?, _ g: Grade) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Caps(text: title)
-            if let sub { Text(sub).font(.caption).foregroundStyle(Theme.dim) }
-            HStack(alignment: .top, spacing: 16) {
-                Text(g.grade)
-                    .font(.system(size: 52, weight: .bold))
-                    .foregroundStyle(Theme.accent)
-                    .shadow(color: Theme.accent.opacity(0.5), radius: 8)
-                    .frame(minWidth: 70)
-                Text(g.comment).font(.callout).foregroundStyle(Theme.fg)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.line))
     }
 }
