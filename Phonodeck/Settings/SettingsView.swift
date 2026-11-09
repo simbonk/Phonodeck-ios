@@ -71,6 +71,8 @@ struct SettingsView: View {
 
                 Section {
                     CrisisLine()
+                    NavigationLink("Take a break and find support") { SupportView() }
+                    NavigationLink("A note for parents and guardians") { ParentNoteView() }
                 } header: {
                     Text("If you're struggling")
                 } footer: {
@@ -207,5 +209,89 @@ struct CrisisLine: View {
             }
             .font(.callout.weight(.semibold))
         }
+    }
+}
+
+/// A link that reads as a row in a list of resources.
+private struct ResourceLink: View {
+    let title: String
+    let detail: String
+    let url: String
+
+    var body: some View {
+        Link(destination: URL(string: url)!) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.body.weight(.semibold))
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Taking a break, and where to find a real person to talk to.
+struct SupportView: View {
+    var body: some View {
+        Form {
+            Section {
+                Text("Stories are best in doses. If you've been playing for a long time, or a story is weighing on you, put the phone down for a while: go outside, get some air and daylight, move around, or message a friend.")
+            } header: {
+                Text("Take a break")
+            }
+            Section {
+                Text("A friend, someone in your family, your doctor or a counsellor can help in ways an AI can't. Phonodeck's characters are made up by a program, however real they sound.")
+                ResourceLink(title: "Find a therapist", detail: "Psychology Today's directory (US and Canada)", url: "https://www.psychologytoday.com/us/therapists")
+            } header: {
+                Text("Talk to someone")
+            }
+            Section {
+                CrisisLine()
+                ResourceLink(title: "988 Suicide & Crisis Lifeline", detail: "United States", url: "https://988lifeline.org")
+                ResourceLink(title: "9-8-8 Suicide Crisis Helpline", detail: "Canada", url: "https://988.ca")
+                ResourceLink(title: "Find a Helpline", detail: "Free, confidential helplines in other countries", url: "https://findahelpline.com")
+            } header: {
+                Text("If you're in crisis")
+            } footer: {
+                Text("If you or someone else is in immediate danger, call your local emergency number (911 in the US and Canada).")
+            }
+        }
+        .navigationTitle("Support")
+    }
+}
+
+/// For a parent or guardian who finds Phonodeck on a young person's phone.
+struct ParentNoteView: View {
+    var body: some View {
+        Form {
+            Section {
+                Text("Phonodeck is made for adults 18 and over. If you've found it on a young person's phone, a calm conversation will usually do more good than simply deleting it.")
+            }
+            Section {
+                Text("Phonodeck tells interactive stories using an AI language model that runs entirely on this phone. There's no account, and nothing is sent to a server or the cloud.")
+                Text("That doesn't mean nothing is kept. Stories and chats are saved on the phone. The passcode keeps them private from other people; it doesn't make what's written in them harmless.")
+            } header: {
+                Text("What it is")
+            }
+            Section {
+                Text("AI characters can sound real, warm and understanding, but they are made up by a program. They can be wrong, and some models people can download will say things that aren't suitable for young people.")
+            } header: {
+                Text("What to know about AI")
+            }
+            Section {
+                Text("Ask what they use it for and what they enjoy about it.")
+                Text("Explain that an AI isn't a friend or a counsellor, even when it feels like one.")
+                Text("Agree together on what's okay to share with any app, and that nothing online or on a device is ever completely private or safe.")
+                Text("Make sure they know they can come to you, or another adult they trust, if something they read or heard upset them.")
+            } header: {
+                Text("Talking about it")
+            }
+            Section {
+                ResourceLink(title: "Kids Help Phone", detail: "Canada: call 1-800-668-6868 or text 686868", url: "https://kidshelpphone.ca")
+                ResourceLink(title: "988 Suicide & Crisis Lifeline", detail: "United States: call or text 988", url: "https://988lifeline.org")
+                ResourceLink(title: "Find a Helpline", detail: "Other countries", url: "https://findahelpline.com")
+            } header: {
+                Text("Support for young people")
+            }
+        }
+        .navigationTitle("For parents")
     }
 }

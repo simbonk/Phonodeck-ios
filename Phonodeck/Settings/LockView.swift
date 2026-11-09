@@ -5,10 +5,13 @@ struct LockView: View {
     @State private var code = ""
     @State private var wrong = false
     @FocusState private var focused: Bool
+    @State private var sheet: Sheet?
+
+    private enum Sheet: Identifiable { case parents, support; var id: Self { self } }
 
     var body: some View {
+        ScrollView {
         VStack(spacing: 24) {
-            Spacer()
             Image(systemName: "waveform.circle.fill")
                 .font(.system(size: 72))
                 .foregroundStyle(Theme.accent)
@@ -40,11 +43,33 @@ struct LockView: View {
                     Label("Use \(bio)", systemImage: bio == "Touch ID" ? "touchid" : "faceid")
                 }
             }
-            Spacer()
+            VStack(spacing: 12) {
+                Text("Phonodeck is made for adults 18 and over.")
+                    .font(.footnote.weight(.semibold))
+                Button("A note for parents and guardians") { sheet = .parents }
+                Button("Take a break and find support") { sheet = .support }
+            }
+            .font(.footnote)
+            .padding(.top, 16)
             CrisisLine()
                 .frame(maxWidth: 320)
         }
         .padding()
+        .padding(.top, 48)
+        .frame(maxWidth: .infinity)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .sheet(item: $sheet) { which in
+            NavigationStack {
+                Group {
+                    switch which {
+                    case .parents: ParentNoteView()
+                    case .support: SupportView()
+                    }
+                }
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } }
+            }
+        }
         .onAppear {
             focused = !app.vault.useFaceID
             if app.vault.useFaceID {
