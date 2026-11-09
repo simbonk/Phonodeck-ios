@@ -151,16 +151,23 @@ struct PhonodeckHome: View {
                     if let line = subtitle(a) {
                         Text(line).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
                     }
-                    let tags = badges(a)
-                    if !tags.isEmpty {
-                        HStack(spacing: 6) {
-                            ForEach(tags, id: \.self) { t in
-                                Text(t).font(.caption2.bold()).lineLimit(1)
-                                    .padding(.horizontal, 8).padding(.vertical, 3)
-                                    .background(Theme.accent.opacity(0.14), in: Capsule())
-                                    .foregroundStyle(Theme.accent)
-                            }
+                    chainLines(a)
+                    HStack(alignment: .center, spacing: 8) {
+                        if !a.setup.feeling.isEmpty {
+                            Text(a.setup.feeling).font(.caption2.bold()).lineLimit(1)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Theme.accent.opacity(0.14), in: Capsule())
+                                .foregroundStyle(Theme.accent)
+                                .layoutPriority(-1)
                         }
+                        Spacer(minLength: 4)
+                        Label(timeText(a), systemImage: a.ended ? "clock" : "hourglass")
+                            .labelStyle(.titleAndIcon)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(Theme.dim)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .accessibilityLabel(timeSpoken(a))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -183,20 +190,90 @@ struct PhonodeckHome: View {
         }
     }
 
-    /// Where the story is now, and for one in progress how far through it is.
+    /// Where the story is now.
     private func subtitle(_ a: Adventure) -> String? {
-        var bits: [String] = []
-        if !a.ended { bits.append("\(Int(a.elapsed / 60)) of \(a.minutes) min") }
-        if !a.location.isEmpty { bits.append(a.location) }
-        return bits.isEmpty ? nil : bits.joined(separator: " · ")
+        a.location.isEmpty ? nil : a.location
     }
 
-    /// The vibe, and the grade a finished story earned.
-    private func badges(_ a: Adventure) -> [String] {
-        var tags: [String] = []
-        if !a.setup.feeling.isEmpty { tags.append(a.setup.feeling) }
-        if a.ended, let g = a.report?.player.grade { tags.append("Grade \(g)") }
-        return tags
+    /// Bottom right of a card: minutes left for a story in progress, minutes played for a finished one.
+    private func timeText(_ a: Adventure) -> String {
+        let played = Int((a.elapsed / 60).rounded())
+        if a.ended { return "\(max(1, played)) min" }
+        return "\(max(0, a.minutes - Int(a.elapsed / 60))) min left"
+    }
+
+    private func timeSpoken(_ a: Adventure) -> String {
+        a.ended ? "Played for \(timeText(a).replacingOccurrences(of: "min", with: "minutes"))"
+            : timeText(a).replacingOccurrences(of: "min", with: "minutes")
+    }
+
+    private func storyTitle(_ a: Adventure) -> String { a.report?.title ?? a.title }
+
+    /// The stories a "Same cast, new story" grew from, nearest first: the history behind this card.
+    private func earlier(_ a: Adventure) -> [Adventure] {
+        var out: [Adventure] = []
+        var seen: Set<UUID> = [a.id]
+        var next = a.sequelOf
+        while let id = next, !seen.contains(id), let s = app.library.adventures.first(where: { $0.id == id }) {
+            out.append(s)
+            seen.insert(id)
+            next = s.sequelOf
+        }
+        return out
+    }
+
+    /// The newest story made from this one, if any, so an older card can point forward.
+    private func continuedIn(_ a: Adventure) -> Adventure? {
+        app.library.adventures.filter { $0.sequelOf == a.id }.max { $0.created < $1.created }
+    }
+
+    /// How this story connects to the one it came from, in a few words.
+    private func linkVerb(_ a: Adventure) -> String {
+        let l = a.link.lowercased()
+        if l.contains("prequel") { return "Prequel to" }
+        if l.contains("years") { return "Years after" }
+        if l.contains("fresh") { return "Same cast as" }
+        return "Sequel to"
+    }
+
+    /// The story's history as a short chain: what it continues (and what that continued), and
+    /// whether a newer story picks it up. Nothing for a stand-alone story.
+    @ViewBuilder
+    private func chainLines(_ a: Adventure) -> some View {
+        let back = earlier(a)
+        let fwd = continuedIn(a)
+        if !back.isEmpty || fwd != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                if let first = back.first {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "link").font(.caption2)
+                        Text("\(linkVerb(a)) \(Text(storyTitle(first)).bold())")
+                            .lineLimit(1)
+                        if back.count > 1 {
+                            Text("Part \(back.count + 1)")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .overlay(Capsule().stroke(Theme.line))
+                                .fixedSize()
+                        }
+                    }
+                    if back.count > 1 {
+                        Text("Before that: " + back.dropFirst().map(storyTitle).joined(separator: " ← "))
+                            .lineLimit(1).truncationMode(.tail)
+                            .padding(.leading, 18)
+                    }
+                }
+                if let fwd {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: "arrow.turn.down.right").font(.caption2)
+                        Text("Continued in \(Text(storyTitle(fwd)).bold())").lineLimit(1)
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(Theme.dim)
+            .accessibilityElement(children: .combine)
+        }
     }
 }
 
