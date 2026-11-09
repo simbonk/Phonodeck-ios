@@ -239,7 +239,7 @@ struct LaunchSplash: View {
                 HoloCore(size: 130)
                 Materialize(text: "PHONODECK", font: .title2.bold(), color: Theme.accent)
                     .tracking(4)
-                Text("Powering up the holo-emitters…")
+                Text("Powering up the phono-emitters…")
                     .font(.footnote)
                     .foregroundStyle(Theme.dim)
             }

@@ -2,7 +2,7 @@
 
 An audio storytelling app that runs entirely on your iPhone. You download a language model once, and from then on it works in Airplane Mode: nothing you say or write leaves the phone.
 
-- **Phonodeck tab:** the same flow as the web app. A set-up wizard asks how long you have, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made: story, map, characters and lore, the Game Master and the Director. Then the Game Master tells it aloud, keeps an eye on the clock, lands a real ending, then offers **Remix story**: the same cast and world in a new story (a sequel, years later, a fresh start or a prequel) that can look back through the old one. Play by typing, or tap **hands-free** and just talk (say **"make it so"** to send).
+- **Phonodeck tab:** the same flow as the web app. A set-up wizard asks how long you have, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made: story, map, characters and lore, the Game Master and the Director. Then the Game Master tells it aloud, keeps an eye on the clock, lands a real ending, then offers **Remix story**: the same cast and world in a new story (a sequel, years later, a fresh start or a prequel) that can look back through the old one. Play by typing, or tap **hands-free** and just talk (say **"over to you"** to send).
 - **World button:** the globe in a story opens the Mission (feeling meter, mission track, events), the Story bible, and the World: every character, place, item and faction the story has collected. Edit or add anything; your words always win.
 - **Chat tab:** a plain conversation with the same on-device model.
 - **Models tab:** download the storyteller, narrator voice and listening models from Hugging Face. Every model shows whether it will run comfortably on *this* phone before you download it. Paste a link to add any other MLX model.
@@ -117,7 +117,7 @@ With a free Apple ID, apps you install yourself stop opening after 7 days. Just 
 `Phonodeck/` is the app (Xcode picks up every file in it automatically).
 
 - `LLM/`: the model catalog, Hugging Face downloads and the memory fit check (`DeviceFit.swift`), and running the language model with MLX (`LLMService.swift`).
-- `Voice/`: the narrator (Apple, Kokoro, Qwen3-TTS) and listening (Apple dictation or Parakeet), including "make it so".
+- `Voice/`: the narrator (Apple, Kokoro, Qwen3-TTS) and listening (Apple dictation or Parakeet), including the "over to you" send phrase.
 - `Story/`: the prompts (`Prompts.swift`, tune the storytelling here), curated experiences, the story engine (clock, director, memory, chapters, remix), saving and sharing.
 - `Chat/`, `Models/`, `Settings/`: the other tabs, the lock screen, the privacy lock and the crisis line.
 - `.github/workflows/build.yml`: GitHub checks that the app compiles on every push.

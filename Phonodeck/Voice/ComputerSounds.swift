@@ -1,7 +1,7 @@
 import AVFoundation
 import Foundation
 
-/// The starship computer's sounds, ported from the web app (voice.js): short chirps so you can hear
+/// The app's sound cues, ported from the web app (voice.js): short chirps so you can hear
 /// with your eyes closed what is happening, and a soft hum while the Phonodeck thinks.
 ///
 /// Everything is synthesised once into small WAV clips (no sound files ship with the app) and played
@@ -13,13 +13,13 @@ final class ComputerSounds {
     enum Cue: String {
         /// Your turn to talk: the microphone just opened.
         case listen
-        /// "Make it so" heard: the computer's acknowledging chirp (three rising notes).
+        /// The send phrase heard: an acknowledging chirp (three rising notes).
         case ack
         /// A typed message was sent.
         case sent
     }
 
-    /// Settings > Story > Computer sounds (on unless turned off).
+    /// Settings > Hands-free > Sound cues (on unless turned off).
     static var enabled: Bool {
         get { UserDefaults.standard.object(forKey: "computerSounds") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "computerSounds") }
@@ -42,7 +42,7 @@ final class ComputerSounds {
 
     // MARK: Playing
 
-    /// Plays a cue. `after` waits that long first; "make it so" uses it because the chirp comes the moment
+    /// Plays a cue. `after` waits that long first; the send phrase uses it because the chirp comes the moment
     /// the microphone shuts, and iOS takes a beat to rebuild the audio route then, swallowing anything
     /// that starts during it (the chirp is only a third of a second long).
     func play(_ cue: Cue, after delay: Double = 0) {
@@ -137,7 +137,7 @@ final class ComputerSounds {
                     env = 0
                 }
                 let phase = (f * t).truncatingRemainder(dividingBy: 1)
-                // The acknowledging chirp is a triangle wave (brighter, like a starship computer); the others are sines.
+                // The acknowledging chirp is a triangle wave (brighter); the others are sines.
                 let wave = cue == .ack ? Float(4 * abs(phase - 0.5) - 1) : Float(sin(2 * .pi * phase))
                 out[s0 + i] += wave * env
             }

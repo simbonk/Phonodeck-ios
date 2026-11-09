@@ -5,7 +5,7 @@ import MLXAudioSTT
 import Observation
 import Speech
 
-/// Listens to the player. Say "make it so" at the end to send.
+/// Listens to the player. Say "over to you" at the end to send.
 ///
 /// Two engines, both fully offline:
 /// - Apple's on-device dictation (built in, words appear as you speak).
@@ -17,7 +17,7 @@ final class Dictation {
     private(set) var listening = false
     private(set) var transcribing = false
     private(set) var text = ""
-    /// Counts each message sent from here, so the screens can empty their text box after "make it so".
+    /// Counts each message sent from here, so the screens can empty their text box after the send phrase.
     private(set) var sent = 0
     var error: String?
     /// Called with the finished text when the player says the send phrase (or taps send).
@@ -28,7 +28,8 @@ final class Dictation {
     /// The words that send what you said (Settings > Story can change them).
     static var sendPhrase: String {
         let s = UserDefaults.standard.string(forKey: "sendPhrase")?.trimmingCharacters(in: .whitespaces) ?? ""
-        return s.isEmpty ? "make it so" : s.lowercased()
+        // The old default is treated as unset, so it moves to the new one.
+        return s.isEmpty || s.lowercased() == "make it so" ? "over to you" : s.lowercased()
     }
 
     private let store: ModelStore
@@ -200,7 +201,7 @@ final class Dictation {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         guard send else { return }
-        // Tapping send while listening counts as "make it so": the same chirp.
+        // Tapping send while listening counts as saying the send phrase: the same chirp.
         ComputerSounds.shared.play(.ack, after: Self.ackDelay)
         if wasModel {
             let tail = box.takeAll()
