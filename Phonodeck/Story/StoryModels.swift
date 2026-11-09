@@ -170,6 +170,10 @@ struct StoryTurn: Codable, Identifiable, Hashable {
     var id = UUID()
     var role: Role
     var text: String
+    /// Behind the scenes, for the story export: what the Game Master planned before this reply
+    /// (director notes, recalled memories, its reasoning and plan) and its review afterwards.
+    var before: String? = nil
+    var after: String? = nil
 }
 
 struct Mood: Codable, Hashable {

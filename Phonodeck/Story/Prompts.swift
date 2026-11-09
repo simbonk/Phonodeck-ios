@@ -151,7 +151,7 @@ enum Prompts {
      "people":[{"name":"","where":"exactly where they are when the story opens","doing":"what they are doing"}],
      "secrets":["2-4 hidden truths the player has not discovered"],
      "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}]}
-    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly.
+    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's "pronouns" and "desc" must match how the bible refers to them: decide everyone's gender before writing the bible and keep it.
     """
 
     static let architectSimulator = """
