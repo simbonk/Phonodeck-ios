@@ -55,6 +55,20 @@ final class Narrator: NSObject {
     /// enough to know when it will be heard.
     private var playbackEndsAt = Date.distantPast
 
+    /// Speech made but not yet handed to the speaker. A reply only starts playing once enough is
+    /// ready that the voice can keep ahead of itself; otherwise the first sentences come out choppy,
+    /// with gaps while the next one is still being made (the voice is slowest on its first sentences).
+    private var held: [(samples: [Float], sampleRate: Double)] = []
+    private var heldSeconds = 0.0
+    private var startedPlayback = false
+    /// How long the voice has taken per character so far this reply, to judge how much to hold back.
+    private var synthSeconds = 0.0
+    private var synthChars = 0
+    /// When the voice got the chip for the current sentence (time spent waiting for its turn doesn't count).
+    private var makingSince: Date?
+    /// Times this reply's speech ran dry between sentences (shown in the detail line and the console).
+    private(set) var gaps = 0
+
     init(store: ModelStore) {
         self.store = store
         super.init()
@@ -155,7 +169,12 @@ final class Narrator: NSObject {
 
     static func configureSession() {
         let s = AVAudioSession.sharedInstance()
-        try? s.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP, .duckOthers])
+        let options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothA2DP, .duckOthers]
+        // Setting the category again while speech is playing can make iOS rebuild the audio route,
+        // which is heard as a click or a cut. Only set it when something changed it.
+        if s.category != .playAndRecord || s.mode != .default || s.categoryOptions != options {
+            try? s.setCategory(.playAndRecord, mode: .default, options: options)
+        }
         try? s.setActive(true)
     }
 
@@ -208,6 +227,12 @@ final class Narrator: NSObject {
         pendingBuffers.removeAll()
         playbackEndsAt = .distantPast
         lastPlayerSample = nil
+        held.removeAll()
+        heldSeconds = 0
+        startedPlayback = false
+        synthSeconds = 0
+        synthChars = 0
+        gaps = 0
         buffer = ""
         streamDone = true
         speaking = false
@@ -263,7 +288,7 @@ final class Narrator: NSObject {
     }
 
     private func checkFinished() {
-        guard streamDone, appleOutstanding == 0, sentenceQueue.isEmpty, worker == nil, buffersOutstanding == 0 else { return }
+        guard streamDone, appleOutstanding == 0, sentenceQueue.isEmpty, worker == nil, held.isEmpty, buffersOutstanding == 0 else { return }
         if speaking {
             if usingNeural { detail = (detail ?? "") + " Finished." }
             speaking = false
@@ -332,7 +357,8 @@ final class Narrator: NSObject {
         let myGeneration = generation
         worker = Task { @MainActor in
             defer {
-                if self.generation == myGeneration { self.worker = nil; self.checkFinished() }
+                // Everything queued has been made: play whatever was held back.
+                if self.generation == myGeneration { self.releaseHeld(); self.worker = nil; self.checkFinished() }
             }
             do {
                 self.detail = "Loading \(entry.name)…"
@@ -367,7 +393,7 @@ final class Narrator: NSObject {
                     defer { ticker.cancel() }
                     // An MLX failure becomes a Swift error (and Apple's voice takes over) instead of a crash.
                     let samples = try await MLXGate.shared.run(urgent: true, label: "the \(entry.name) voice on the \(chip)") { () async throws -> [Float] in
-                        await MainActor.run { self.detail = "Making speech on the \(chip)…" }
+                        await MainActor.run { self.detail = "Making speech on the \(chip)…"; self.makingSince = Date() }
                         return try await Self.onChosenDevice(onCPU) {
                             try await withError { error in
                                 let audio = try await boxed.value.generate(
@@ -393,11 +419,14 @@ final class Narrator: NSObject {
                     if samples.isEmpty || loudest < 0.0001 {
                         self.lastError = "\(entry.name) made silence for that sentence (\(samples.count) samples)."
                     }
-                    self.schedule(samples, sampleRate: Double(model.sampleRate), generation: myGeneration)
+                    self.synthSeconds += Date().timeIntervalSince(self.makingSince ?? started)
+                    self.synthChars += sentence.count
+                    self.deliver(samples, sampleRate: Double(model.sampleRate), generation: myGeneration)
                 }
             } catch is CancellationError {
                 if self.generation == myGeneration { self.lastError = "The \(entry.name) voice was cancelled before it spoke." }
             } catch {
+                self.releaseHeld()
                 self.lastError = "The \(entry.name) voice failed (\(error.localizedDescription)); using Apple's voice instead."
                 let leftover = self.sentenceQueue
                 self.sentenceQueue.removeAll()
@@ -410,6 +439,37 @@ final class Narrator: NSObject {
                 }
             }
         }
+    }
+
+    /// Hands a sentence's speech to the speaker, or holds it back until the voice is far enough ahead.
+    private func deliver(_ samples: [Float], sampleRate: Double, generation myGeneration: Int) {
+        guard !samples.isEmpty else { return }
+        if startedPlayback {
+            schedule(samples, sampleRate: sampleRate, generation: myGeneration)
+            return
+        }
+        held.append((samples, sampleRate))
+        heldSeconds += Double(samples.count) / sampleRate
+        // Start once the speech ready lasts longer than making the rest is expected to take (with
+        // room to spare), so playback never catches up with the voice. Until the reply is fully
+        // written the rest can't be measured, so wait for a comfortable cushion instead.
+        let remainingChars = sentenceQueue.reduce(0) { $0 + $1.count } + buffer.count
+        let perChar = synthChars > 0 ? synthSeconds / Double(synthChars) : 0
+        let needed = streamDone ? Double(remainingChars) * perChar * 1.3 + 0.5 : max(8, Double(remainingChars) * perChar * 1.3)
+        if heldSeconds >= needed {
+            releaseHeld()
+        } else {
+            detail = String(format: "Getting the voice ahead before it starts: %.0f s of speech ready, about %.0f s needed.", heldSeconds, needed)
+        }
+    }
+
+    private func releaseHeld() {
+        guard !held.isEmpty else { return }
+        startedPlayback = true
+        let ready = held
+        held.removeAll()
+        heldSeconds = 0
+        for h in ready { schedule(h.samples, sampleRate: h.sampleRate, generation: generation) }
     }
 
     private func schedule(_ samples: [Float], sampleRate: Double, generation myGeneration: Int) {
@@ -433,6 +493,11 @@ final class Narrator: NSObject {
                 lastError = "Couldn't start the speaker (\(error.localizedDescription))."
                 return
             }
+        }
+        // The speaker had finished everything before this sentence was ready: a gap was heard.
+        if buffersOutstanding == 0 && playing {
+            gaps += 1
+            detail = (detail ?? "") + " The voice fell behind (gap \(gaps))."
         }
         buffersOutstanding += 1
         let bufferID = UUID()
