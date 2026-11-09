@@ -77,6 +77,33 @@ struct WorldView: View {
         }
         Text("\(a.setup.simulator ? "Experience simulator" : "Curated story") · \(Int(a.elapsed / 60)) of \(a.minutes) minutes played" + (a.left.map { a.ended ? "" : " · about \($0) more turn\($0 == 1 ? "" : "s")" } ?? ""))
             .font(.footnote).foregroundStyle(Theme.dim)
+        if !a.storyTime.isEmpty || !a.whereabouts.isEmpty {
+            Caps(text: "Right now").padding(.top, 8)
+            card {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !a.storyTime.isEmpty {
+                        Label(a.storyTime, systemImage: "clock").font(.subheadline).foregroundStyle(Theme.accent)
+                    }
+                    ForEach(a.whereabouts) { w in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(w.name).font(.subheadline.bold()).foregroundStyle(Theme.fg)
+                            Text([w.at, w.doing].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(Theme.dim)
+                            if !w.heading.isEmpty { Text("Heading to " + w.heading).font(.caption).foregroundStyle(Theme.accent) }
+                        }
+                    }
+                }
+            }
+        }
+        if !a.timeline.isEmpty {
+            Caps(text: "Timeline").padding(.top, 8)
+            card {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(a.timeline.enumerated()), id: \.offset) { _, t in
+                        Text(t).font(.caption).foregroundStyle(Theme.fg)
+                    }
+                }
+            }
+        }
         if a.setup.simulator {
             Caps(text: "Your goal").padding(.top, 8)
             card {
