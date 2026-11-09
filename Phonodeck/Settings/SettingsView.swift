@@ -116,7 +116,7 @@ struct SettingsView: View {
         } header: {
             Text("Privacy lock")
         } footer: {
-            Text("Your stories and chats are always encrypted on this \(DeviceFit.deviceWord). With a passcode, Phonodeck locks whenever you leave it, and only your passcode\(bio.map { " or \($0)" } ?? "") can open them. If you forget the passcode, they can't be recovered by anyone.")
+            Text("Your stories and chats are always encrypted on this \(DeviceFit.deviceWord). Anyone with your phone's passcode can open Phonodeck unless you give it its own lock. With one, Phonodeck locks whenever you leave it, and only your passcode\(bio.map { " or \($0)" } ?? "") can open them. If you forget the passcode, they can't be recovered by anyone.")
         }
     }
 }
@@ -233,7 +233,7 @@ struct SupportView: View {
     var body: some View {
         Form {
             Section {
-                Text("Use Phonodeck responsibly. Stories are for fun and imagination, not for leaning into anything that harms you or someone else. And remember that no data on a phone is ever completely private, so be careful what you save.")
+                Text("Use Phonodeck responsibly. Stories are for fun and imagination, not for leaning into anything that harms you or someone else. And remember that no data on a phone is ever completely private: anyone with your phone's passcode has access to what's on it, so be careful what you save.")
             } header: {
                 Text("Play responsibly")
             }
@@ -272,7 +272,7 @@ struct ParentNoteView: View {
             }
             Section {
                 Text("Phonodeck tells interactive stories using an AI language model that runs entirely on this phone. There's no account, and nothing is sent to a server or the cloud.")
-                Text("That doesn't mean nothing is kept. Stories and chats are saved on the phone, and no data on a phone is ever completely private. The passcode keeps them from casual eyes; it doesn't make what's written in them harmless.")
+                Text("That doesn't mean nothing is kept. Stories and chats are saved on the phone, and no data on a phone is ever completely private: anyone who has the phone's passcode has access to what's on it. Phonodeck's own lock keeps stories from casual eyes; it doesn't make what's written in them harmless.")
             } header: {
                 Text("What it is")
             }
