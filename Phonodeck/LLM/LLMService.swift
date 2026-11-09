@@ -150,6 +150,8 @@ final class LLMService {
         /// counts toward maxTokens and is removed from the output. Models without a thinking mode
         /// give back nothing here, so callers fall back to a call without it.
         var thinking = false
+        /// Collects the hidden reasoning, for the story export.
+        var thoughts: ThoughtSink? = nil
     }
 
     /// Streams the reply a few characters at a time. Hidden <think> reasoning is removed.
@@ -184,7 +186,7 @@ final class LLMService {
                         if AppActivity.shared.inBackground { interrupted = true; break }
                         switch event {
                         case .chunk(let text):
-                            if filter.inside { self.thoughtChars += text.count }
+                            if filter.inside { self.thoughtChars += text.count; options.thoughts?.add(text) }
                             let out = filter.feed(text)
                             if !out.isEmpty { continuation.yield(out) }
                         case .info(let info):
@@ -317,6 +319,17 @@ final class LLMService {
             out += piece
         }
         return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// The model's hidden reasoning from one call, kept for the story export.
+final class ThoughtSink: @unchecked Sendable {
+    private(set) var text = ""
+    func add(_ s: String) { if text.count < 12000 { text += s } }
+    /// The reasoning without its tags.
+    var clean: String {
+        text.replacingOccurrences(of: "<think>", with: "").replacingOccurrences(of: "</think>", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

@@ -140,18 +140,18 @@ enum Prompts {
     You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text, with the keys in exactly this order:
     {"title":"a short title",
      "bible":"180-300 words, written to the player as 'you': premise, tone, who the player is and what they have with them, the setting in concrete detail (what is there and what is not), the goal, what stands in the way",
-     "location":"the opening place",
+     "location":"the opening place's short name, 1-4 words, the first of places",
      "places":[{"name":"","desc":"one line"}],
      "beats":["3-5 short story steps in order"],
      "player":{"name":"the player character's name","desc":"one line: who they are here"},
      "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"two telling details","wants":"for a person: what they want"}],
-     "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, what the player has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
+     "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, exactly what the player is wearing (one outfit, with colours) and has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
      "time":"when the story opens: time of day, day and season, e.g. 'Early morning, the day after the storm, late summer'",
      "timeline":["2-4 things that already happened, each with exactly when, e.g. 'Last night: the storm wrecked your boat on the reef'"],
      "people":[{"name":"","where":"exactly where they are when the story opens","doing":"what they are doing"}],
      "secrets":["2-4 hidden truths the player has not discovered"],
      "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}]}
-    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly.
+    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's "pronouns" and "desc" must match how the bible refers to them: decide everyone's gender before writing the bible and keep it.
     """
 
     static let architectSimulator = """
@@ -188,7 +188,7 @@ enum Prompts {
     static let memory = """
     You keep the memory of an interactive story. From the latest exchange, output ONLY one JSON object:
     {"events":["0-2 notable events, past tense"],
-     "location":"where the player is now",
+     "location":"the short name of the place the player is in now, 1-4 words (use a place name from the story if there is one)",
      "lore":[{"name":"real name","type":"person|place|item|faction","role":"for a person: how the story refers to them","desc":"one or two sentences, updated"}],
      "beats_done":["exact text of any story steps the player completed"],
      "goal_progress":"one short sentence",

@@ -26,6 +26,8 @@ final class StoryEngine {
     /// What the player just sent, shown in the transcript at once while the turn waits for the
     /// Game Master's review and recall (it joins the transcript proper when the reply starts).
     private(set) var pendingInput: String?
+    /// The reasoning behind the last plan, kept with the reply for the story export.
+    private var planThoughts = ""
     var error: String?
 
     /// Read replies aloud as they are written.
@@ -265,8 +267,7 @@ final class StoryEngine {
         func str(_ k: String, _ d: [String: Any]? = nil) -> String { ((d ?? plan)[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         if !str("title").isEmpty, e.title.isEmpty { a.title = str("title") }
         a.bible = str("bible").isEmpty ? e.describe + "\n\n" + e.answers(player: player) : str("bible")
-        a.location = str("location").isEmpty ? e.place : str("location")
-        a.visit(a.location, from: "")
+        let openingPlace = str("location").isEmpty ? e.place : str("location")
 
         // The player
         let p = plan["player"] as? [String: Any]
@@ -281,8 +282,12 @@ final class StoryEngine {
             let name = (place as? String) ?? str("name", d)
             if !name.isEmpty { addLore(&a, LoreEntry(name: name, kind: .place, desc: str("desc", d))) }
         }
+        a.location = Self.placeName(openingPlace, known: a.lore.filter { $0.kind == .place }.map(\.name))
+        a.visit(a.location, from: "")
         if !a.location.isEmpty, !a.lore.contains(where: { $0.name.caseInsensitiveCompare(a.location) == .orderedSame }) {
-            addLore(&a, LoreEntry(name: a.location, kind: .place, desc: ""))
+            addLore(&a, LoreEntry(name: a.location, kind: .place, desc: openingPlace == a.location ? "" : openingPlace))
+        } else {
+            Self.enrichPlace(&a, a.location, with: openingPlace)
         }
         let cap = (a.minutes >= 30 ? 3 : 2) + 1
         var people = 0
@@ -331,6 +336,7 @@ final class StoryEngine {
         a.whereabouts = Self.whereabouts(plan["people"]).filter { w in
             w.name.caseInsensitiveCompare(playerName) != .orderedSame && w.name.caseInsensitiveCompare("you") != .orderedSame
         }
+        checkPronouns(&a, texts: [a.bible])
         a.secrets = (plan["secrets"] as? [String]) ?? []
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
@@ -372,18 +378,30 @@ final class StoryEngine {
         library.save(a)
     }
 
-    /// The whole story as plain text, for copying out: the set-up, then every turn in order.
+    /// The whole story as plain text, for copying out to refine it: the set-up and the world as
+    /// the Game Master holds it now, then every turn in order with what happened behind the scenes
+    /// (the plan and its reasoning before each reply, the review after it).
     func storyText() -> String {
         guard let a = adventure else { return "" }
-        var out = [a.title]
+        var out = ["# " + a.title, ""]
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
-        if !a.storyTime.isEmpty { out.append("Story time: " + a.storyTime) }
-        out.append("")
+        out.append("Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (deepThinking ? "on" : "off"))
+        out += ["", "## Story bible", a.bible]
+        let people = a.lore.filter { $0.kind == .person }.map { "- " + $0.name + ($0.isPlayer ? " (the player)" : $0.role.isEmpty ? "" : " (\($0.role))") + ": " + $0.desc }
+        if !people.isEmpty { out += ["", "## People"] + people }
+        if !a.facts.isEmpty { out += ["", "## Facts now"] + a.facts.map { "- " + $0 } }
+        if !a.storyTime.isEmpty { out += ["", "## Story time now", a.storyTime] }
+        if !a.timeline.isEmpty { out += ["", "## Timeline"] + a.timeline.map { "- " + $0 } }
+        if !a.whereabouts.isEmpty { out += ["", "## Where people are"] + a.whereabouts.map { "- " + $0.line } }
+        if !a.scene.isEmpty { out += ["", "## Scene now", a.scene] }
+        out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
         for t in a.transcript {
+            if let b = t.before, !b.isEmpty { out += ["[Behind the scenes, before the reply]", b, ""] }
             out.append((t.role == .player ? me : "GAME MASTER") + ":\n" + t.text)
             out.append("")
+            if let b = t.after, !b.isEmpty { out += ["[Behind the scenes, the review while it was read aloud]", b, ""] }
         }
         return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -579,6 +597,9 @@ final class StoryEngine {
         stage = ""
         thinkingSince = nil
         reply = Self.tidy(reply)
+        // Small models slip the player's name into speech before anyone has heard it. Until the
+        // player says it, it is taken out of the saved reply, so the slip never feeds later turns.
+        if !nameTold(a), !a.cast.contains(where: \.known) { reply = Self.dropName(a.playerName, from: reply) }
         guard !reply.isEmpty, !Task.isCancelled else {
             streaming = ""
             adventure = snapshot
@@ -586,7 +607,30 @@ final class StoryEngine {
         }
         // The memory pass may have finished while the reply was written: keep what it learned.
         if let now = adventure, now.id == a.id { a.takeMemory(from: now) }
-        a.transcript.append(StoryTurn(role: .gm, text: reply))
+        // The opening scene is the first time the people appear in the story itself; anyone the bible
+        // gave no clear pronouns for takes them from it.
+        if opening { checkPronouns(&a, texts: [a.bible, reply]) }
+        var before: [String] = []
+        // How the context was packed, so a playthrough can be reviewed (token counts are estimates).
+        let memTokens: Int = memories.reduce(0) { $0 + Self.tokens($1) }
+        let turnTokens: Int = kept.reduce(0) { $0 + Self.tokens($1.1.text) + 8 }
+        let systemTokens = Self.tokens(system)
+        let briefTokens = Self.tokens(briefing(memories, plan: plan))
+        var ctx: [String] = []
+        ctx.append("CONTEXT (about \(systemTokens + briefTokens + turnTokens + maxOut) of \(LLMService.contextBudget) tokens, \(maxOut) kept for the reply):")
+        ctx.append("- rules and story bible: \(systemTokens)")
+        ctx.append("- briefing with memories and plan: \(briefTokens) (facts, continuity, notes and people alone: \(Self.tokens(briefing([]))))")
+        ctx.append("- recent turns word for word: \(kept.count) of \(max(0, a.transcript.count - 1)) (\(turnTokens))")
+        ctx.append("- recalled memories: \(memories.count) (\(memTokens), room for \(room * 2 / 7))")
+        if !plan.isEmpty { ctx.append("- plan: \(Self.tokens(plan))") }
+        ctx.append("- older turns folded into \(a.chapters.count) chapter summaries: \(a.summarisedTurns)")
+        ctx.append("- continuity: \(a.timeline.count) timeline entries, \(a.whereabouts.count) people placed, \(a.facts.count) facts")
+        before.append(ctx.joined(separator: "\n"))
+        if !notes.isEmpty { before.append("DIRECTOR NOTES:\n" + notes.map { "- " + $0 }.joined(separator: "\n")) }
+        if !memories.isEmpty { before.append("RECALLED MEMORIES:\n" + memories.map { "- " + $0 }.joined(separator: "\n")) }
+        if planning, !planThoughts.isEmpty { before.append("REASONING:\n" + planThoughts) }
+        if !plan.isEmpty { before.append("PLAN:\n" + plan) }
+        a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.isEmpty ? nil : before.joined(separator: "\n\n")))
         streaming = ""
         if a.left == 0 && !hidden { a.ended = true }
         adventure = a
@@ -643,12 +687,13 @@ final class StoryEngine {
     /// Runs a background or planning call, with the model's reasoning when deep thinking is on.
     /// A model without a thinking mode (or one that thinks past its room) gives back nothing, and
     /// then the call is made again without it.
-    private func think(_ prompt: String, quickTokens: Int, deepTokens: Int, temperature: Float) async -> String {
+    private func think(_ prompt: String, quickTokens: Int, deepTokens: Int, temperature: Float, thoughts: ThoughtSink? = nil) async -> String {
         if deepThinking {
             thinkBudget = deepTokens
             defer { thinkBudget = 0 }
             let out = (try? await llm.complete(system: nil, prompt: prompt,
-                                               options: .init(maxTokens: deepTokens, temperature: 0.6, repetitionPenalty: nil, thinking: true))) ?? ""
+                                               options: .init(maxTokens: deepTokens, temperature: 0.6, repetitionPenalty: nil, thinking: true,
+                                                              thoughts: thoughts))) ?? ""
             if !out.isEmpty || Task.isCancelled { return out }
         }
         return (try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: quickTokens, temperature: temperature))) ?? ""
@@ -676,6 +721,7 @@ final class StoryEngine {
     /// reasons first. The prompt plus the room to think stay inside the context the fit check
     /// planned for, so it never raises peak memory.
     private func makePlan(snapshot a: Adventure, input: String, memories: [String], notes: [String]) async -> String {
+        planThoughts = ""
         var prompt = Prompts.gmPlan + "\n\nSTORY BIBLE:\n" + clip(a.bible, 1200)
         let limits = limitsText(a)
         if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS (never break):\n" + limits }
@@ -692,7 +738,9 @@ final class StoryEngine {
         let continuity = continuityText(a)
         if !continuity.isEmpty { prompt += "\n\n" + continuity }
         prompt += "\n\nWHAT THE PLAYER JUST DID: " + clip(input, 800) + "\n\nYour six lines:"
-        let reply = await think(prompt, quickTokens: Self.planTokens, deepTokens: Self.deepPlanTokens, temperature: 0.4)
+        let sink = ThoughtSink()
+        let reply = await think(prompt, quickTokens: Self.planTokens, deepTokens: Self.deepPlanTokens, temperature: 0.4, thoughts: sink)
+        planThoughts = sink.clean
         // Keep only the plan lines, in case the model wanders into writing the story itself.
         let lines = reply.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.range(of: #"^[-*\s]*(PLAYER|ANSWER|BEAT|WHO|USE|AVOID)\**:"#, options: .regularExpression) != nil }
@@ -723,8 +771,15 @@ final class StoryEngine {
         }
         if !start.goalProgress.isEmpty { prompt += "\nPROGRESS: " + start.goalProgress }
         prompt += "\n\nRECENT TURNS (the last one is the reply to review):\n" + recentTurns(start, 3, each: 700)
-        let reply = await think(prompt, quickTokens: 700, deepTokens: 1400, temperature: 0.3)
-        guard !Task.isCancelled, let m = JSONExtract.object(reply), var now = adventure, now.id == start.id else { return }
+        let sink = ThoughtSink()
+        let reply = await think(prompt, quickTokens: 700, deepTokens: 1400, temperature: 0.3, thoughts: sink)
+        guard !Task.isCancelled, var now = adventure, now.id == start.id else { return }
+        // Keep the review with the reply it looked at, for the story export.
+        if let id = start.transcript.last?.id, let i = now.transcript.firstIndex(where: { $0.id == id }) {
+            let thought = sink.clean
+            now.transcript[i].after = (thought.isEmpty ? "" : "REASONING:\n" + thought + "\n\n") + "REVIEW:\n" + (reply.isEmpty ? "(no reply)" : reply)
+        }
+        guard let m = JSONExtract.object(reply) else { adventure = now; library.save(now); return }
         func list(_ k: String) -> [String] {
             ((m[k] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         }
@@ -861,6 +916,110 @@ final class StoryEngine {
         }
     }
 
+    /// Which pronouns a text uses for a person: the he/she words right after each mention of their
+    /// first name, up to the next person's name. Nil when the text is unclear.
+    static func pronouns(in text: String, for name: String, others: [String]) -> String? {
+        let first = name.split(separator: " ").first.map(String.init) ?? name
+        guard first.count > 1, let re = try? NSRegularExpression(pattern: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b") else { return nil }
+        let ns = text as NSString
+        var he = 0, she = 0
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let start = m.range.location + m.range.length
+            var window = ns.substring(with: NSRange(location: start, length: min(160, ns.length - start)))
+            if let p = window.range(of: "\n\n") { window = String(window[..<p.lowerBound]) }
+            for o in others where o != first { if let r = window.range(of: o) { window = String(window[..<r.lowerBound]) } }
+            for w in window.lowercased().split(whereSeparator: { !$0.isLetter }) {
+                switch w {
+                case "he", "him", "his", "himself": he += 1
+                case "she", "her", "hers", "herself": she += 1
+                default: break
+                }
+            }
+        }
+        if he >= 2 && he >= she * 3 { return "he/him" }
+        if she >= 2 && she >= he * 3 { return "she/her" }
+        return nil
+    }
+
+    /// Makes each person's pronouns match how the story itself refers to them: the architect sometimes
+    /// writes one gender in the character list and another in the bible. The first text with a clear
+    /// answer wins, and the fact and the character card are corrected to match.
+    private func checkPronouns(_ a: inout Adventure, texts: [String]) {
+        let firsts = a.cast.map { $0.name.split(separator: " ").first.map(String.init) ?? $0.name }
+        for person in a.cast where !person.byPlayer {
+            guard let found = texts.lazy.compactMap({ Self.pronouns(in: $0, for: person.name, others: firsts) }).first else { continue }
+            let prefix = person.name + " uses "
+            if let i = a.facts.firstIndex(where: { $0.hasPrefix(prefix) }) {
+                if a.facts[i].hasPrefix(prefix + found) { continue }
+                a.facts[i] = prefix + found + "."
+            } else {
+                a.facts.insert(prefix + found + ".", at: 0)
+            }
+            if let k = a.lore.firstIndex(where: { $0.id == person.id }) { a.lore[k].desc = Self.swapPronouns(a.lore[k].desc, to: found) }
+        }
+    }
+
+    /// Rewrites he/she words in a short description to the given pronouns.
+    static func swapPronouns(_ s: String, to p: String) -> String {
+        let male = p.hasPrefix("he")
+        let map: [String: String] = male
+            ? ["she": "he", "herself": "himself", "hers": "his", "her": "her"]
+            : ["he": "she", "him": "her", "his": "her", "himself": "herself"]
+        var out = s
+        for (from, to) in map where from != to {
+            for (f, t) in [(from, to), (from.prefix(1).uppercased() + from.dropFirst(), to.prefix(1).uppercased() + to.dropFirst())] {
+                out = out.replacingOccurrences(of: "\\b" + f + "\\b", with: t, options: .regularExpression)
+            }
+        }
+        // "her" is either "his" or "him": before a word it is possessive.
+        if male {
+            out = out.replacingOccurrences(of: "\\b([Hh])er(\\s+[a-z])", with: "$1is$2", options: .regularExpression)
+            out = out.replacingOccurrences(of: "\\b([Hh])er\\b", with: "$1im", options: .regularExpression)
+        }
+        return out
+    }
+
+    /// A place's short name. Models sometimes write a whole description where a name belongs ("A white
+    /// coral beach at sunrise. The sand is powdery..."): a known place it mentions wins ("The Beach"),
+    /// otherwise the first few words of its first phrase ("White coral beach").
+    static func placeName(_ raw: String, known: [String]) -> String {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.count <= 40, !s.contains(". ") { return s.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
+        let lower = s.lowercased()
+        func core(_ n: String) -> String {
+            let l = n.lowercased()
+            for art in ["the ", "a ", "an "] where l.hasPrefix(art) { return String(l.dropFirst(art.count)) }
+            return l
+        }
+        let hit = known.filter { k in
+            let c = core(k)
+            return c.count > 2 && lower.range(of: "\\b" + NSRegularExpression.escapedPattern(for: c) + "\\b", options: .regularExpression) != nil
+        }.max { core($0).count < core($1).count }
+        if let hit { return hit }
+        var phrase = s.components(separatedBy: CharacterSet(charactersIn: ".,;:!?")).first ?? s
+        for cut in [" at ", " with ", " where ", " that ", " which ", " under ", " near "] {
+            if let r = phrase.range(of: cut, options: .caseInsensitive) { phrase = String(phrase[..<r.lowerBound]) }
+        }
+        var words = phrase.split(separator: " ").map(String.init)
+        if let f = words.first, ["a", "an"].contains(f.lowercased()) { words.removeFirst() }
+        let name = words.prefix(5).joined(separator: " ")
+        guard !name.isEmpty else { return String(s.prefix(40)) }
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    /// A description the model wrote where a place's name belonged is added to that place's details
+    /// (once), so nothing it painted is lost when the name snaps to the known place.
+    static func enrichPlace(_ a: inout Adventure, _ name: String, with raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count > 40 || text.contains(". "), text.caseInsensitiveCompare(name) != .orderedSame,
+              let i = a.lore.firstIndex(where: { $0.kind == .place && $0.name.caseInsensitiveCompare(name) == .orderedSame }),
+              !a.lore[i].byPlayer else { return }
+        let desc = a.lore[i].desc
+        guard !desc.lowercased().contains(String(text.lowercased().prefix(30))) else { return }
+        let joined = desc.isEmpty ? text : desc.trimmingCharacters(in: .whitespaces) + (desc.hasSuffix(".") ? " " : ". ") + text
+        a.lore[i].desc = joined.count <= 600 ? joined : String(joined.prefix(600)) + "…"
+    }
+
     /// People positions from a model's JSON: [{name, where, doing, heading}].
     static func whereabouts(_ raw: Any?) -> [Whereabout] {
         ((raw as? [[String: Any]]) ?? []).compactMap { d in
@@ -878,6 +1037,26 @@ final class StoryEngine {
     static func sameEvent(_ a: String, _ b: String) -> Bool {
         func what(_ s: String) -> String { (s.split(separator: ":", maxSplits: 1).last.map(String.init) ?? s).lowercased().trimmingCharacters(in: .whitespaces) }
         return what(a) == what(b)
+    }
+
+    /// Takes a name used to address someone out of a reply: "You are safe now, Simon." becomes
+    /// "You are safe now." and "Simon, come here" becomes "Come here".
+    static func dropName(_ name: String, from s: String) -> String {
+        let first = name.split(separator: " ").first.map(String.init) ?? name
+        guard first.count > 1 else { return s }
+        let n = NSRegularExpression.escapedPattern(for: first)
+        var out = s.replacingOccurrences(of: ",\\s*" + n + "\\b", with: "", options: .regularExpression)
+        // "Simon, come here" becomes "Come here" (capitalised only where a sentence or a quote begins).
+        if let re = try? NSRegularExpression(pattern: "\\b" + n + ",\\s*([a-z])") {
+            for m in re.matches(in: out, range: NSRange(location: 0, length: (out as NSString).length)).reversed() {
+                let ns = out as NSString
+                let letter = ns.substring(with: m.range(at: 1))
+                let before = ns.substring(to: m.range.location).trimmingCharacters(in: .whitespaces)
+                let starts = before.isEmpty || ".!?\"“\n".contains(before.last!)
+                out = ns.replacingCharacters(in: m.range, with: starts ? letter.uppercased() : letter)
+            }
+        }
+        return out
     }
 
     /// Whether the player has told the story their name (or someone already knew them).
@@ -1061,7 +1240,9 @@ final class StoryEngine {
 
         a.events.append(contentsOf: ((m["events"] as? [String]) ?? []).prefix(2))
         a.events = Array(a.events.suffix(30))
-        if let loc = (m["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !loc.isEmpty {
+        if let raw = (m["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+            let loc = Self.placeName(raw, known: a.lore.filter { $0.kind == .place }.map(\.name) + a.places)
+            Self.enrichPlace(&a, loc, with: raw)
             a.visit(loc, from: a.location)
             a.location = loc
         }
