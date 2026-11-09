@@ -744,10 +744,10 @@ final class StoryEngine {
             let kept = now.timeline.filter { old in !timeline.contains { Self.sameEvent($0, old) } }
             now.timeline = Array((timeline.count >= now.timeline.count ? timeline : kept + timeline).map { clip($0, 200) }.suffix(12))
         }
-        let people = Self.whereabouts(m["people"])
-        if !people.isEmpty {
+        let whoWhere = Self.whereabouts(m["people"])
+        if !whoWhere.isEmpty {
             // Someone the review forgot stays where they were.
-            now.whereabouts = people + now.whereabouts.filter { o in !people.contains { $0.name.caseInsensitiveCompare(o.name) == .orderedSame } }
+            now.whereabouts = whoWhere + now.whereabouts.filter { o in !whoWhere.contains { $0.name.caseInsensitiveCompare(o.name) == .orderedSame } }
             now.whereabouts = Array(now.whereabouts.prefix(8))
         }
         adventure = now
