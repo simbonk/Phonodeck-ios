@@ -7,16 +7,22 @@ struct NarratorSetup: View {
     @State private var onCPU = Narrator.neuralOnCPU
     /// In the Models tab: also list added voice models and offer Delete.
     var manage = false
+    /// The heading and explanation (the Models tab explains each tab once at the top instead).
+    var showsIntro = true
 
+    /// Voices that can't load on this device at all are left out.
     private var voices: [ModelEntry] {
-        manage ? ModelCatalog.voice + app.store.customModels.filter { $0.kind == .voice } : ModelCatalog.voice
+        (manage ? ModelCatalog.voice + app.store.customModels.filter { $0.kind == .voice } : ModelCatalog.voice)
+            .filter(app.store.canRun)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Caps(text: "Narrator voice")
-            Text("Who reads the story aloud. Tap Listen to hear each one; downloaded voices work offline.")
-                .font(.subheadline).foregroundStyle(Theme.dim)
+            if showsIntro {
+                Caps(text: "Narrator voice")
+                Text("Who reads the story aloud. Tap Listen to hear each one; downloaded voices work offline.")
+                    .font(.subheadline).foregroundStyle(Theme.dim)
+            }
             OptionCard(title: "Apple voice", tier: "Fast", blurb: "Built in. Starts instantly, no download.",
                        entry: nil, selected: app.store.voiceID == nil,
                        listen: { toggleListen(nil) }, listening: app.narrator.auditioningID == "apple",
@@ -44,7 +50,7 @@ struct NarratorSetup: View {
             // Stays after the sample ends, so you can see what happened if nothing was heard.
             if let d = app.narrator.detail { Text(d).font(.caption).foregroundStyle(Theme.dim) }
             if let err = app.narrator.lastError { Text(err).font(.caption).foregroundStyle(Theme.warn) }
-            if ModelCatalog.voice.contains(where: { app.store.installed.contains($0.id) }) {
+            if manage, ModelCatalog.voice.contains(where: { app.store.installed.contains($0.id) }) {
                 Toggle(isOn: Binding(get: { onCPU }, set: { Narrator.neuralOnCPU = $0; onCPU = $0 })) {
                     Text("Run neural voices on the processor (slower; only if the graphics chip keeps failing)")
                         .font(.caption).foregroundStyle(Theme.dim)
@@ -96,16 +102,22 @@ struct ListeningSetup: View {
     @State private var testing = false
     /// In the Models tab: also list added listening models and offer Delete.
     var manage = false
+    /// The heading and explanation (the Models tab explains each tab once at the top instead).
+    var showsIntro = true
 
+    /// Models that can't load on this device at all are left out.
     private var models: [ModelEntry] {
-        manage ? ModelCatalog.listening + app.store.customModels.filter { $0.kind == .listening } : ModelCatalog.listening
+        (manage ? ModelCatalog.listening + app.store.customModels.filter { $0.kind == .listening } : ModelCatalog.listening)
+            .filter(app.store.canRun)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Caps(text: "Listening")
-            Text("How Phonodeck hears you in hands-free mode. Apple's dictation is quick; the Parakeet models listen fully offline.")
-                .font(.subheadline).foregroundStyle(Theme.dim)
+            if showsIntro {
+                Caps(text: "Listening")
+                Text("How Phonodeck hears you in hands-free mode. Apple's dictation is quick; the Parakeet models listen fully offline.")
+                    .font(.subheadline).foregroundStyle(Theme.dim)
+            }
             OptionCard(title: "Apple dictation", tier: "Quick", blurb: "Built in. Shows words as you speak.",
                        entry: nil, selected: app.store.listeningID == nil,
                        use: { stopTest(); app.dictation.unloadModel(); app.store.listeningID = nil })
@@ -179,6 +191,7 @@ struct OptionCard<Extra: View>: View {
     var listening = false
     let use: () -> Void
     @ViewBuilder var extra: () -> Extra
+    @State private var confirmingDownload = false
 
     private var installed: Bool { entry.map { app.store.installed.contains($0.id) } ?? true }
 
@@ -186,8 +199,10 @@ struct OptionCard<Extra: View>: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title).font(.headline).foregroundStyle(Theme.fg)
-                Text(tier).font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Theme.accent.opacity(0.18), in: Capsule()).foregroundStyle(Theme.accent)
+                if !tier.isEmpty {
+                    Text(tier).font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Theme.accent.opacity(0.18), in: Capsule()).foregroundStyle(Theme.accent)
+                }
                 Spacer()
                 if selected && installed { Label("In use", systemImage: "checkmark.circle.fill").font(.caption.bold()).foregroundStyle(Theme.accent) }
             }
@@ -213,7 +228,8 @@ struct OptionCard<Extra: View>: View {
                 HStack(spacing: 10) {
                     if !installed, let e = entry {
                         Button {
-                            app.store.startDownload(e)
+                            // Ask first when it would be tight beside the other models.
+                            if app.store.report(for: e).verdict == .comfortable { app.store.startDownload(e) } else { confirmingDownload = true }
                         } label: { Label("Download", systemImage: "arrow.down.circle") }
                         .buttonStyle(.bordered)
                         .disabled(app.store.isDownloading)
@@ -241,6 +257,12 @@ struct OptionCard<Extra: View>: View {
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onTapGesture { if installed && !selected { use() } }
         .task { if let e = entry, app.store.facts[e.id] == nil { await app.store.loadFacts(e) } }
+        .confirmationDialog("\(title) may not run well on this \(DeviceFit.deviceWord)", isPresented: $confirmingDownload, titleVisibility: .visible) {
+            if let e = entry { Button("Download anyway") { app.store.startDownload(e) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let e = entry { Text(app.store.report(for: e).detail) }
+        }
     }
 }
 
@@ -265,24 +287,33 @@ struct DeleteModelButton: View {
             .confirmationDialog("Delete \(entry.name) from this \(DeviceFit.deviceWord)?", isPresented: $confirming, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {
                     before()
-                    app.store.delete(entry)
+                    if entry.custom { app.store.removeCustom(entry) } else { app.store.delete(entry) }
                 }
             } message: {
-                Text("You can download it again later.")
+                Text(entry.custom ? "It is removed from the list too. Search for it to add it again." : "You can download it again later.")
             }
     }
 }
 
-/// What is in memory right now, with Load, Unload and Restart, for when things go squirrelly.
+/// What is in memory right now for one kind of model, with Load, Unload and Restart, for when things go squirrelly.
 struct MemoryPanel: View {
     @Environment(AppModel.self) private var app
-    @State private var onCPU = Narrator.neuralOnCPU
+    let kind: ModelEntry.Kind
+
+    /// Whether there is anything to show for that kind (a downloaded model is chosen).
+    @MainActor static func shows(_ kind: ModelEntry.Kind, _ app: AppModel) -> Bool {
+        switch kind {
+        case .language: app.store.hasLanguageModel
+        case .voice: app.store.voiceModel != nil
+        case .listening: app.store.listeningModel != nil
+        }
+    }
 
     var body: some View {
         let busy = app.llm.busy || app.engine.busy
         VStack(alignment: .leading, spacing: 12) {
-            if let e = app.store.language, app.store.hasLanguageModel {
-                row(icon: "brain", name: "Storyteller: " + e.name, state: llmState) {
+            if kind == .language, let e = app.store.language, app.store.hasLanguageModel {
+                row(icon: "brain", name: e.name, state: llmState) {
                     if app.llm.loadedID == nil {
                         Button("Load") { Task { await app.llm.preload() } }.disabled(app.llm.phase == .loading)
                     } else {
@@ -291,23 +322,20 @@ struct MemoryPanel: View {
                     }
                 }
             }
-            if let v = app.store.voiceModel {
-                row(icon: "speaker.wave.2", name: "Narrator: " + v.name,
+            if kind == .voice, let v = app.store.voiceModel {
+                row(icon: "speaker.wave.2", name: v.name,
                     state: app.narrator.preparing ? "Loading…" : app.narrator.loadedVoiceID == v.id ? String(format: "In memory · about %.1f GB", app.narrator.neuralLoadedGB) : "Not loaded (loads when it first speaks)") {
                     if app.narrator.loadedVoiceID != nil { Button("Unload") { app.narrator.unloadNeural() } }
                 }
-                Toggle(isOn: Binding(get: { onCPU }, set: { Narrator.neuralOnCPU = $0; onCPU = $0 })) {
-                    Text("Run the narrator on the processor (slower, steadier)").font(.caption)
-                }
             }
-            if let l = app.store.listeningModel {
-                row(icon: "mic", name: "Listening: " + l.name,
+            if kind == .listening, let l = app.store.listeningModel {
+                row(icon: "mic", name: l.name,
                     state: app.dictation.loadedModelID == l.id ? "In memory" : "Not loaded (loads when you speak)") {
                     if app.dictation.loadedModelID != nil { Button("Unload") { app.dictation.unloadModel() }.disabled(app.dictation.listening) }
                 }
             }
-            if case .failed(let m) = app.llm.phase { Text(m).font(.caption).foregroundStyle(Theme.warn) }
-            if busy { Text("The storyteller is busy; Unload and Restart are available when it finishes.").font(.caption).foregroundStyle(Theme.dim) }
+            if kind == .language, case .failed(let m) = app.llm.phase { Text(m).font(.caption).foregroundStyle(Theme.warn) }
+            if kind == .language, busy { Text("The model is busy; Unload and Restart are available when it finishes.").font(.caption).foregroundStyle(Theme.dim) }
         }
     }
 

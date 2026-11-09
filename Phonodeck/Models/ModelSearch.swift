@@ -74,8 +74,9 @@ enum HitFit: Equatable {
 /// of what was left out is shown instead.
 struct ModelSearchSection: View {
     @Environment(AppModel.self) private var app
+    /// What to look for: the Models tab that is open.
+    let kind: ModelEntry.Kind
     @State private var text = ""
-    @State private var kind: ModelEntry.Kind = .language
     @State private var hits: [HubHit] = []
     @State private var searching = false
     @State private var checking = 0
@@ -87,26 +88,36 @@ struct ModelSearchSection: View {
         Section {
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Keywords, e.g. qwen3.5 uncensored", text: $text)
+                TextField(placeholder, text: $text)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .submitLabel(.search)
                     .onSubmit { Task { await run() } }
                 if searching { ProgressView() }
             }
-            Picker("Looking for a", selection: $kind) {
-                Text("Storyteller").tag(ModelEntry.Kind.language)
-                Text("Voice").tag(ModelEntry.Kind.voice)
-                Text("Listening").tag(ModelEntry.Kind.listening)
-            }
-            .onChange(of: kind) { if !text.isEmpty { Task { await run() } } }
             if let message { Text(message).font(.footnote).foregroundStyle(.secondary) }
             ForEach(shown) { HitRow(hit: $0, kind: kind, fit: fit($0), candidate: candidate($0), error: $errors[$0.id]) }
             if !hits.isEmpty { summary }
         } header: {
-            Text("Find models on Hugging Face")
+            Text("Search Hugging Face")
         } footer: {
-            Text("Most downloaded first. Only models that run on this \(DeviceFit.deviceWord) are listed. Storytellers can be MLX or GGUF (run with llama.cpp); for GGUF, Phonodeck picks the size that fits, usually Q4_K_M.")
+            Text(kind == .language
+                 ? "Most downloaded first. Only models that run on this \(DeviceFit.deviceWord) are listed. MLX or GGUF (run with llama.cpp); for GGUF, Phonodeck picks the size that fits, usually Q4_K_M."
+                 : "Most downloaded first. Only MLX models that run on this \(DeviceFit.deviceWord) are listed.")
+        }
+        .onChange(of: kind) {
+            hits = []
+            message = nil
+            errors = [:]
+            if !text.isEmpty { Task { await run() } }
+        }
+    }
+
+    private var placeholder: String {
+        switch kind {
+        case .language: "Search, e.g. qwen3.5 uncensored"
+        case .voice: "Search, e.g. kokoro"
+        case .listening: "Search, e.g. parakeet"
         }
     }
 
@@ -253,7 +264,7 @@ private struct HitRow: View {
                     .font(.caption2).foregroundStyle(.secondary)
                     if let facts { fitLine(facts) }
                     if facts?.gated == true {
-                        Label(HFToken.value == nil ? "Gated: needs a Hugging Face token (below)" : "Gated: accept its terms on Hugging Face first",
+                        Label(HFToken.value == nil ? "Gated: needs a Hugging Face token (see below)" : "Gated: accept its terms on Hugging Face first",
                               systemImage: "lock.fill")
                             .font(.caption).foregroundStyle(.orange)
                     }

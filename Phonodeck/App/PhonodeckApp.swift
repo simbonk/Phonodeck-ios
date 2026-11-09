@@ -36,6 +36,8 @@ final class AppModel {
     let chat: ChatEngine
     let vault: Vault
     var tab: Tab = .phonodeck
+    /// Which kind of model the Models tab shows.
+    var modelsTab: ModelsTab = .thinking
     var notice: String?
     /// An experience opened from a shared file, shown in the set-up screen.
     var pendingExperience: Experience?
@@ -63,7 +65,7 @@ final class AppModel {
         // or talking hands-free, the story gets them otherwise.
         narrator.onFinished = { [weak self] in
             guard let self else { return }
-            if self.chat.handsFree { self.chat.narrationFinished() } else { self.engine.narrationFinished() }
+            if self.chat.handsFree || self.chat.reading { self.chat.narrationFinished() } else { self.engine.narrationFinished() }
         }
         dictation.onSend = { [weak self] text in
             guard let self else { return }
@@ -89,6 +91,12 @@ final class AppModel {
         } else if let lastError {
             notice = "Phonodeck closed last time because of an MLX error: \(lastError)"
         }
+    }
+
+    /// Switches to the Models tab, open at one kind of model.
+    func openModels(_ t: ModelsTab) {
+        modelsTab = t
+        tab = .models
     }
 
     func unlocked() {
@@ -199,12 +207,12 @@ struct NeedsModelBanner: View {
             Image(systemName: "arrow.down.circle")
                 .font(.system(size: 44))
                 .foregroundStyle(Theme.accent)
-            Text("Download a storyteller first")
+            Text("Download a thinking model first")
                 .font(.title3.bold())
-            Text("Phonodeck runs its language model on your \(DeviceFit.deviceWord), so nothing you say leaves it and it works in Airplane Mode. Pick one in the Models tab; the recommended one is about 2.3 GB.")
+            Text("Phonodeck runs its language model on your \(DeviceFit.deviceWord), so nothing you say leaves it and it works in Airplane Mode. Pick one in Models > Thinking; the recommended one is about \(String(format: "%.1f", ModelCatalog.entry(ModelCatalog.recommendedLanguageID)?.approxGB ?? 3)) GB.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-            Button("Open Models") { app.tab = .models }
+            Button("Open Models") { app.openModels(.thinking) }
                 .buttonStyle(.borderedProminent)
         }
         .padding(28)

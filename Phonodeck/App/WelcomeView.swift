@@ -112,7 +112,7 @@ struct WelcomeView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("The storyteller is a language model that runs on this \(DeviceFit.deviceWord). This one is picked to fit it. Then choose how the story sounds and how it hears you. Everything here can be changed later in the Models tab.")
                 .font(.subheadline).foregroundStyle(Theme.dim)
-            StorytellerCard(showOthers: { showModels = true })
+            StorytellerCard(showOthers: { app.modelsTab = .thinking; showModels = true })
             NarratorSetup().padding(.top, 10)
             ListeningSetup().padding(.top, 10)
             if app.store.hasLanguageModel {
