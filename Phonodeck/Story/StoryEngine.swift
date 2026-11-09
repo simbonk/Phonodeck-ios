@@ -170,17 +170,52 @@ final class StoryEngine {
         e.beats = ""
         var player = PlayerDetails.saved
         if player.name.isEmpty { player.name = src.playerName }
-        create(e, player: player, source: src, link: link)
+        // The memory pass and review of the final reply may still be running: wait for them, so the
+        // next part starts from how the story really ended, then read the story as it now stands.
+        let pending = memoryJob
+        Task {
+            await pending?.value
+            let latest = (adventure?.id == src.id ? adventure : nil) ?? library.adventures.first { $0.id == src.id } ?? src
+            create(e, player: player, source: latest, link: link)
+        }
     }
 
-    /// The earlier story, as the architect reads it for the next part.
-    private func sourceWorld(_ src: Adventure) -> String {
-        var s = "EARLIER STORY: \"" + (src.report?.title ?? src.title) + "\"\nBIBLE:\n" + clip(src.bible, 1800)
-        let lore = src.lore.filter { !$0.isPlayer }.prefix(14)
-        if !lore.isEmpty { s += "\nPEOPLE, PLACES AND THINGS:\n" + lore.map { "- \($0.name) (\($0.kind.rawValue)): " + clip($0.desc, 200) }.joined(separator: "\n") }
-        if let r = src.report, !r.summary.isEmpty { s += "\nHOW IT WENT:\n" + clip(r.summary, 900) }
-        else if !src.chapters.isEmpty { s += "\nHOW IT WENT:\n" + src.chapters.suffix(4).map { "- " + clip($0, 300) }.joined(separator: "\n") }
-        if let last = src.transcript.last(where: { $0.role == .gm }) { s += "\nHOW IT ENDED:\n" + clip(last.text, 700) }
+    /// The earlier story, as the architect reads it for the next part, within `budget` tokens (the
+    /// architect's call has a 4,096-token conversation with 1,500 kept for its answer, so an
+    /// over-long message would be cut in the middle). The ending matters most, then the state the
+    /// story was left in and how it went; the bible and the cast give way first.
+    private func sourceWorld(_ src: Adventure, budget: Int) -> String {
+        // Whether the review read the final reply (stories finished before it did may be stale).
+        let reviewedEnd = src.transcript.last?.after?.contains("REVIEW:") == true
+        func build(_ k: Double) -> String {
+            func n(_ chars: Int) -> Int { max(80, Int(Double(chars) * k)) }
+            var s = "EARLIER STORY: \"" + (src.report?.title ?? src.title) + "\"\nBIBLE (as it began):\n" + clip(src.bible, n(1200))
+            let lore = src.lore.filter { !$0.isPlayer }.prefix(12)
+            if !lore.isEmpty { s += "\nPEOPLE, PLACES AND THINGS:\n" + lore.map { "- \($0.name) (\($0.kind.rawValue)): " + clip($0.desc, n(140)) }.joined(separator: "\n") }
+            var went: [String] = []
+            if let r = src.report, !r.summary.isEmpty { went = [clip(r.summary, n(700))] }
+            else if !src.chapters.isEmpty { went = src.chapters.suffix(3).map { clip($0, n(240)) } }
+            else if !src.events.isEmpty { went = src.events.suffix(8).map { clip($0, n(140)) } }
+            else { went = src.timeline.suffix(6).map { clip($0, n(140)) } }
+            if !went.isEmpty { s += "\nHOW IT WENT:\n" + went.map { "- " + $0 }.joined(separator: "\n") }
+            var state: [String] = []
+            if !src.location.isEmpty { state.append("Place: " + src.location) }
+            if !src.storyTime.isEmpty { state.append("Time: " + clip(src.storyTime, 120)) }
+            if !src.scene.isEmpty { state.append("Scene: " + clip(src.scene, n(360))) }
+            state += src.whereabouts.prefix(5).map { "\($0.name): \($0.at)" + ($0.doing.isEmpty ? "" : ", " + $0.doing) }
+            state += src.facts.prefix(10).map { clip($0, n(140)) }
+            if !state.isEmpty {
+                s += (reviewedEnd ? "\nWHERE THINGS STOOD AT THE END:\n" : "\nWHERE THINGS STOOD BEFORE THE LAST SCENE (HOW IT ENDED wins wherever they differ):\n")
+                    + state.map { "- " + $0 }.joined(separator: "\n")
+            }
+            if let last = src.transcript.last(where: { $0.role == .gm }) { s += "\nHOW IT ENDED (the last scene, word for word):\n" + clip(last.text, n(1100)) }
+            return s
+        }
+        var s = ""
+        for k in [1.0, 0.8, 0.6, 0.45, 0.33, 0.25] {
+            s = build(k)
+            if Self.tokens(s) <= budget { break }
+        }
         return s
     }
 
@@ -222,12 +257,16 @@ final class StoryEngine {
             a.playerName = player.name
             var request = (e.simulator ? Prompts.architect + "\n" + Prompts.architectSimulator : Prompts.architect)
             if source != nil { request += "\n" + Prompts.continuation }
-            let prompt = (source.map { sourceWorld($0) + "\n\nCONNECTION TO THE EARLIER STORY: " + link + "\n\n" } ?? "")
-                + "PLAYER'S ANSWERS\n" + e.answers(player: player)
+            var prompt = "PLAYER'S ANSWERS\n" + e.answers(player: player)
                 + "\n\nFEELING TO ACHIEVE: " + (e.feeling.isEmpty ? "surprise me" : e.feeling)
                 + "\nPLAY MODE: " + (e.simulator ? "experience (no plot)" : "story")
                 + "\nSESSION LENGTH: \(a.minutes) minutes (about \(max(3, a.minutes * 60 / 90)) player replies)."
                 + (a.isShort ? "\nThis is a SHORT story: a small cast, 2-3 places, 3 acts, one clear goal." : "")
+            if let src = source {
+                // Room left in the architect's 4,096-token conversation once its answer and the rest are counted.
+                let room = LLMService.contextBudget - 1500 - Self.safetyTokens - Self.tokens(request + "\n\n" + prompt) - 40
+                prompt = sourceWorld(src, budget: max(300, room)) + "\n\nCONNECTION TO THE EARLIER STORY: " + link + "\n\n" + prompt
+            }
             var plan: [String: Any]?
             // Streamed, so the build screen can follow the architect section by section.
             var raw = ""
@@ -268,7 +307,10 @@ final class StoryEngine {
             refreshVocabulary()
             library.save(a)
 
-            let opening = source.map { Prompts.continueOpening(link: link, recap: recap(of: $0), simulator: e.simulator, short: a.isShort) }
+            let told = ((plan?["recap"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let opening = source.map { Prompts.continueOpening(link: link, recap: told.count > 40 ? clip(told, 700) : recap(of: $0),
+                                                               ending: $0.transcript.last(where: { $0.role == .gm })?.text ?? "",
+                                                               simulator: e.simulator, short: a.isShort) }
                 ?? Prompts.openingInstruction(simulator: e.simulator, short: a.isShort)
             await runTurn(input: opening, hidden: true)
             building = false
@@ -276,40 +318,29 @@ final class StoryEngine {
         }
     }
 
-    /// The continuity tracker's state carries into the next part, so it picks up the story as it
-    /// stood: the facts and timeline always, and for "right where it left off" also the place,
-    /// the scene, who is where, the story clock and the mission map. Kept small for the 4,096-token
-    /// prompt: the same caps the tracker uses while playing.
+    /// The next part starts from the state the architect worked out from how the earlier story
+    /// ended (place, time, who is where, facts, timeline): the earlier part's own tracker can lag
+    /// behind its final scene, so it only fills what the architect left out. The mission map
+    /// carries over, with the route from where the earlier part was to where this one opens.
     private func carryOver(from src: Adventure, into a: inout Adventure, link: String) {
-        var facts: [String] = []
-        for f in src.facts + a.facts where !facts.contains(where: { $0.caseInsensitiveCompare(f) == .orderedSame }) { facts.append(f) }
-        a.facts = Array(facts.prefix(14))
+        if a.timeline.isEmpty { a.timeline = Array(src.timeline.suffix(3)) }
         let later = link.lowercased().contains("later")
-        a.timeline = Array((Array(src.timeline.suffix(later ? 4 : 6)) + a.timeline).suffix(8))
+        let opening = a.location
+        a.places = src.places
+        a.links = src.links
+        if !opening.isEmpty { a.visit(opening, from: src.location) }
         guard !later else { return }
-        if !src.location.isEmpty {
-            let opened = a.location
-            a.places = src.places
-            a.links = src.links
-            a.location = src.location
-            a.visit(src.location, from: "")
-            if !opened.isEmpty, opened.caseInsensitiveCompare(src.location) != .orderedSame,
-               !a.lore.contains(where: { $0.name.caseInsensitiveCompare(opened) == .orderedSame }) {
-                addLore(&a, LoreEntry(name: opened, kind: .place, desc: ""))
-            }
-        }
-        if !src.scene.isEmpty { a.scene = src.scene }
-        if !src.whereabouts.isEmpty { a.whereabouts = src.whereabouts }
-        if let c = src.clock { a.clock = c; a.storyTime = src.storyTime }
+        if a.location.isEmpty, !src.location.isEmpty { a.location = src.location; a.visit(src.location, from: "") }
+        if a.storyTime.isEmpty, let c = src.clock { a.clock = c; a.storyTime = src.storyTime }
+        if a.whereabouts.isEmpty { a.whereabouts = src.whereabouts }
     }
 
     /// What happened in the earlier part, for the "Last time" recap at the start of the next one.
     private func recap(of src: Adventure) -> String {
-        var s = ""
-        if let r = src.report, !r.summary.isEmpty { s = clip(r.summary, 600) }
-        else if !src.chapters.isEmpty { s = src.chapters.suffix(3).map { clip($0, 220) }.joined(separator: " ") }
-        if let last = src.transcript.last(where: { $0.role == .gm }) { s += (s.isEmpty ? "" : "\nHOW IT ENDED: ") + clip(last.text, 450) }
-        return s
+        if let r = src.report, !r.summary.isEmpty { return clip(r.summary, 600) }
+        if !src.chapters.isEmpty { return src.chapters.suffix(3).map { clip($0, 220) }.joined(separator: " ") }
+        if !src.events.isEmpty { return src.events.suffix(6).map { clip($0, 140) }.joined(separator: " ") }
+        return src.timeline.suffix(5).map { clip($0, 140) }.joined(separator: " ")
     }
 
     private func apply(_ plan: [String: Any], to a: inout Adventure, setup e: Experience, player: PlayerDetails) {
@@ -726,8 +757,17 @@ final class StoryEngine {
         library.save(a)
         refreshVocabulary()
 
-        if a.ended {
-            // The story is over: the ending screen offers Continue (the next part, linked to this one).
+        if a.ended && !hidden {
+            // The story is over: the ending screen offers Continue. The memory pass and the review
+            // still read the final reply, so the tracker (place, scene, who is where, facts, time)
+            // shows how the story ended, which is where the next part picks up.
+            let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
+            memoryJob = Task {
+                await self.waitForVoice()
+                await self.remember(exchange)
+                if self.gmPlans { await self.review() }
+            }
+        } else if a.ended {
         } else if !hidden {
             let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
             // Background thinking while the reply is read aloud: wait until the voice has made its speech
@@ -885,7 +925,7 @@ final class StoryEngine {
     /// and proposes the next move. Runs after the memory pass, one model call, inside the context
     /// budget like every other call.
     private func review() async {
-        guard !Task.isCancelled, let start = adventure, !start.ended, start.transcript.last?.role == .gm else { return }
+        guard !Task.isCancelled, let start = adventure, start.transcript.last?.role == .gm else { return }
         let room = (deepThinking ? Self.reviewDeepTokens : Self.reviewTokens) + Self.safetyTokens
         var prompt = ""
         for scale in [1.0, 0.75, 0.55, 0.4] {
