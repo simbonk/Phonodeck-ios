@@ -46,7 +46,7 @@ struct LockView: View {
             VStack(spacing: 12) {
                 Text("Phonodeck is made for adults 18 and over.")
                     .font(.footnote.weight(.semibold))
-                Text("No data on a phone is ever completely private: anyone with your phone's passcode can get to what's on it. Be careful what you save here. Use Phonodeck responsibly: stories are for fun, not for leaning into anything harmful.")
+                Text("Your stories stay local on this phone, never on a server. Please note: anyone who has access to this phone has access to these stories.")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 320)
