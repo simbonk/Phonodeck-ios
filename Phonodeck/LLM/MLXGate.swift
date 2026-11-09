@@ -8,13 +8,16 @@ actor MLXGate {
     static let shared = MLXGate()
 
     private var held = false
+    /// While the app is not in the foreground, iOS refuses GPU work and MLX would crash, so the
+    /// gate hands out no turns until it comes back.
+    private var paused = false
     private var waiters: [(CheckedContinuation<Void, Never>, String)] = []
     /// What holds the gate now and since when, so a waiting voice can say what it is waiting for.
     private(set) var holder: String?
     private(set) var heldSince: Date?
 
     func acquire(urgent: Bool = false, label: String = "the storyteller") async {
-        if !held { held = true; holder = label; heldSince = .now; return }
+        if !held && !paused { held = true; holder = label; heldSince = .now; return }
         await withCheckedContinuation { c in
             if urgent { waiters.insert((c, label), at: 0) } else { waiters.append((c, label)) }
         }
@@ -42,8 +45,20 @@ actor MLXGate {
         }
     }
 
+    /// The app is leaving the foreground: no new GPU work until `resume()`.
+    func pause() { paused = true }
+
+    /// Back in the foreground: the next waiting job gets its turn.
+    func resume() {
+        paused = false
+        guard !held, !waiters.isEmpty else { return }
+        let (c, label) = waiters.removeFirst()
+        held = true; holder = label; heldSince = .now
+        c.resume()
+    }
+
     func release() {
-        if waiters.isEmpty {
+        if waiters.isEmpty || paused {
             held = false; holder = nil; heldSince = nil
         } else {
             let (c, label) = waiters.removeFirst()
@@ -108,5 +123,25 @@ enum MLXCrashRecorder {
         let text = UserDefaults.standard.string(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
         return text
+    }
+}
+
+/// Whether the app is in the foreground, readable from any thread. Work that runs on the GPU
+/// checks it between steps and stops when the app leaves the foreground, because iOS refuses GPU
+/// work from the background ("Insufficient Permission") and MLX turns that into a crash.
+final class AppActivity: @unchecked Sendable {
+    static let shared = AppActivity()
+    private let lock = NSLock()
+    private var away = false
+
+    var inBackground: Bool {
+        get { lock.withLock { away } }
+        set { lock.withLock { away = newValue } }
+    }
+
+    /// Called when the app leaves or returns to the foreground (inactive counts as leaving).
+    func set(foreground: Bool) {
+        inBackground = !foreground
+        Task { if foreground { await MLXGate.shared.resume() } else { await MLXGate.shared.pause() } }
     }
 }
