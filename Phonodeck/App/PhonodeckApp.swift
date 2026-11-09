@@ -60,7 +60,7 @@ final class AppModel {
         self.engine = engine
         self.chat = chat
         self.vault = Vault()
-        if let space = vault.unlocked { library.open(space) }
+        if let key = vault.key { library.open(key: key) }
         // The narrator and the microphone are shared: the Chat tab gets them while it is open
         // or talking hands-free, the story gets them otherwise.
         narrator.onFinished = { [weak self] in
@@ -100,7 +100,7 @@ final class AppModel {
     }
 
     func unlocked() {
-        if let space = vault.unlocked { library.open(space) }
+        if let key = vault.key { library.open(key: key) }
     }
 
     func lock() {

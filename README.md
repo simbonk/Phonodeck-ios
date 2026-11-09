@@ -7,7 +7,7 @@ An audio storytelling app that runs entirely on your iPhone. You download a lang
 - **Chat tab:** a plain conversation with the same on-device model.
 - **Models tab:** download the storyteller, narrator voice and listening models from Hugging Face. Every model shows whether it will run comfortably on *this* phone before you download it. Paste a link to add any other MLX model.
 - **Share experiences:** export a set-up as a small `.phonodeck` file and send it to someone; they tap it to import.
-- **Optional passcodes:** a secret passcode (or Face ID) opens your own chats and stories; a demo passcode opens an empty Phonodeck to show people.
+- **Privacy:** your stories and chats are encrypted on the phone. An optional passcode (or Face ID) locks Phonodeck whenever you leave it, and only it can open them. Settings and the lock screen also show the 988 crisis line.
 
 This is the on-device sibling of the [Phonodeck web app](https://github.com/simbonk/phonodeck), which uses Gemini in the cloud.
 
@@ -119,7 +119,7 @@ With a free Apple ID, apps you install yourself stop opening after 7 days. Just 
 - `LLM/`: the model catalog, Hugging Face downloads and the memory fit check (`DeviceFit.swift`), and running the language model with MLX (`LLMService.swift`).
 - `Voice/`: the narrator (Apple, Kokoro, Qwen3-TTS) and listening (Apple dictation or Parakeet), including "make it so".
 - `Story/`: the prompts (`Prompts.swift`, tune the storytelling here), curated experiences, the story engine (clock, director, memory, chapters, remix), saving and sharing.
-- `Chat/`, `Models/`, `Settings/`: the other tabs, the lock screen and passcodes.
+- `Chat/`, `Models/`, `Settings/`: the other tabs, the lock screen, the privacy lock and the crisis line.
 - `.github/workflows/build.yml`: GitHub checks that the app compiles on every push.
 
 Built on [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) and [MLX Audio Swift](https://github.com/Blaizzy/mlx-audio-swift).

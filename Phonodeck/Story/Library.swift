@@ -1,18 +1,19 @@
+import CryptoKit
 import Foundation
 import Observation
 
-/// Saved adventures, imported experiences and the chats of the open space
-/// (your own, or the demo). Everything is plain JSON in that space's folder.
+/// Saved adventures, imported experiences and chats. Each is a JSON file sealed with the vault's
+/// key (AES-GCM), so the files can't be read without unlocking Phonodeck.
 @Observable
 @MainActor
 final class Library {
-    private(set) var space: Vault.Space = .mine
+    private var key: SymmetricKey?
     private(set) var adventures: [Adventure] = []
     private(set) var imported: [Experience] = []
     /// Chats with the model, newest first.
     private(set) var chats: [Conversation] = []
 
-    private var folder: URL { Vault.folder(space) }
+    private var folder: URL { Vault.folder }
     private var adventuresFolder: URL { dir("Adventures") }
     private var experiencesFolder: URL { dir("Experiences") }
     private var chatsFolder: URL { dir("Chats") }
@@ -23,30 +24,31 @@ final class Library {
         return u
     }
 
-    func open(_ space: Vault.Space) {
-        self.space = space
+    func open(key: SymmetricKey) {
+        self.key = key
         reload()
     }
 
     func reload() {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
-        adventures = files(in: adventuresFolder).compactMap { try? dec.decode(Adventure.self, from: Data(contentsOf: $0)) }
+        adventures = files(in: adventuresFolder).compactMap { load($0).flatMap { try? dec.decode(Adventure.self, from: $0) } }
             .sorted { $0.updated > $1.updated }
-        imported = files(in: experiencesFolder).compactMap { try? dec.decode(Experience.self, from: Data(contentsOf: $0)) }
+        imported = files(in: experiencesFolder).compactMap { load($0).flatMap { try? dec.decode(Experience.self, from: $0) } }
             .sorted { $0.title < $1.title }
-        chats = files(in: chatsFolder).compactMap { try? dec.decode(Conversation.self, from: Data(contentsOf: $0)) }
+        chats = files(in: chatsFolder).compactMap { load($0).flatMap { try? dec.decode(Conversation.self, from: $0) } }
             .sorted { $0.updated > $1.updated }
         // The single chat from before there could be several becomes the first saved chat.
         let old = folder.appending(path: "chat.json")
-        if let d = try? Data(contentsOf: old), let turns = try? dec.decode([ChatTurn].self, from: d) {
+        if let d = load(old), let turns = try? dec.decode([ChatTurn].self, from: d) {
             if !turns.isEmpty { save(Conversation(turns: turns)) }
             try? FileManager.default.removeItem(at: old)
         }
     }
 
-    /// Forgets everything in memory (the files stay) while the app is locked.
+    /// Forgets everything in memory, key included (the files stay), while the app is locked.
     func unload() {
+        key = nil
         adventures = []
         imported = []
         chats = []
@@ -55,6 +57,21 @@ final class Library {
     private func files(in dir: URL) -> [URL] {
         ((try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "json" }
+    }
+
+    /// Opens a sealed file. A plain JSON file from an older version is read as is and sealed in place.
+    private func load(_ url: URL) -> Data? {
+        guard let key, let d = try? Data(contentsOf: url) else { return nil }
+        if let box = try? AES.GCM.SealedBox(combined: d), let plain = try? AES.GCM.open(box, using: key) { return plain }
+        guard (try? JSONSerialization.jsonObject(with: d)) != nil else { return nil }
+        store(d, to: url)
+        return d
+    }
+
+    /// Seals and writes a file. iOS also keeps it locked whenever the phone is locked.
+    private func store(_ d: Data, to url: URL) {
+        guard let key, let sealed = try? AES.GCM.seal(d, using: key).combined else { return }
+        try? sealed.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
     }
 
     private static let encoder: JSONEncoder = {
@@ -70,7 +87,7 @@ final class Library {
         var a = a
         a.updated = Date()
         if let d = try? Self.encoder.encode(a) {
-            try? d.write(to: adventuresFolder.appending(path: a.id.uuidString + ".json"), options: .atomic)
+            store(d, to: adventuresFolder.appending(path: a.id.uuidString + ".json"))
         }
         adventures.removeAll { $0.id == a.id }
         adventures.insert(a, at: 0)
@@ -108,7 +125,7 @@ final class Library {
         if e.title.isEmpty { e.title = "Shared experience" }
         e.minutes = max(5, min(120, e.minutes))
         if let d = try? Self.encoder.encode(e) {
-            try? d.write(to: experiencesFolder.appending(path: e.id.uuidString + ".json"), options: .atomic)
+            store(d, to: experiencesFolder.appending(path: e.id.uuidString + ".json"))
         }
         imported.removeAll { $0.id == e.id }
         imported.append(e)
@@ -127,7 +144,7 @@ final class Library {
         var c = c
         c.updated = Date()
         if let d = try? Self.encoder.encode(c) {
-            try? d.write(to: chatsFolder.appending(path: c.id.uuidString + ".json"), options: .atomic)
+            store(d, to: chatsFolder.appending(path: c.id.uuidString + ".json"))
         }
         chats.removeAll { $0.id == c.id }
         chats.insert(c, at: 0)

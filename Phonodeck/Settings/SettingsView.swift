@@ -9,9 +9,8 @@ struct SettingsView: View {
     @AppStorage("sendPhrase") private var sendPhrase = ""
     @AppStorage("computerSounds") private var computerSounds = true
     @AppStorage(Reading.textSizeKey) private var textSize: Double = Reading.defaultTextSize
-    @State private var editingCode: CodeKind?
+    @State private var editingCode = false
 
-    enum CodeKind: Identifiable { case secret, demo; var id: Self { self } }
 
     var body: some View {
         @Bindable var engine = app.engine
@@ -68,13 +67,14 @@ struct SettingsView: View {
                     Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen), which can take up to about a minute a turn.")
                 }
 
-                if app.vault.unlocked == .mine {
-                    passcodeSection
-                } else {
-                    Section {
-                        Text("You're in the demo space. It starts empty each time and is wiped when you lock the app.")
-                            .foregroundStyle(.secondary)
-                    }
+                lockSection
+
+                Section {
+                    CrisisLine()
+                } header: {
+                    Text("If you're struggling")
+                } footer: {
+                    Text("Phonodeck's characters are fiction made up by an AI. They aren't a therapist or a friend who can help in a crisis; a real person can.")
                 }
 
                 Section {
@@ -85,8 +85,8 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .sheet(item: $editingCode) { kind in
-                PasscodeSheet(kind: kind)
+            .sheet(isPresented: $editingCode) {
+                PasscodeSheet()
             }
         }
     }
@@ -100,24 +100,21 @@ struct SettingsView: View {
         }
     }
 
-    private var passcodeSection: some View {
-        @Bindable var vault = app.vault
+    private var lockSection: some View {
+        let vault = app.vault
+        let bio = Vault.biometryName
         return Section {
-            Button(vault.hasSecret ? "Change secret passcode" : "Set a passcode") { editingCode = .secret }
-            if vault.hasSecret {
-                Button(vault.hasDemo ? "Change demo passcode" : "Add a demo passcode") { editingCode = .demo }
-                if vault.hasDemo {
-                    Button("Remove demo passcode", role: .destructive) { vault.setDemo(nil) }
+            Button(vault.hasPasscode ? "Change passcode" : "Lock Phonodeck with a passcode") { editingCode = true }
+            if vault.hasPasscode {
+                if let bio {
+                    Toggle("Unlock with \(bio)", isOn: Binding(get: { vault.useFaceID }, set: { vault.setFaceID($0) }))
                 }
-                if let bio = Vault.biometryName {
-                    Toggle("Unlock with \(bio)", isOn: $vault.useFaceID)
-                }
-                Button("Remove all passcodes", role: .destructive) { vault.setSecret(nil) }
+                Button("Remove passcode", role: .destructive) { vault.setPasscode(nil) }
             }
         } header: {
-            Text("Privacy")
+            Text("Privacy lock")
         } footer: {
-            Text("Optional. With a passcode, Phonodeck locks whenever you leave it. Your secret passcode opens your chats and experiences. A demo passcode opens a clean, empty Phonodeck to show people; it never shows yours. Downloaded models are shared, so the demo works right away.")
+            Text("Your stories and chats are always encrypted on this \(DeviceFit.deviceWord). With a passcode, Phonodeck locks whenever you leave it, and only your passcode\(bio.map { " or \($0)" } ?? "") can open them. If you forget the passcode, they can't be recovered by anyone.")
         }
     }
 }
@@ -164,7 +161,6 @@ extension AVSpeechSynthesizer {
 }
 
 struct PasscodeSheet: View {
-    let kind: SettingsView.CodeKind
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var first = ""
@@ -178,29 +174,38 @@ struct PasscodeSheet: View {
                     SecureField("New passcode", text: $first)
                     SecureField("Type it again", text: $second)
                 } footer: {
-                    Text(kind == .secret
-                         ? "Opens your own chats and experiences. If you forget it, the only way back in is to delete and reinstall the app."
-                         : "Opens an empty demo space to show people. It must be different from your secret passcode.")
+                    Text("Locks Phonodeck whenever you leave it. If you forget it, your stories and chats can't be recovered; deleting and reinstalling the app starts fresh.")
                 }
                 if let problem { Text(problem).foregroundStyle(.red) }
             }
-            .navigationTitle(kind == .secret ? "Secret passcode" : "Demo passcode")
+            .navigationTitle("Passcode")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         guard first.count >= 4 else { problem = "Use at least 4 characters."; return }
                         guard first == second else { problem = "The two passcodes don't match."; return }
-                        if kind == .secret {
-                            app.vault.setSecret(first)
-                        } else if !app.vault.setDemo(first) {
-                            problem = "The demo passcode must be different from your secret one."
-                            return
-                        }
+                        app.vault.setPasscode(first)
                         dismiss()
                     }
                 }
             }
+        }
+    }
+}
+
+/// The 988 Suicide & Crisis Lifeline, reachable from Settings and the lock screen.
+struct CrisisLine: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Need to talk to someone now? Call or text 988, free and any time, in the US and Canada. Elsewhere, call your local emergency number.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 20) {
+                Link(destination: URL(string: "tel:988")!) { Label("Call 988", systemImage: "phone") }
+                Link(destination: URL(string: "sms:988")!) { Label("Text 988", systemImage: "message") }
+            }
+            .font(.callout.weight(.semibold))
         }
     }
 }
