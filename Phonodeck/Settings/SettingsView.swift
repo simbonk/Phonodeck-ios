@@ -285,9 +285,9 @@ struct SupportView: View {
     var body: some View {
         Form {
             Section {
-                Text("Use Phonodeck responsibly. Stories are for fun and imagination, not for leaning into anything that harms you or someone else. And remember that no data on a phone is ever completely private: anyone with your phone's passcode has access to what's on it, so be careful what you save.")
+                Text("Phonodeck is for fun and imagination. Like any good story, it's best enjoyed with breaks. Your stories live only on this phone, so anyone who can unlock it can read them.")
             } header: {
-                Text("Play responsibly")
+                Text("Enjoy it well")
             }
             Section {
                 Text("Stories are best in doses. If you've been playing for a long time, or a story is weighing on you, put the phone down for a while: go outside, get some air and daylight, move around, or message a friend.")
@@ -324,19 +324,19 @@ struct ParentNoteView: View {
             }
             Section {
                 Text("Phonodeck tells interactive stories using an AI language model that runs entirely on this phone. There's no account, and nothing is sent to a server or the cloud.")
-                Text("That doesn't mean nothing is kept. Stories and chats are saved on the phone, and no data on a phone is ever completely private: anyone who has the phone's passcode has access to what's on it. Phonodeck's own lock keeps stories from casual eyes; it doesn't make what's written in them harmless.")
+                Text("Stories are saved on the phone, so they're as private as the phone is. Phonodeck's own lock adds a passcode of its own.")
             } header: {
                 Text("What it is")
             }
             Section {
-                Text("AI characters can sound real, warm and understanding, but they are made up by a program. They can be wrong, and some models people can download will say things that aren't suitable for young people.")
+                Text("AI characters can feel real, but they're written by a program. They can get things wrong, and some optional models from the internet are made for adults.")
             } header: {
                 Text("What to know about AI")
             }
             Section {
                 Text("Ask what they use it for and what they enjoy about it.")
                 Text("Explain that an AI isn't a friend or a counsellor, even when it feels like one.")
-                Text("Agree together on what's okay to share with any app, and that nothing online or on a device is ever completely private or safe.")
+                Text("Agree together on what's okay to share with any app, since nothing on a device is ever completely private.")
                 Text("Make sure they know they can come to you, or another adult they trust, if something they read or heard upset them.")
             } header: {
                 Text("Talking about it")
