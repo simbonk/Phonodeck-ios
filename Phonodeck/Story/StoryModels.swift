@@ -298,6 +298,8 @@ struct Adventure: Codable, Identifiable, Hashable {
     var storyTime = ""
     var timeline: [String] = []
     var whereabouts: [Whereabout] = []
+    /// Seconds the Game Master spent thinking before the last reply began (the clock doesn't count them).
+    var gmWait: Double = 0
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -312,7 +314,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
-             storyTime, timeline, whereabouts
+             storyTime, timeline, whereabouts, gmWait
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -341,7 +343,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         places = v(.places, []); links = v(.links, [])
         sequelOf = try? c.decodeIfPresent(UUID.self, forKey: .sequelOf); link = v(.link, "")
         facts = v(.facts, []); fixes = v(.fixes, []); nextMove = v(.nextMove, ""); scene = v(.scene, "")
-        storyTime = v(.storyTime, ""); timeline = v(.timeline, []); whereabouts = v(.whereabouts, [])
+        storyTime = v(.storyTime, ""); timeline = v(.timeline, []); whereabouts = v(.whereabouts, []); gmWait = v(.gmWait, 0)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -359,7 +361,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(notesStale, forKey: .notesStale); try c.encode(bibleTurn, forKey: .bibleTurn)
         try c.encodeIfPresent(sequelOf, forKey: .sequelOf); try c.encode(link, forKey: .link)
         try c.encode(facts, forKey: .facts); try c.encode(fixes, forKey: .fixes); try c.encode(nextMove, forKey: .nextMove); try c.encode(scene, forKey: .scene)
-        try c.encode(storyTime, forKey: .storyTime); try c.encode(timeline, forKey: .timeline); try c.encode(whereabouts, forKey: .whereabouts)
+        try c.encode(storyTime, forKey: .storyTime); try c.encode(timeline, forKey: .timeline); try c.encode(whereabouts, forKey: .whereabouts); try c.encode(gmWait, forKey: .gmWait)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 

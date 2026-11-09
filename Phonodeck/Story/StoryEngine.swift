@@ -84,6 +84,15 @@ final class StoryEngine {
     func open(_ a: Adventure) {
         stopAll()
         forge = nil
+        var a = a
+        // Stories saved before the review was checked in code may hold its example text: drop it.
+        if Self.echoesPrompt(a.storyTime) { a.storyTime = "" }
+        if Self.echoesPrompt(a.scene) { a.scene = "" }
+        if Self.echoesPrompt(a.nextMove) { a.nextMove = "" }
+        a.facts.removeAll { Self.echoesPrompt($0) }
+        a.fixes.removeAll { Self.echoesPrompt($0) }
+        a.timeline.removeAll { Self.echoesPrompt($0) }
+        a.whereabouts.removeAll { Self.echoesPrompt($0.at) || Self.echoesPrompt($0.name) }
         adventure = a
         undoSnapshot = nil
         refreshVocabulary()
@@ -472,6 +481,7 @@ final class StoryEngine {
 
     private func runTurn(input: String, hidden: Bool, forceFinal: Bool = false) async {
         guard var a = adventure else { return }
+        let turnBegan = Date()
         ComputerSounds.shared.startHum()
         // Housekeeping already talking to the model holds the GPU, so wait for it (it is one call,
         // once every few turns). If it hasn't started yet, it waits for a later turn instead.
@@ -499,7 +509,10 @@ final class StoryEngine {
             a = adventure ?? a
         }
         let snapshot = a
-        clockTick(&a, hidden: hidden)
+        // The clock pauses while the Game Master thinks: the wait for its review just now, and the
+        // planning before the last reply began.
+        clockTick(&a, hidden: hidden, paused: Date().timeIntervalSince(turnBegan) + a.gmWait)
+        let ticked = Date()
         if forceFinal { a.left = 0 }
         let system = systemPrompt(a)
         let opening = hidden && a.transcript.isEmpty
@@ -532,9 +545,23 @@ final class StoryEngine {
         var used = fixed
         for (i, t) in recent.reversed() {
             let cost = Self.tokens(t.text) + 8
-            if kept.count >= 4 && used + cost + recallReserve > budget { break }
+            if kept.count >= 2 && used + cost + recallReserve > budget { break }
             kept.insert((i, t), at: 0)
             used += cost
+        }
+        // Never over budget: if the two newest turns alone don't fit, the older one is shortened.
+        var k = 0
+        while used > budget, k < kept.count - 1 {
+            let t = kept[k].1
+            let over = used - budget
+            let keepChars = max(200, t.text.count - over * 7 / 2 - 40)
+            if keepChars < t.text.count {
+                var c = t
+                c.text = "…" + String(t.text.suffix(keepChars))
+                used -= Self.tokens(t.text) - Self.tokens(c.text)
+                kept[k] = (kept[k].0, c)
+            }
+            k += 1
         }
         let keptIDs = Set(kept.map { $0.1.id })
         let older = a.transcript.enumerated().filter { !keptIDs.contains($0.element.id) }.map { ($0.offset + 1, $0.element) }
@@ -561,6 +588,7 @@ final class StoryEngine {
         if history.first?.role == .assistant { history.insert(ChatTurn(role: .user, text: "(The story begins.)"), at: 0) }
         history.append(ChatTurn(role: .user, text: briefing(memories, plan: plan)))
         stage = "The storyteller is writing"
+        a.gmWait = Date().timeIntervalSince(ticked)
         if narrate { narrator.begin() }
         var reply = ""
         var interrupted = false
@@ -697,7 +725,7 @@ final class StoryEngine {
             thinkBudget = deepTokens
             defer { thinkBudget = 0 }
             let out = (try? await llm.complete(system: nil, prompt: prompt,
-                                               options: .init(maxTokens: deepTokens, temperature: 0.6, repetitionPenalty: nil, thinking: true,
+                                               options: .init(maxTokens: deepTokens, temperature: 0.6, repetitionPenalty: 1.05, thinking: true,
                                                               thoughts: thoughts))) ?? ""
             if !out.isEmpty || Task.isCancelled { return out }
         }
@@ -765,7 +793,7 @@ final class StoryEngine {
         prompt += "\n\nCURRENT FACTS:\n" + (start.facts.isEmpty ? "(none yet)" : start.facts.map { "- " + clip($0, 160) }.joined(separator: "\n"))
         if !start.scene.isEmpty { prompt += "\n\nSCENE BEFORE THIS REPLY:\n" + start.scene }
         if !start.storyTime.isEmpty { prompt += "\n\nSTORY TIME BEFORE THIS REPLY: " + start.storyTime }
-        if !start.timeline.isEmpty { prompt += "\n\nTIMELINE SO FAR (keep every entry and its time):\n" + start.timeline.suffix(10).map { "- " + $0 }.joined(separator: "\n") }
+        if !start.timeline.isEmpty { prompt += "\n\nTIMELINE SO FAR (already recorded; add only what this reply added):\n" + start.timeline.suffix(10).map { "- " + $0 }.joined(separator: "\n") }
         if !start.whereabouts.isEmpty { prompt += "\n\nWHERE PEOPLE WERE BEFORE THIS REPLY:\n" + start.whereabouts.map { "- " + $0.line }.joined(separator: "\n") }
         let people = start.cast.prefix(6).map { "- \($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc, 160) }
         if !people.isEmpty { prompt += "\n\nPEOPLE:\n" + people.joined(separator: "\n") }
@@ -784,31 +812,58 @@ final class StoryEngine {
             let thought = sink.clean
             now.transcript[i].after = (thought.isEmpty ? "" : "REASONING:\n" + thought + "\n\n") + "REVIEW:\n" + (reply.isEmpty ? "(no reply)" : reply)
         }
-        guard let m = JSONExtract.object(reply) else { adventure = now; library.save(now); return }
-        func list(_ k: String) -> [String] {
-            ((m[k] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        // A review that loops or runs out of room never closes its JSON: keep what it finished.
+        let m = JSONExtract.object(reply) ?? Self.salvageJSON(reply)
+        guard !m.isEmpty else { adventure = now; library.save(now); return }
+        // Everything the review says is checked in code before it is kept: no copies of the
+        // instructions' own example text, no repeated lines, and short lists.
+        func text(_ k: String) -> String? {
+            guard let v = (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), v.count > 3, !Self.echoesPrompt(v) else { return nil }
+            return v
         }
-        let facts = list("facts")
-        if facts.count >= 3 { now.facts = Array(facts.prefix(14)) }
-        var fixes = Array(list("fixes").prefix(3))
-        if let u = (m["unanswered"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), u.count > 8 {
+        func list(_ k: String, cap: Int) -> [String] {
+            var out: [String] = []
+            for item in ((m[k] as? [Any]) ?? []) {
+                guard let v = (item as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), v.count > 3, !Self.echoesPrompt(v) else { continue }
+                if !out.contains(where: { Self.similar($0, v) }) { out.append(v) }
+                if out.count >= cap { break }
+            }
+            return out
+        }
+        // Facts the model ran together into one long string are split back into sentences.
+        let facts = list("facts", cap: 30).flatMap { $0.count > 180 ? Self.sentences($0) : [$0] }
+            .reduce(into: [String]()) { acc, f in if !acc.contains(where: { Self.similar($0, f) }) { acc.append(f) } }
+        if facts.count >= 3 { now.facts = Array(facts.prefix(12)).map { clip($0, 200) } }
+        var fixes = list("fixes", cap: 3).map { clip($0, 200) }
+        if let u = text("unanswered"), u.count > 8 {
             fixes.append("Still unanswered, answer it plainly next: " + clip(u, 300))
         }
         now.fixes = fixes + now.fixes.filter { $0.hasPrefix(Self.checked) }
-        if let n = (m["next"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { now.nextMove = clip(n, 600) }
-        if let sc = (m["scene"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), sc.count > 10 { now.scene = clip(sc, 600) }
-        if let t = (m["time"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), t.count > 3 { now.storyTime = clip(t, 160) }
-        let timeline = list("timeline")
-        // The timeline only grows: a reply that drops earlier entries keeps them.
-        if timeline.count >= now.timeline.count || timeline.count >= 3 {
-            let kept = now.timeline.filter { old in !timeline.contains { Self.sameEvent($0, old) } }
-            now.timeline = Array((timeline.count >= now.timeline.count ? timeline : kept + timeline).map { clip($0, 200) }.suffix(12))
+        if let n = text("next") { now.nextMove = clip(n, 600) }
+        if let sc = text("scene"), sc.count > 10 { now.scene = clip(sc, 500) }
+        if let t = text("time") { now.storyTime = clip(t, 160) }
+        // The timeline only grows, in the order things happened: earlier entries stay as they are and
+        // new ones are added at the end. "Now" and "just now" become the story time they happened at.
+        let when = now.storyTime.split(separator: ",").first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+        let fresh = list("timeline", cap: 20).flatMap { Self.splitTimeline($0) }.map { e -> String in
+            guard let r = e.range(of: #"^(just now|right now|now|moments ago|a moment ago)\s*:"#, options: [.regularExpression, .caseInsensitive]),
+                  !when.isEmpty else { return e }
+            return when + ":" + e[r.upperBound...]
         }
-        let whoWhere = Self.whereabouts(m["people"])
+        for e in fresh where !now.timeline.contains(where: { Self.sameEvent($0, e) || Self.similar($0, e) }) {
+            now.timeline.append(clip(e, 200))
+        }
+        if now.timeline.count > 12 { now.timeline = Array(now.timeline.prefix(2) + now.timeline.suffix(10)) }
+        // Only real people are placed (never the instructions' "each named person").
+        let names = now.lore.filter { $0.kind == .person }.flatMap { p in [p.name, p.name.split(separator: " ").first.map(String.init) ?? p.name] }
+            + [now.playerName, "you", "You"]
+        let whoWhere = Self.whereabouts(m["people"]).filter { w in
+            !Self.echoesPrompt(w.at) && names.contains { !$0.isEmpty && $0.caseInsensitiveCompare(w.name) == .orderedSame }
+        }
         if !whoWhere.isEmpty {
             // Someone the review forgot stays where they were.
             now.whereabouts = whoWhere + now.whereabouts.filter { o in !whoWhere.contains { $0.name.caseInsensitiveCompare(o.name) == .orderedSame } }
-            now.whereabouts = Array(now.whereabouts.prefix(8))
+            now.whereabouts = Array(now.whereabouts.filter { !Self.echoesPrompt($0.at) }.prefix(8))
         }
         adventure = now
         library.save(now)
@@ -850,7 +905,8 @@ final class StoryEngine {
 
     /// The player writes prose rather than commands.
     static func narrates(_ input: String) -> Bool {
-        input.split(separator: " ").count > 25 && input.contains(".")
+        // Long, story-like prose; ordinary speech ("My name is Simon. Can I get you a drink?") is not narration.
+        input.split(separator: " ").count > 60 && input.filter({ $0 == "." }).count >= 3 && !input.contains("?")
     }
 
     // MARK: The clock (play by the clock, not by turns)
@@ -868,10 +924,10 @@ final class StoryEngine {
         return max(30, min(Self.maxGap, (med + Self.secPerTurn * pad) / (1 + pad)))
     }
 
-    private func clockTick(_ a: inout Adventure, hidden: Bool) {
+    private func clockTick(_ a: inout Adventure, hidden: Bool, paused: Double = 0) {
         let now = Date()
         if !hidden, let last = a.lastSendAt {
-            let dt = min(Self.maxGap, max(0, now.timeIntervalSince(last)))
+            let dt = min(Self.maxGap, max(0, now.timeIntervalSince(last) - max(0, paused)))
             a.elapsed += dt
             a.turnTimes = Array((a.turnTimes + [dt.rounded()]).suffix(12))
         }
@@ -984,6 +1040,91 @@ final class StoryEngine {
         return out
     }
 
+    /// True when a model copied the review instructions' own description text back as content.
+    static func echoesPrompt(_ s: String) -> Bool {
+        let probe = s.lowercased().trimmingCharacters(in: .whitespaces).prefix(32)
+        guard probe.count >= 14 else { return false }
+        return Prompts.review.lowercased().contains(probe)
+    }
+
+    /// Two lines that say nearly the same thing (most of their words shared).
+    static func similar(_ a: String, _ b: String) -> Bool {
+        func words(_ s: String) -> Set<Substring> { Set(s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })) }
+        let x = words(a), y = words(b)
+        guard !x.isEmpty, !y.isEmpty else { return a == b }
+        return Double(x.intersection(y).count) / Double(min(x.count, y.count)) >= 0.85
+    }
+
+    static func sentences(_ s: String) -> [String] {
+        s.replacingOccurrences(of: #"([.!?])\s+(?=[A-Z])"#, with: "$1\n", options: .regularExpression)
+            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count > 3 }
+    }
+
+    /// A timeline the model ran together ("Three days ago: ... One hour ago: ...") split into entries.
+    static func splitTimeline(_ s: String) -> [String] {
+        s.replacingOccurrences(of: #"([.!?])\s+(?=[A-Z][A-Za-z0-9 ,'’-]{1,30}:)"#, with: "$1\n", options: .regularExpression)
+            .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count > 3 }
+    }
+
+    /// Pulls the finished fields out of a JSON object that was cut off (a review that looped or ran
+    /// out of room): complete strings, and the complete items of an unfinished list.
+    static func salvageJSON(_ s: String) -> [String: Any] {
+        let c = Array(s)
+        var out: [String: Any] = [:]
+        func readString(_ i: inout Int) -> String? {   // c[i] is the opening quote
+            var j = i + 1, buf = ""
+            while j < c.count {
+                if c[j] == "\\", j + 1 < c.count {
+                    let n = c[j + 1]
+                    buf.append(n == "n" ? "\n" : n == "t" ? " " : n)
+                    j += 2
+                    continue
+                }
+                if c[j] == "\"" { i = j + 1; return buf }
+                buf.append(c[j]); j += 1
+            }
+            return nil
+        }
+        func skipSpace(_ i: inout Int) { while i < c.count, c[i].isWhitespace { i += 1 } }
+        func readObject(_ i: inout Int) -> [String: Any]? {   // c[i] is "{"
+            var depth = 0, j = i, inStr = false
+            while j < c.count {
+                let ch = c[j]
+                if inStr { if ch == "\\" { j += 2; continue }; if ch == "\"" { inStr = false } }
+                else if ch == "\"" { inStr = true }
+                else if ch == "{" { depth += 1 }
+                else if ch == "}" { depth -= 1; if depth == 0 { break } }
+                j += 1
+            }
+            guard j < c.count, let data = String(c[i...j]).data(using: .utf8),
+                  let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+            i = j + 1
+            return o
+        }
+        for key in ["fixes", "facts", "unanswered", "scene", "time", "timeline", "people", "next"] {
+            guard let r = s.range(of: "\"" + key + "\"\\s*:\\s*", options: .regularExpression) else { continue }
+            var i = s.distance(from: s.startIndex, to: r.upperBound)
+            guard i < c.count else { continue }
+            if c[i] == "\"" {
+                if let v = readString(&i) { out[key] = v }
+            } else if c[i] == "[" {
+                i += 1
+                var items: [Any] = []
+                while i < c.count {
+                    skipSpace(&i)
+                    guard i < c.count else { break }
+                    if c[i] == "]" { break }
+                    if c[i] == "," { i += 1; continue }
+                    if c[i] == "\"", let v = readString(&i) { items.append(v); continue }
+                    if c[i] == "{", let o = readObject(&i) { items.append(o); continue }
+                    break
+                }
+                out[key] = items
+            }
+        }
+        return out
+    }
+
     /// A place's short name. Models sometimes write a whole description where a name belongs ("A white
     /// coral beach at sunrise. The sand is powdery..."): a known place it mentions wins ("The Beach"),
     /// otherwise the first few words of its first phrase ("White coral beach").
@@ -1065,7 +1206,9 @@ final class StoryEngine {
     static func whereabouts(_ raw: Any?) -> [Whereabout] {
         ((raw as? [[String: Any]]) ?? []).compactMap { d in
             func f(_ k: String) -> String { (d[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
-            let name = f("name"), at = f("where")
+            let name = f("name")
+            var at = f("where")
+            if at.lowercased().hasPrefix("at ") { at = String(at.dropFirst(3)) }
             guard !name.isEmpty, !at.isEmpty else { return nil }
             let heading = f("heading")
             let none = ["", "none", "nowhere", "staying", "n/a", "-"].contains(heading.lowercased())
@@ -1116,7 +1259,7 @@ final class StoryEngine {
         if !a.storyTime.isEmpty { l.append("- Story time now: " + a.storyTime + ". Time only moves forward, and only a little in one reply.") }
         if !a.timeline.isEmpty {
             l.append("- When things happened (never change these):")
-            l.append(contentsOf: a.timeline.suffix(8).map { "  - " + $0 })
+            l.append(contentsOf: a.timeline.suffix(6).map { "  - " + $0 })
         }
         if !a.whereabouts.isEmpty {
             l.append("- Where people are (no one moves unless the reply shows them going; someone elsewhere cannot speak or be seen):")
@@ -1133,9 +1276,9 @@ final class StoryEngine {
     private func briefingText(_ a: Adventure, memories: [String], director: [String], withFacts: Bool = true) -> String {
         var lines: [String] = []
         if withFacts {
-            if !a.scene.isEmpty { lines.append("SCENE BEFORE THE PLAYER'S ACTION (only people present can speak or act; anyone elsewhere stays there until the player reaches them or they visibly arrive):\n" + a.scene); lines.append("") }
+            if !a.scene.isEmpty { lines.append("SCENE BEFORE THE PLAYER'S ACTION (only people present can speak or act; anyone elsewhere stays there until the player reaches them or they visibly arrive):\n" + clip(a.scene, 400)); lines.append("") }
             let f = factsText(a)
-            if !f.isEmpty { lines.append(f); lines.append("") }
+            if !f.isEmpty { lines.append(clip(f, 1100)); lines.append("") }
         }
         lines.append("Location: " + (a.location.isEmpty ? "unknown" : a.location))
         if !a.mapText.isEmpty { lines.append("Mission map: " + a.mapText) }
@@ -1147,11 +1290,11 @@ final class StoryEngine {
             lines.append("Story steps: " + a.beats.map { ($0.done ? "[done] " : $0 == next ? "[now] " : "[later] ") + $0.text }.joined(separator: "; "))
         }
         if !a.events.isEmpty { lines.append("Recent events: " + a.events.suffix(6).joined(separator: "; ")) }
-        let people = a.cast.map { "\($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": \($0.desc)" + ($0.wants.isEmpty ? "" : " Wants: \($0.wants)") }
+        let people = a.cast.map { "\($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc, 180) + ($0.wants.isEmpty ? "" : " Wants: " + clip($0.wants, 100)) }
         if !people.isEmpty { lines.append("People: " + people.joined(separator: " | ")) }
         let recent = (a.transcript.suffix(2).map(\.text) + [a.location]).joined(separator: " ").lowercased()
         let things = a.lore.filter { $0.kind != .person && !$0.desc.isEmpty && recent.contains($0.name.lowercased()) }.prefix(5)
-        if !things.isEmpty { lines.append("Places and things here: " + things.map { "\($0.name): \($0.desc)" }.joined(separator: " | ")) }
+        if !things.isEmpty { lines.append("Places and things here: " + things.map { "\($0.name): " + clip($0.desc, 160) }.joined(separator: " | ")) }
         let hidden = hiddenPeople(a)
         if !hidden.isEmpty {
             lines.append("Not yet introduced by name (call them by role until the story reveals it): " + hidden.map { "\"\($0.role)\" is \($0.name)" }.joined(separator: "; "))
@@ -1181,7 +1324,7 @@ final class StoryEngine {
         let turn = a.playerTurns + 1
         let feeling = a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling
         let final = a.left == 0
-        let wrap = (a.left ?? 99) <= 3
+        let wrap = (a.left ?? 99) <= 3 && secsLeft(a, live: false) < Double(a.minutes) * 60 * 0.4
         let happy = (a.mood.feeling ?? 0) >= 7 || !a.mood.enjoying.isEmpty
         let roaming = !a.setup.simulator && a.mood.leavingPlot
         let calm = a.setup.simulator || happy || roaming
@@ -1219,7 +1362,7 @@ final class StoryEngine {
 
         if a.setup.simulator, !a.roadmap.isEmpty {
             let act = a.roadmap.first { played >= $0.from && played <= $0.to } ?? a.roadmap.first { played < $0.to } ?? a.roadmap.last!
-            notes.append("GENTLE ARC (minute \(Int(played)) of \(a.minutes)): take one small step toward this, at the player's pace: " + act.goal)
+            notes.append("GENTLE ARC (minute \(Int(played)) of \(a.minutes)): take one small step toward this, at the player's pace, offered through the people and the place (never decide what the player does, says or feels): " + act.goal)
         } else if !a.roadmap.isEmpty {
             let act = a.roadmap.first { played >= $0.from && played <= $0.to } ?? a.roadmap.first { played < $0.to } ?? a.roadmap.last!
             notes.append(calm
