@@ -158,9 +158,10 @@ final class StoryEngine {
 
     // MARK: Building a world
 
-    /// "Same cast, new story": a new story with an earlier one's cast and world. `link` is how it
-    /// connects (one of `Prompts.sequelLinks`), `hook` what happens this time (may be empty).
-    func createSequel(from src: Adventure, link: String, hook: String, minutes: Int) {
+    /// Continue: the next part of a finished story, a new story linked to it with the same player,
+    /// cast and world. `link` is how it connects (one of `Prompts.continueLinks`), `hook` what
+    /// happens next (may be empty).
+    func continueStory(from src: Adventure, link: String, hook: String, minutes: Int) {
         var e = src.setup
         e.id = UUID()
         e.title = ""
@@ -172,7 +173,7 @@ final class StoryEngine {
         create(e, player: player, source: src, link: link)
     }
 
-    /// The earlier story, as the architect reads it for a sequel.
+    /// The earlier story, as the architect reads it for the next part.
     private func sourceWorld(_ src: Adventure) -> String {
         var s = "EARLIER STORY: \"" + (src.report?.title ?? src.title) + "\"\nBIBLE:\n" + clip(src.bible, 1800)
         let lore = src.lore.filter { !$0.isPlayer }.prefix(14)
@@ -220,7 +221,7 @@ final class StoryEngine {
             var a = Adventure(setup: e, title: e.title.isEmpty ? "Untitled" : e.title, minutes: max(5, e.minutes))
             a.playerName = player.name
             var request = (e.simulator ? Prompts.architect + "\n" + Prompts.architectSimulator : Prompts.architect)
-            if source != nil { request += "\n" + Prompts.sequel }
+            if source != nil { request += "\n" + Prompts.continuation }
             let prompt = (source.map { sourceWorld($0) + "\n\nCONNECTION TO THE EARLIER STORY: " + link + "\n\n" } ?? "")
                 + "PLAYER'S ANSWERS\n" + e.answers(player: player)
                 + "\n\nFEELING TO ACHIEVE: " + (e.feeling.isEmpty ? "surprise me" : e.feeling)
@@ -259,6 +260,7 @@ final class StoryEngine {
                         a.lore.append(returning)
                     }
                 }
+                carryOver(from: src, into: &a, link: link)
             }
             forge.reach(Forge.stages.count - 1)
             adventure = a
@@ -266,10 +268,48 @@ final class StoryEngine {
             refreshVocabulary()
             library.save(a)
 
-            await runTurn(input: Prompts.openingInstruction(simulator: e.simulator, short: a.isShort), hidden: true)
+            let opening = source.map { Prompts.continueOpening(link: link, recap: recap(of: $0), simulator: e.simulator, short: a.isShort) }
+                ?? Prompts.openingInstruction(simulator: e.simulator, short: a.isShort)
+            await runTurn(input: opening, hidden: true)
             building = false
             forge.close()
         }
+    }
+
+    /// The continuity tracker's state carries into the next part, so it picks up the story as it
+    /// stood: the facts and timeline always, and for "right where it left off" also the place,
+    /// the scene, who is where, the story clock and the mission map. Kept small for the 4,096-token
+    /// prompt: the same caps the tracker uses while playing.
+    private func carryOver(from src: Adventure, into a: inout Adventure, link: String) {
+        var facts: [String] = []
+        for f in src.facts + a.facts where !facts.contains(where: { $0.caseInsensitiveCompare(f) == .orderedSame }) { facts.append(f) }
+        a.facts = Array(facts.prefix(14))
+        let later = link.lowercased().contains("later")
+        a.timeline = Array((Array(src.timeline.suffix(later ? 4 : 6)) + a.timeline).suffix(8))
+        guard !later else { return }
+        if !src.location.isEmpty {
+            let opened = a.location
+            a.places = src.places
+            a.links = src.links
+            a.location = src.location
+            a.visit(src.location, from: "")
+            if !opened.isEmpty, opened.caseInsensitiveCompare(src.location) != .orderedSame,
+               !a.lore.contains(where: { $0.name.caseInsensitiveCompare(opened) == .orderedSame }) {
+                addLore(&a, LoreEntry(name: opened, kind: .place, desc: ""))
+            }
+        }
+        if !src.scene.isEmpty { a.scene = src.scene }
+        if !src.whereabouts.isEmpty { a.whereabouts = src.whereabouts }
+        if let c = src.clock { a.clock = c; a.storyTime = src.storyTime }
+    }
+
+    /// What happened in the earlier part, for the "Last time" recap at the start of the next one.
+    private func recap(of src: Adventure) -> String {
+        var s = ""
+        if let r = src.report, !r.summary.isEmpty { s = clip(r.summary, 600) }
+        else if !src.chapters.isEmpty { s = src.chapters.suffix(3).map { clip($0, 220) }.joined(separator: " ") }
+        if let last = src.transcript.last(where: { $0.role == .gm }) { s += (s.isEmpty ? "" : "\nHOW IT ENDED: ") + clip(last.text, 450) }
+        return s
     }
 
     private func apply(_ plan: [String: Any], to a: inout Adventure, setup e: Experience, player: PlayerDetails) {
@@ -457,14 +497,6 @@ final class StoryEngine {
             defer { busy = false }
             await runTurn(input: "(The player wants to end the story now. Bring it to its ending in this reply.)", hidden: false, forceFinal: true)
         }
-    }
-
-    func addTime(_ minutes: Int) {
-        guard var a = adventure else { return }
-        a.minutes += minutes
-        a.ended = false
-        adventure = a
-        library.save(a)
     }
 
     func undo() {
@@ -695,7 +727,7 @@ final class StoryEngine {
         refreshVocabulary()
 
         if a.ended {
-            // The story is over: the ending screen offers a remix (same cast, new story).
+            // The story is over: the ending screen offers Continue (the next part, linked to this one).
         } else if !hidden {
             let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
             // Background thinking while the reply is read aloud: wait until the voice has made its speech

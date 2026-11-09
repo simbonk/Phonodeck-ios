@@ -277,9 +277,9 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// The mission map: places in the order they were first visited, and the moves between them.
     var places: [String] = []
     var links: [MapLink] = []
-    /// "Same cast, new story": the story this one continues, and how it connects (sequel, years
-    /// later, fresh start, prequel). Recall searches the earlier stories too, unless the connection
-    /// says their events haven't happened.
+    /// Continue: the earlier part this story continues, and how it connects ("Right where it left
+    /// off", "Some time later"; older saves may say sequel, years later, fresh start or prequel).
+    /// Recall searches the earlier parts too, unless the connection says their events haven't happened.
     var sequelOf: UUID?
     var link = ""
     /// The Game Master's look-ahead, written while the last reply is read aloud: facts that must
