@@ -218,18 +218,6 @@ enum Prompts {
     /// Rewrites the story bible so it stays current (the web app's refreshBible).
     static let bibleRefresh = "Rewrite the story bible of an interactive story as a tight one-pager of at most 280 words, plain text, addressing the player character as \"you\": premise, tone, who you are, the cast, the setting, the current situation, the goal, and a short \"story so far\". Keep everything still relevant and compress old material. Keep every detail the player set by hand, even if unusual. Call anyone whose name the player has not learned yet only by their role; never write that name. Output only the bible."
 
-    // MARK: Report card
-
-    static let reportCard = """
-    You write the report card at the end of an interactive story. The reader is the player, who wants to play again. Output ONLY one JSON object:
-    {"title":"a title for the story",
-     "summary":"80-120 word past-tense recap in second person, like a highlight reel",
-     "storyteller":{"grade":"B+","comment":"2-3 honest sentences: how well the Game Master delivered the feeling, one thing done well, one to do better"},
-     "player":{"grade":"A","comment":"2-3 warm, witty sentences naming the player's best moments"},
-     "next":"one irresistible idea for their next story, built on something they loved"}
-    Grade the Game Master honestly (most land B- to B+). Grade the player generously (B+ to A+). Short spoken commands are the game working perfectly; never criticise them. Ignore speech-to-text errors.
-    """
-
     // MARK: Director (a fresh nudge each turn so replies don't settle into a formula)
 
     static let director: [String: String] = [

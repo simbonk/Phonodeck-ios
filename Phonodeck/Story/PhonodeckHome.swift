@@ -143,7 +143,7 @@ struct PhonodeckHome: View {
             .buttonStyle(.plain)
             Menu {
                 if app.store.hasLanguageModel {
-                    Button { sameCast = a } label: { Label("Same cast, new story", systemImage: "arrow.triangle.2.circlepath") }
+                    Button { sameCast = a } label: { Label("Remix story", systemImage: "arrow.triangle.2.circlepath") }
                 }
                 if let url = app.library.exportFile(a.setup) {
                     ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }

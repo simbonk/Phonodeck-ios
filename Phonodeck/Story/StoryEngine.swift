@@ -450,7 +450,6 @@ final class StoryEngine {
         guard var a = adventure else { return }
         a.minutes += minutes
         a.ended = false
-        a.report = nil
         adventure = a
         library.save(a)
     }
@@ -610,6 +609,12 @@ final class StoryEngine {
         // The opening scene is the first time the people appear in the story itself; anyone the bible
         // gave no clear pronouns for takes them from it.
         if opening { checkPronouns(&a, texts: [a.bible, reply]) }
+        // Checks in code, every reply: a person called by the wrong pronouns, or the time of day running
+        // backwards. Each slip becomes a correction for the next reply (until the reply after it).
+        if !opening {
+            a.fixes.removeAll { $0.hasPrefix(Self.checked) }
+            a.fixes += continuitySlips(a, reply: reply).map { Self.checked + $0 }
+        }
         var before: [String] = []
         // How the context was packed, so a playthrough can be reviewed (token counts are estimates).
         let memTokens: Int = memories.reduce(0) { $0 + Self.tokens($1) }
@@ -639,7 +644,7 @@ final class StoryEngine {
         refreshVocabulary()
 
         if a.ended {
-            await writeReportCard()
+            // The story is over: the ending screen offers a remix (same cast, new story).
         } else if !hidden {
             let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
             // Background thinking while the reply is read aloud: wait until the voice has made its speech
@@ -789,7 +794,7 @@ final class StoryEngine {
         if let u = (m["unanswered"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), u.count > 8 {
             fixes.append("Still unanswered, answer it plainly next: " + clip(u, 300))
         }
-        now.fixes = fixes
+        now.fixes = fixes + now.fixes.filter { $0.hasPrefix(Self.checked) }
         if let n = (m["next"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { now.nextMove = clip(n, 600) }
         if let sc = (m["scene"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), sc.count > 10 { now.scene = clip(sc, 600) }
         if let t = (m["time"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), t.count > 3 { now.storyTime = clip(t, 160) }
@@ -1018,6 +1023,42 @@ final class StoryEngine {
         guard !desc.lowercased().contains(String(text.lowercased().prefix(30))) else { return }
         let joined = desc.isEmpty ? text : desc.trimmingCharacters(in: .whitespaces) + (desc.hasSuffix(".") ? " " : ". ") + text
         a.lore[i].desc = joined.count <= 600 ? joined : String(joined.prefix(600)) + "…"
+    }
+
+    /// Marks corrections found by checks in code (kept through the review, replaced after the next reply).
+    static let checked = "(checked) "
+
+    /// Slips a reply makes that code can see: a person's pronouns that contradict their fact, and a
+    /// time of day earlier than the story time.
+    private func continuitySlips(_ a: Adventure, reply: String) -> [String] {
+        var out: [String] = []
+        let firsts = a.cast.map { $0.name.split(separator: " ").first.map(String.init) ?? $0.name }
+        for person in a.cast {
+            let prefix = person.name + " uses "
+            guard let fact = a.facts.first(where: { $0.hasPrefix(prefix) }),
+                  let used = Self.pronouns(in: reply, for: person.name, others: firsts) else { continue }
+            let right = fact.dropFirst(prefix.count).hasPrefix("he") ? "he/him" : fact.dropFirst(prefix.count).hasPrefix("she") ? "she/her" : ""
+            if !right.isEmpty, right != used {
+                out.append("\(person.name) is \(right), never \(used). The last reply got this wrong; use \(right) for \(person.name) from now on.")
+            }
+        }
+        let parts = ["morning", "midday", "afternoon", "evening", "night"]
+        func part(_ s: String) -> Int? {
+            let l = s.lowercased()
+            if l.contains("noon") && !l.contains("afternoon") { return 1 }
+            if l.contains("dusk") || l.contains("sunset") { return 3 }
+            return parts.lastIndex { l.contains($0) }
+        }
+        if let now = part(a.storyTime), now >= 2 {
+            // A greeting or a look back ("this morning", "last night") is fine; a scene set earlier is not.
+            let l = reply.lowercased()
+                .replacingOccurrences(of: #"(this|that|yesterday|last|tomorrow) (morning|night|evening|afternoon)"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #"\"(good )?morning"#, with: "", options: .regularExpression)
+            if let earlier = parts.prefix(now).first(where: { l.range(of: "\\b" + $0 + "\\b", options: .regularExpression) != nil }) {
+                out.append("It is \(a.storyTime) now, not \(earlier). Time only moves forward.")
+            }
+        }
+        return out
     }
 
     /// People positions from a model's JSON: [{name, where, doing, heading}].
@@ -1424,31 +1465,5 @@ final class StoryEngine {
     private func refreshVocabulary() {
         guard let a = adventure else { return }
         dictation.vocabulary = a.cast.flatMap { $0.name.split(separator: " ").map(String.init) } + [a.location, a.playerName].filter { !$0.isEmpty }
-    }
-
-    // MARK: Report card
-
-    func writeReportCard() async {
-        guard var a = adventure else { return }
-        stage = "Writing your report card"
-        defer { stage = "" }
-        let story = a.transcript.suffix(16).map { ($0.role == .player ? "PLAYER: " : "STORY: ") + $0.text }.joined(separator: "\n\n")
-        let prompt = Prompts.reportCard + "\n\nFEELING TO ACHIEVE: " + a.setup.feeling
-            + (a.mood.feeling.map { "\nLast feeling reading: \($0)/10" } ?? "")
-            + "\n\nSTORY SO FAR\n" + a.chapters.joined(separator: "\n") + "\n\n" + story
-        guard let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 600, temperature: 0.6)),
-              let m = JSONExtract.object(reply) else {
-            error = "The report card didn't come out right. Tap Report card to try again."
-            return
-        }
-        func grade(_ k: String) -> Grade {
-            let g = m[k] as? [String: Any] ?? [:]
-            return Grade(grade: g["grade"] as? String ?? "B", comment: g["comment"] as? String ?? "")
-        }
-        a.report = ReportCard(
-            title: m["title"] as? String ?? a.title, summary: m["summary"] as? String ?? "",
-            storyteller: grade("storyteller"), player: grade("player"), next: m["next"] as? String ?? "")
-        adventure = a
-        library.save(a)
     }
 }
