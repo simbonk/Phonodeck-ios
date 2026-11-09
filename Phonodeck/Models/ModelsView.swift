@@ -39,61 +39,70 @@ struct ModelsView: View {
     var body: some View {
         @Bindable var app = app
         NavigationStack {
-            List {
-                Section {
-                    MemoryBar()
-                    if MemoryPanel.shows(nil, app) { MemoryPanel() }
-                } header: {
-                    Text("In memory")
-                } footer: {
-                    Text("\(DeviceFit.deviceName), \(String(format: "%.0f", DeviceFit.ramGB.rounded())) GB. iOS lets an app use about \(String(format: "%.1f", DeviceFit.modelBudgetGB)) GB for models. If replies get strange or slow, Restart loads the thinking model fresh; models load again by themselves when needed.")
-                }
+            // A plain scroll view rather than a List: a list section masks its rows to its own
+            // rounded corners, which cut the corners off the model cards.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Caps(text: "In memory", color: Theme.dim)
+                    panel {
+                        VStack(alignment: .leading, spacing: 12) {
+                            MemoryBar()
+                            if MemoryPanel.shows(nil, app) {
+                                Divider()
+                                MemoryPanel()
+                            }
+                        }
+                    }
+                    note("\(DeviceFit.deviceName), \(String(format: "%.0f", DeviceFit.ramGB.rounded())) GB. iOS lets an app use about \(String(format: "%.1f", DeviceFit.modelBudgetGB)) GB for models. If replies get strange or slow, Restart loads the thinking model fresh; models load again by themselves when needed.")
 
-                Section {
+                    downloadStatus
+
                     Picker("Models", selection: $app.modelsTab) {
                         ForEach(ModelsTab.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                } footer: {
-                    Text(intro(app.modelsTab))
-                }
+                    .padding(.top, 14)
+                    note(intro(app.modelsTab))
 
-                downloadStatus
+                    switch app.modelsTab {
+                    case .thinking:
+                        ThinkingModels()
+                    case .listening:
+                        ListeningSetup(manage: true, showsIntro: false)
+                    case .speaking:
+                        NarratorSetup(manage: true, showsIntro: false)
+                        if store.voiceID == nil { AppleVoiceSection().padding(.top, 8) }
+                    }
 
-                switch app.modelsTab {
-                case .thinking:
-                    Section { ThinkingModels() }
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-                case .listening:
-                    Section { ListeningSetup(manage: true, showsIntro: false) }
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-                case .speaking:
-                    Section { NarratorSetup(manage: true, showsIntro: false) }
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-                    if store.voiceID == nil { AppleVoiceSection() }
-                }
-
-                Section {
                     NavigationLink {
                         AddModelPage(kind: app.modelsTab.kind, title: app.modelsTab.title)
                     } label: {
-                        Label("Add a custom model…", systemImage: "plus.magnifyingglass")
+                        panel {
+                            HStack {
+                                Label("Add a custom model…", systemImage: "plus.magnifyingglass").foregroundStyle(Theme.accent)
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(Theme.dim)
+                            }
+                        }
                     }
-                } footer: {
-                    Text("Search Hugging Face or paste a link. Models that can't fit on this \(DeviceFit.deviceWord) are left out. Downloads are big, so use Wi-Fi.")
+                    .buttonStyle(.plain)
+                    .padding(.top, 14)
+                    note("Search Hugging Face or paste a link. Models that can't fit on this \(DeviceFit.deviceWord) are left out. Downloads are big, so use Wi-Fi.")
                 }
+                .padding(16)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderless)   // keeps each button in a row separate
+            .background(Theme.bg)
             .navigationTitle("Models")
             .task {
                 for e in ModelCatalog.all where store.facts[e.id] == nil { await store.loadFacts(e) }
             }
         }
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text).font(.footnote).foregroundStyle(Theme.dim).padding(.horizontal, 4)
     }
 
     private func intro(_ t: ModelsTab) -> String {
@@ -107,7 +116,7 @@ struct ModelsView: View {
     /// Whatever is downloading, wherever it was started, with a way to stop it.
     @ViewBuilder private var downloadStatus: some View {
         if case .downloading(let id, let fraction) = store.download {
-            Section {
+            panel {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: fraction) {
                         Text("Downloading \(ModelCatalog.entry(id)?.name ?? id)").font(.subheadline.bold())
@@ -118,7 +127,7 @@ struct ModelsView: View {
                 }
             }
         } else if case .failed(_, let message) = store.download {
-            Section {
+            panel {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).font(.footnote)
                     Button("Dismiss") { store.dismissDownloadError() }.font(.caption)
@@ -244,20 +253,30 @@ private struct AppleVoiceSection: View {
     @AppStorage("speechRate") private var speechRate = 0.5
 
     var body: some View {
-        Section {
-            NavigationLink {
-                AppleVoicePicker(selection: $appleVoice)
-            } label: {
-                LabeledContent("Voice", value: appleVoiceName)
+        VStack(alignment: .leading, spacing: 8) {
+            Caps(text: "Apple voice settings", color: Theme.dim)
+            panel {
+                VStack(alignment: .leading, spacing: 12) {
+                    NavigationLink {
+                        AppleVoicePicker(selection: $appleVoice)
+                    } label: {
+                        HStack {
+                            Text("Voice").foregroundStyle(Theme.fg)
+                            Spacer()
+                            Text(appleVoiceName).foregroundStyle(Theme.dim).lineLimit(1)
+                            Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(Theme.dim)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                    VStack(alignment: .leading) {
+                        Text("Speed").foregroundStyle(Theme.fg)
+                        Slider(value: $speechRate, in: 0.35...0.6)
+                    }
+                }
             }
-            VStack(alignment: .leading) {
-                Text("Speed")
-                Slider(value: $speechRate, in: 0.35...0.6)
-            }
-        } header: {
-            Text("Apple voice settings")
-        } footer: {
             Text("For a better Apple voice, download a Premium or Enhanced one in the iPhone's Settings > Accessibility > Spoken Content > Voices.")
+                .font(.footnote).foregroundStyle(Theme.dim).padding(.horizontal, 4)
         }
     }
 
@@ -309,4 +328,13 @@ private struct AddByLinkSection: View {
             Text("Paste a link to an MLX model (4-bit versions are the right size for a phone). Phonodeck checks it fits before you download. A token is only needed for gated models.")
         }
     }
+}
+
+/// A dark rounded card, the same look as the model cards.
+fileprivate func panel<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+    content()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.line))
 }
