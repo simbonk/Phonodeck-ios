@@ -74,6 +74,7 @@ final class Narrator: NSObject {
         super.init()
         synth.delegate = self
         engine.attach(player)
+        _ = Self.watchSession
         // The audio route or session can change under the engine (another app, dictation, a headset);
         // the engine then stops silently and queued speech would never play.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
@@ -175,8 +176,30 @@ final class Narrator: NSObject {
         if s.category != .playAndRecord || s.mode != .default || s.categoryOptions != options {
             try? s.setCategory(.playAndRecord, mode: .default, options: options)
         }
-        try? s.setActive(true)
+        // Activating an already active session makes iOS renegotiate the output, which over
+        // Bluetooth (AirPods) is heard as the speech flaking out. Only activate when it isn't.
+        guard !sessionActive else { return }
+        do {
+            try s.setActive(true)
+            sessionActive = true
+        } catch {
+            NSLog("Phonodeck audio session didn't start: %@", error.localizedDescription)
+        }
     }
+
+    /// Whether this app's audio session is known to be active (cleared when iOS interrupts it).
+    private static var sessionActive = false
+
+    /// Forgets the session's state when a call, alarm or Siri interrupts it, so it is activated again.
+    private static let watchSession: Void = {
+        let c = NotificationCenter.default
+        c.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Narrator.sessionActive = false }
+        }
+        c.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { Narrator.sessionActive = false }
+        }
+    }()
 
     // MARK: Speaking
 
@@ -481,7 +504,8 @@ final class Narrator: NSObject {
         samples.withUnsafeBufferPointer { src in
             pcm.floatChannelData![0].update(from: src.baseAddress!, count: samples.count)
         }
-        Self.configureSession()
+        // Mid-speech the session is already set up; touching it again can make the audio drop out.
+        if !player.isPlaying || !engine.isRunning { Self.configureSession() }
         if engineFormat != format {
             engine.stop()
             engine.disconnectNodeOutput(player)
