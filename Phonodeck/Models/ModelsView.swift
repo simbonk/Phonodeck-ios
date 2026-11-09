@@ -1,81 +1,113 @@
+import AVFoundation
 import SwiftUI
+
+/// The three jobs a model does, one tab each in Models.
+enum ModelsTab: String, CaseIterable, Identifiable {
+    case thinking, listening, speaking
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .thinking: "Thinking"
+        case .listening: "Listening"
+        case .speaking: "Speaking"
+        }
+    }
+
+    var kind: ModelEntry.Kind {
+        switch self {
+        case .thinking: .language
+        case .listening: .listening
+        case .speaking: .voice
+        }
+    }
+}
+
+extension ModelStore {
+    /// Whether a model is worth offering on this device: already downloaded, or small enough to
+    /// load at all (it may still be tight beside the other models, which the card says).
+    func canRun(_ e: ModelEntry) -> Bool {
+        installed.contains(e.id) || DeviceFit.report(for: e, facts: facts[e.id]).verdict != .tooBig
+    }
+}
 
 struct ModelsView: View {
     @Environment(AppModel.self) private var app
-    @State private var link = ""
-    @State private var linkKind: ModelEntry.Kind = .language
-    @State private var adding = false
-    @State private var addError: String?
-    @State private var confirmBig: ModelEntry?
 
     private var store: ModelStore { app.store }
 
     var body: some View {
+        @Bindable var app = app
         NavigationStack {
             List {
-                deviceSection
+                Section {
+                    Picker("Models", selection: $app.modelsTab) {
+                        ForEach(ModelsTab.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                } footer: {
+                    Text(intro(app.modelsTab))
+                }
 
-                if store.hasLanguageModel {
+                downloadStatus
+
+                switch app.modelsTab {
+                case .thinking:
+                    Section { ThinkingModels() }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                case .listening:
+                    Section { ListeningSetup(manage: true, showsIntro: false) }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                case .speaking:
+                    Section { NarratorSetup(manage: true, showsIntro: false) }
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    AppleVoiceSection()
+                }
+
+                if MemoryPanel.shows(app.modelsTab.kind, app) {
                     Section {
-                        MemoryPanel()
+                        MemoryPanel(kind: app.modelsTab.kind)
                     } header: {
                         Text("In memory")
                     } footer: {
-                        Text("If replies get strange or slow, Restart reloads the storyteller fresh. Unloading frees memory; models load again by themselves when needed.")
+                        Text(app.modelsTab == .thinking
+                             ? "If replies get strange or slow, Restart loads the model fresh. Models load again by themselves when needed."
+                             : "Unloading frees memory for the thinking model; it loads again by itself when needed.")
                     }
                 }
 
-                Section {
-                    ForEach(ModelCatalog.language + store.customModels.filter { $0.kind == .language }) { row($0) }
-                } header: {
-                    Text("Storyteller")
-                } footer: {
-                    Text("The language model that runs your stories and chats. Bigger models write richer stories but answer more slowly.")
-                }
+                ModelSearchSection(kind: app.modelsTab.kind)
+                AddByLinkSection(kind: app.modelsTab.kind)
 
-                // The same cards as the welcome setup, so choosing and trying a voice works the same way in both.
-                Section {
-                    NarratorSetup(manage: true).buttonStyle(.borderless)   // keeps each button in the row separate
-                } footer: {
-                    Text("All of these work offline. Neural voices sound more human but use memory alongside the storyteller.")
+                Section {} footer: {
+                    Text("This \(DeviceFit.deviceWord): \(DeviceFit.deviceName), \(String(format: "%.0f", DeviceFit.ramGB.rounded())) GB memory, of which iOS lets an app use about \(String(format: "%.1f", DeviceFit.modelBudgetGB)) GB for models. Models that can't fit are left out. Downloads are big, so use Wi-Fi.")
                 }
-
-                Section {
-                    ListeningSetup(manage: true).buttonStyle(.borderless)
-                } footer: {
-                    Text("Say \"make it so\" to send.")
-                }
-
-                ModelSearchSection().buttonStyle(.borderless)
-                addSection
-                HFTokenSection()
             }
+            .buttonStyle(.borderless)   // keeps each button in a row separate
             .navigationTitle("Models")
             .task {
                 for e in ModelCatalog.all where store.facts[e.id] == nil { await store.loadFacts(e) }
             }
-            .confirmationDialog(
-                "This model may not run well on this \(DeviceFit.deviceWord)",
-                isPresented: Binding(get: { confirmBig != nil }, set: { if !$0 { confirmBig = nil } }),
-                titleVisibility: .visible, presenting: confirmBig
-            ) { e in
-                Button("Download anyway") { store.startDownload(e) }
-                Button("Cancel", role: .cancel) {}
-            } message: { e in
-                Text(report(e).detail)
-            }
         }
     }
 
-    // MARK: Sections
+    private func intro(_ t: ModelsTab) -> String {
+        switch t {
+        case .thinking: "The language model that writes your stories and chat replies. Bigger ones write better but answer more slowly."
+        case .listening: "How Phonodeck hears you in hands-free mode. Say \"\(Dictation.sendPhrase)\" to send."
+        case .speaking: "The narrator voice that reads stories and chat replies aloud. Everything here works offline."
+        }
+    }
 
-    private var deviceSection: some View {
-        Section {
-            LabeledContent("This \(DeviceFit.deviceWord)", value: DeviceFit.deviceName)
-            LabeledContent("Memory", value: String(format: "%.0f GB", DeviceFit.ramGB.rounded()))
-            LabeledContent("Room for models", value: String(format: "about %.1f GB", DeviceFit.modelBudgetGB))
-            // Whatever is downloading, wherever it was started, with a way to stop it.
-            if case .downloading(let id, let fraction) = store.download {
+    /// Whatever is downloading, wherever it was started, with a way to stop it.
+    @ViewBuilder private var downloadStatus: some View {
+        if case .downloading(let id, let fraction) = store.download {
+            Section {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: fraction) {
                         Text("Downloading \(ModelCatalog.entry(id)?.name ?? id)").font(.subheadline.bold())
@@ -85,158 +117,149 @@ struct ModelsView: View {
                     Button("Cancel download", role: .cancel) { store.cancelDownload() }.font(.caption)
                 }
             }
-            if case .failed(_, let message) = store.download {
+        } else if case .failed(_, let message) = store.download {
+            Section {
                 VStack(alignment: .leading, spacing: 6) {
                     Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).font(.footnote)
                     Button("Dismiss") { store.dismissDownloadError() }.font(.caption)
                 }
             }
-        } footer: {
-            Text("iOS gives each app only part of the \(DeviceFit.deviceWord)'s memory. Each model below shows whether it fits alongside the others you've picked. Downloads are big, so use Wi-Fi.")
+        }
+    }
+}
+
+/// The thinking models as cards: the one in use and any downloaded, then the best suggestions
+/// for this device up to three, with the rest behind "More". Models too big to load are left out.
+private struct ThinkingModels: View {
+    @Environment(AppModel.self) private var app
+    @State private var showMore = false
+
+    private var store: ModelStore { app.store }
+
+    var body: some View {
+        let all = ModelCatalog.language + store.customModels.filter { $0.kind == .language }
+        let runnable = all.filter(store.canRun)
+        let hidden = all.count - runnable.count
+        let ordered = runnable.sorted { rank($0) < rank($1) }
+        let mine = ordered.filter { store.installed.contains($0.id) || $0.id == store.languageID }
+        let suggestions = ordered.filter { !mine.contains($0) }
+        let firstSuggestions = Array(suggestions.prefix(max(0, 3 - mine.count)))
+        let more = Array(suggestions.dropFirst(firstSuggestions.count))
+
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(mine + firstSuggestions) { card($0) }
+            if !more.isEmpty {
+                Button {
+                    withAnimation { showMore.toggle() }
+                } label: {
+                    Label(showMore ? "Fewer suggestions" : "\(more.count) more suggestion\(more.count == 1 ? "" : "s")",
+                          systemImage: showMore ? "chevron.up" : "chevron.down")
+                        .font(.subheadline.bold())
+                }
+                .padding(.horizontal, 4)
+                if showMore { ForEach(more) { card($0) } }
+            }
+            if hidden > 0 {
+                Text("\(hidden) larger model\(hidden == 1 ? " is" : "s are") hidden because \(hidden == 1 ? "it needs" : "they need") more memory than this \(DeviceFit.deviceWord) gives an app.")
+                    .font(.caption).foregroundStyle(Theme.dim)
+                    .padding(.horizontal, 4)
+            }
         }
     }
 
-    private var addSection: some View {
+    /// In use first, then downloaded, then the welcome's order of preference, then the rest.
+    private func rank(_ e: ModelEntry) -> Int {
+        if e.id == store.languageID { return 0 }
+        if store.installed.contains(e.id) { return 1 }
+        if let i = ModelCatalog.storytellerPreference.firstIndex(of: e.id) { return 10 + i }
+        if e.custom { return 100 }
+        return 50 + (ModelCatalog.language.firstIndex(of: e) ?? 0)
+    }
+
+    private func card(_ e: ModelEntry) -> some View {
+        OptionCard(title: e.name, tier: tier(e), blurb: e.blurb, entry: e,
+                   selected: store.languageID == e.id,
+                   use: { store.languageID = e.id; app.llm.unload() }) {
+            DeleteModelButton(entry: e) { if store.languageID == e.id || app.llm.loadedID == e.id { app.llm.unload() } }
+        }
+    }
+
+    private func tier(_ e: ModelEntry) -> String {
+        if e.id == ModelCatalog.recommendedLanguageID { return "Recommended" }
+        if e.custom { return e.isGGUF ? "Added · GGUF" : "Added" }
+        return ""
+    }
+}
+
+/// Apple's built-in voice: which one, and how fast it speaks. (Neural voices are chosen above.)
+private struct AppleVoiceSection: View {
+    @AppStorage("appleVoice") private var appleVoice = ""
+    @AppStorage("speechRate") private var speechRate = 0.5
+
+    var body: some View {
         Section {
-            TextField("huggingface.co/mlx-community/…", text: $link)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.URL)
-            Picker("It is a", selection: $linkKind) {
-                Text("Storyteller").tag(ModelEntry.Kind.language)
-                Text("Voice").tag(ModelEntry.Kind.voice)
-                Text("Listening").tag(ModelEntry.Kind.listening)
-            }
-            Button {
-                adding = true
-                addError = nil
-                Task {
-                    let r = await store.addCustom(link: link, kind: linkKind)
-                    adding = false
-                    switch r {
-                    case .added: link = ""
-                    case .failed(let m): addError = m
-                    }
-                }
+            NavigationLink {
+                AppleVoicePicker(selection: $appleVoice)
             } label: {
-                HStack { Text("Check and add"); if adding { Spacer(); ProgressView() } }
+                LabeledContent("Apple voice", value: appleVoiceName)
             }
-            .disabled(link.isEmpty || adding)
-            if let addError { Text(addError).foregroundStyle(.red).font(.footnote) }
-            Link("Browse storyteller models on Hugging Face", destination: HFHub.browseLanguageURL)
-            Link("Browse voice models on Hugging Face", destination: HFHub.browseVoiceURL)
+            VStack(alignment: .leading) {
+                Text("Apple voice speed")
+                Slider(value: $speechRate, in: 0.35...0.6)
+            }
         } header: {
-            Text("Add any model from Hugging Face")
+            Text("Apple voice")
         } footer: {
-            Text("Paste a link to an MLX model (most are under mlx-community, and 4-bit versions are the right size for a phone). Phonodeck checks its size against this \(DeviceFit.deviceWord) before you download it.")
+            Text("For a better Apple voice, download a Premium or Enhanced one in the iPhone's Settings > Accessibility > Spoken Content > Voices.")
         }
     }
 
-    // MARK: Rows
-
-    private func report(_ e: ModelEntry) -> DeviceFit.Report {
-        store.report(for: e)
+    private var appleVoiceName: String {
+        AVSpeechSynthesisVoice(identifier: appleVoice).map { "\($0.name) (\(Narrator.qualityLabel($0)))" } ?? "Automatic"
     }
+}
 
-    private func isSelected(_ e: ModelEntry) -> Bool {
-        switch e.kind {
-        case .language: store.languageID == e.id
-        case .voice: store.voiceID == e.id
-        case .listening: store.listeningID == e.id
-        }
-    }
+/// Paste a Hugging Face link, plus the optional token for gated models. Tucked away, since search covers most needs.
+private struct AddByLinkSection: View {
+    @Environment(AppModel.self) private var app
+    let kind: ModelEntry.Kind
+    @State private var link = ""
+    @State private var adding = false
+    @State private var addError: String?
+    @State private var open = false
 
-    private func select(_ e: ModelEntry) {
-        switch e.kind {
-        case .language:
-            store.languageID = e.id
-            app.llm.unload()
-        case .voice:
-            app.narrator.unloadNeural()
-            store.voiceID = e.id
-        case .listening:
-            app.dictation.unloadModel()
-            store.listeningID = e.id
-        }
-    }
-
-    @ViewBuilder
-    private func row(_ e: ModelEntry) -> some View {
-        let installed = store.installed.contains(e.id)
-        let r = report(e)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(e.name).font(.headline)
-                if e.id == ModelCatalog.recommendedLanguageID { Text("Recommended").font(.caption2.bold()).padding(.horizontal, 6).padding(.vertical, 2).background(Theme.accent.opacity(0.25), in: Capsule()) }
-                if let t = e.tier { Text(t == .best ? "Good, slower" : t == .medium ? "Medium" : "Fast").font(.caption2).foregroundStyle(.secondary) }
-                Spacer()
-                if isSelected(e) && installed { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
-            }
-            Text(e.blurb).font(.subheadline).foregroundStyle(.secondary)
-            HStack(spacing: 6) {
-                Image(systemName: r.verdict.symbol).foregroundStyle(color(r.verdict))
-                Text(r.verdict.label).font(.caption.bold()).foregroundStyle(color(r.verdict))
-                Text("·").foregroundStyle(.secondary)
-                Text(String(format: "%.1f GB", store.downloadGB(e))).font(.caption).foregroundStyle(.secondary)
-            }
-            Text(r.detail).font(.caption).foregroundStyle(.secondary)
-
-            if case .downloading(let id, let fraction) = store.download, id == e.id {
-                ProgressView(value: fraction) { Text("Downloading… \(Int(fraction * 100))%").font(.caption) }
-                Button("Cancel download", role: .cancel) { store.cancelDownload() }.font(.caption)
-            } else {
-                HStack {
-                    if installed {
-                        if e.kind == .voice { listenButton(e.id, e) }
-                        if !isSelected(e) { Button("Use") { select(e) }.buttonStyle(.borderedProminent) }
-                        Button("Delete", role: .destructive) {
-                            if isSelected(e) {
-                                if e.kind == .language { app.llm.unload() }
-                                if e.kind == .voice { app.narrator.unloadNeural() }
-                                if e.kind == .listening { app.dictation.unloadModel() }
-                            }
-                            store.delete(e)
+    var body: some View {
+        Section {
+            DisclosureGroup("Add from a link", isExpanded: $open) {
+                TextField("huggingface.co/mlx-community/…", text: $link)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                Button {
+                    adding = true
+                    addError = nil
+                    Task {
+                        let r = await app.store.addCustom(link: link, kind: kind)
+                        adding = false
+                        switch r {
+                        case .added: link = ""
+                        case .failed(let m): addError = m
                         }
-                        .buttonStyle(.bordered)
-                    } else {
-                        Button("Download") {
-                            if r.verdict == .comfortable { store.startDownload(e) } else { confirmBig = e }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(store.isDownloading)
                     }
-                    Spacer()
-                    Link(destination: e.url) { Image(systemName: "arrow.up.right.square") }
-                    if e.custom {
-                        // Removes the files too, including a half-finished download.
-                        Button(role: .destructive) {
-                            if isSelected(e) && e.kind == .language { app.llm.unload() }
-                            store.removeCustom(e)
-                        } label: { Label("Remove", systemImage: "trash") }
-                    }
+                } label: {
+                    HStack { Text("Check and add"); if adding { Spacer(); ProgressView() } }
                 }
-                .padding(.top, 2)
+                .disabled(link.isEmpty || adding)
+                if let addError { Text(addError).foregroundStyle(.red).font(.footnote) }
+                Link("Browse on Hugging Face", destination: kind == .language ? HFHub.browseLanguageURL : HFHub.browseVoiceURL)
             }
-        }
-        .padding(.vertical, 4)
-    }
-
-    /// Plays a sample in that voice without changing the chosen one.
-    private func listenButton(_ id: String, _ e: ModelEntry?) -> some View {
-        let on = app.narrator.auditioningID == id
-        return Button {
-            if on { app.narrator.stop() } else { app.narrator.audition(e) }
-        } label: {
-            Label(on ? "Stop" : "Listen", systemImage: on ? "stop.fill" : "play.fill")
-        }
-        .buttonStyle(.bordered)
-    }
-
-    private func color(_ v: DeviceFit.Verdict) -> Color {
-        switch v {
-        case .comfortable: .green
-        case .tight: .orange
-        case .tooBig: .red
+            NavigationLink {
+                Form { HFTokenSection() }.navigationTitle("Hugging Face token")
+            } label: {
+                LabeledContent("Hugging Face token", value: HFToken.value == nil ? "None" : "Saved")
+            }
+        } footer: {
+            Text("Paste a link to an MLX model (4-bit versions are the right size for a phone). Phonodeck checks it fits before you download. A token is only needed for gated models.")
         }
     }
 }

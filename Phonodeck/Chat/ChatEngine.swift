@@ -1,9 +1,10 @@
 import Foundation
 import Observation
 
-/// The Chat tab's conversation with the model: the open chat, the streamed reply, and
-/// hands-free talk that works like the Phonodeck's (replies read aloud in the narrator voice
-/// from Settings, then the microphone opens; say the send phrase to send).
+/// The Chat tab's conversation with the model: the open chat, the streamed reply, replies
+/// read aloud (the same "Read replies aloud" setting as the Phonodeck), and hands-free talk
+/// that works like the Phonodeck's (the reply is read, then the microphone opens; say the send
+/// phrase to send).
 @Observable
 @MainActor
 final class ChatEngine {
@@ -12,6 +13,8 @@ final class ChatEngine {
     private(set) var reply = ""
     private(set) var generating = false
     private(set) var handsFree = false
+    /// The narrator is reading something from this chat (a reply as it is written, or a tapped one).
+    private(set) var reading = false
     var error: String?
 
     private let llm: LLMService
@@ -69,6 +72,29 @@ final class ChatEngine {
 
     /// The narrator finished reading a reply.
     func narrationFinished() {
+        reading = false
+        listenIfReady()
+    }
+
+    // MARK: Reading aloud
+
+    /// Reads a reply aloud, or stops if the voice is already going (tap to read, tap to stop).
+    func toggleReading(_ text: String) {
+        if reading && (narrator.speaking || narrator.preparing) {
+            stopReading()
+        } else {
+            dictation.stop()
+            reading = true
+            narrator.speak(text)
+            if !narrator.speaking { reading = false }
+        }
+    }
+
+    func stopReading() {
+        guard reading else { return }
+        reading = false
+        narrator.stop()
+        ComputerSounds.shared.stopHum()
         listenIfReady()
     }
 
@@ -88,17 +114,18 @@ final class ChatEngine {
         current.turns.append(ChatTurn(role: .user, text: input))
         library.save(current)
         let history = Array(current.turns.suffix(16))
-        let speak = handsFree
+        let speak = handsFree || Reading.readAloud
         let chatID = current.id
         reply = ""
         generating = true
         turn += 1
         let myTurn = turn
-        if speak { narrator.begin() }
+        if speak { narrator.begin(); reading = true }
         ComputerSounds.shared.startHum()
         task = Task {
             do {
-                let custom = UserDefaults.standard.string(forKey: "chatSystem") ?? ""
+                let custom = (UserDefaults.standard.string(forKey: Reading.chatInstructionsKey) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 let system = custom.isEmpty
                     ? "You are a helpful, friendly assistant running privately on the user's iPhone. Be concise."
                         + (speak ? " Your replies are read aloud, so write plain sentences without lists, headings or formatting." : "")
@@ -122,6 +149,7 @@ final class ChatEngine {
             generating = false
             task = nil
             if speak && !Task.isCancelled { narrator.finish() }
+            if speak && !narrator.speaking { reading = false }
             if !speak || !narrator.speaking { ComputerSounds.shared.stopHum() }
             // Nothing to read aloud (an error or an empty reply): listen again straight away.
             listenIfReady()
@@ -141,6 +169,7 @@ final class ChatEngine {
         task = nil
         generating = false
         reply = ""
+        reading = false
         narrator.stop()
         dictation.stop()
         ComputerSounds.shared.stopHum()

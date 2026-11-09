@@ -6,11 +6,9 @@ struct SettingsView: View {
     @AppStorage("playerName") private var playerName = ""
     @AppStorage("playerGender") private var playerGender = ""
     @AppStorage("playerInterest") private var playerInterest = ""
-    @AppStorage("appleVoice") private var appleVoice = ""
-    @AppStorage("speechRate") private var speechRate = 0.5
-    @AppStorage("chatSystem") private var chatSystem = ""
     @AppStorage("sendPhrase") private var sendPhrase = ""
     @AppStorage("computerSounds") private var computerSounds = true
+    @AppStorage(Reading.textSizeKey) private var textSize: Double = Reading.defaultTextSize
     @State private var editingCode: CodeKind?
 
     enum CodeKind: Identifiable { case secret, demo; var id: Self { self } }
@@ -30,10 +28,23 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Read replies aloud", isOn: $engine.narrate)
-                    Toggle("Game Master plans each reply", isOn: $engine.gmPlans)
-                    Toggle("Game Master reasons first (slower)", isOn: $engine.deepThinking)
-                        .disabled(!engine.gmPlans)
+                    Toggle("Read replies aloud", isOn: Binding(get: { engine.narrate }, set: { on in
+                        engine.narrate = on
+                        if !on { app.chat.stopReading(); app.narrator.stop() }
+                    }))
+                    Stepper(value: $textSize, in: Reading.minTextSize...Reading.maxTextSize, step: 1) {
+                        LabeledContent("Text size", value: "\(Int(textSize)) pt")
+                    }
+                    Text("The rain eases. Somewhere below, a door opens.")
+                        .font(.system(size: textSize, design: .serif))
+                        .foregroundStyle(Theme.dim)
+                } header: {
+                    Text("Reading")
+                } footer: {
+                    Text("Shared by the Phonodeck and Chat, and also in each one's ••• menu. Tap any reply to hear it again, or to stop the voice.")
+                }
+
+                Section {
                     LabeledContent("Say this to send") {
                         TextField("make it so", text: $sendPhrase)
                             .multilineTextAlignment(.trailing)
@@ -41,40 +52,30 @@ struct SettingsView: View {
                     }
                     Toggle("Computer sounds", isOn: $computerSounds)
                         .onChange(of: computerSounds) { _, on in if !on { ComputerSounds.shared.stopHum() } }
+                } header: {
+                    Text("Hands-free")
                 } footer: {
-                    Text("Game Master plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and the recalled memories and decides what the reply must do. While a reply is read aloud it also reviews it, fixes slips and proposes the next move. Reasons first: the plan and the review use the model's thinking mode (Qwen), which can take up to about a minute per turn. Computer sounds: a chirp when the microphone opens, an acknowledging chirp when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
+                    Text("Computer sounds: a chirp when the microphone opens, another when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
                 }
 
                 Section {
-                    NavigationLink {
-                        AppleVoicePicker(selection: $appleVoice)
-                    } label: {
-                        LabeledContent("Apple voice", value: appleVoiceName)
-                    }
-                    if let model = app.store.voiceModel {
-                        Picker("\(model.name) voice", selection: Binding(
-                            get: { Narrator.neuralVoice(for: model) },
-                            set: { Narrator.setNeuralVoice($0, for: model) })) {
-                            ForEach(model.voices, id: \.self) { Text(voiceLabel($0)).tag($0) }
-                        }
-                    }
-                    VStack(alignment: .leading) {
-                        Text("Speaking speed (Apple voices)")
-                        Slider(value: $speechRate, in: 0.35...0.6)
-                    }
-                    Button("Test the narrator") {
-                        app.narrator.speak("The rain eases. Somewhere below, a door opens, and a voice you almost recognise calls your name.")
-                    }
+                    Toggle("Plans each reply", isOn: $engine.gmPlans)
+                    Toggle("Reasons first (slower)", isOn: $engine.deepThinking)
+                        .disabled(!engine.gmPlans)
                 } header: {
-                    Text("Narrator")
+                    Text("Game Master")
                 } footer: {
-                    Text("The narrator in use: \(app.store.voiceModel?.name ?? "Apple's built-in voice"). Change it in the Models tab. For a better Apple voice, download a Premium or Enhanced voice in the iPhone's Settings > Accessibility > Spoken Content > Voices.")
+                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen), which can take up to about a minute a turn.")
                 }
 
                 Section {
-                    TextField("Instructions for the Chat tab (optional)", text: $chatSystem, axis: .vertical)
+                    modelRow(.thinking, app.store.hasLanguageModel ? app.store.language?.name ?? "None" : "None")
+                    modelRow(.listening, app.store.listeningModel?.name ?? "Apple dictation")
+                    modelRow(.speaking, app.store.voiceModel?.name ?? "Apple voice")
                 } header: {
-                    Text("Chat")
+                    Text("Models")
+                } footer: {
+                    Text("Choose, try and download models in the Models tab.")
                 }
 
                 if app.vault.unlocked == .mine {
@@ -87,7 +88,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Text("Everything runs on this iPhone. Once the models are downloaded, Phonodeck works in Airplane Mode, and nothing you say or write leaves the phone.")
+                    Text("Everything runs on this \(DeviceFit.deviceWord). Once the models are downloaded, Phonodeck works in Airplane Mode, and nothing you say or write leaves it.")
                         .foregroundStyle(.secondary)
                 } header: {
                     Text("About")
@@ -96,6 +97,18 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .sheet(item: $editingCode) { kind in
                 PasscodeSheet(kind: kind)
+            }
+        }
+    }
+
+    /// A model in use, as a row that opens the Models tab where it is chosen.
+    private func modelRow(_ t: ModelsTab, _ name: String) -> some View {
+        Button { app.openModels(t) } label: {
+            HStack {
+                Text(t.title).foregroundStyle(Theme.fg)
+                Spacer()
+                Text(name).foregroundStyle(.secondary).lineLimit(1)
+                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
             }
         }
     }
@@ -119,20 +132,6 @@ struct SettingsView: View {
         } footer: {
             Text("Optional. With a passcode, Phonodeck locks whenever you leave it. Your secret passcode opens your chats and experiences. A demo passcode opens a clean, empty Phonodeck to show people; it never shows yours. Downloaded models are shared, so the demo works right away.")
         }
-    }
-
-    private var appleVoiceName: String {
-        AVSpeechSynthesisVoice(identifier: appleVoice).map { "\($0.name) (\(Narrator.qualityLabel($0)))" } ?? "Automatic"
-    }
-
-    private func voiceLabel(_ v: String) -> String {
-        let names: [String: String] = [
-            "af_heart": "Heart (US, female)", "af_bella": "Bella (US, female)", "af_nicole": "Nicole (US, female, soft)",
-            "af_sarah": "Sarah (US, female)", "am_michael": "Michael (US, male)", "am_adam": "Adam (US, male)",
-            "am_fenrir": "Fenrir (US, male, deep)", "bf_emma": "Emma (UK, female)", "bf_isabella": "Isabella (UK, female)",
-            "bm_george": "George (UK, male)", "bm_fable": "Fable (UK, male)", "bm_lewis": "Lewis (UK, male)",
-        ]
-        return names[v] ?? v
     }
 }
 
