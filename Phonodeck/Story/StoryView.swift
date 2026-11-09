@@ -2,13 +2,13 @@ import SwiftUI
 import UIKit
 
 /// The story as it is told, with typing and hands-free play, laid out like the web app:
-/// a timer pill with +10, the World button, the transcript, and the composer with Hands-free.
+/// a timer pill, the World button, the transcript, and the composer with Hands-free.
 struct StoryView: View {
     @Environment(AppModel.self) private var app
     @State private var input = ""
     @State private var showWorld = false
-    /// The story a remix (same cast, new story) is being set up from.
-    @State private var remixing: Adventure?
+    /// The finished story the next part (Continue) is being set up from.
+    @State private var continuing: Adventure?
     /// Keep the newest text in view. Off once the player scrolls up to read, back on when they return to the bottom.
     @State private var follow = true
     @State private var nearBottom = true
@@ -36,10 +36,10 @@ struct StoryView: View {
             .toolbar(.hidden, for: .navigationBar)
             .toolbar(.hidden, for: .tabBar)
             .sheet(isPresented: $showWorld) { WorldView() }
-            .sheet(item: $remixing) { src in
-                SameCastSheet(source: src) { link, hook, minutes in
-                    remixing = nil
-                    engine.createSequel(from: src, link: link, hook: hook, minutes: minutes)
+            .sheet(item: $continuing) { src in
+                ContinueSheet(source: src) { link, hook, minutes in
+                    continuing = nil
+                    engine.continueStory(from: src, link: link, hook: hook, minutes: minutes)
                 }
             }
             .onChange(of: dictation.text) { _, t in if dictation.listening { input = t } }
@@ -50,7 +50,7 @@ struct StoryView: View {
         }
     }
 
-    // MARK: Header: title, the timer pill (+10), World, menu, and a bar that fills as the session runs
+    // MARK: Header: title, the timer pill, World, menu, and a bar that fills as the session runs
 
     private func header(_ a: Adventure) -> some View {
         TimelineView(.periodic(from: .now, by: 15)) { _ in
@@ -79,14 +79,6 @@ struct StoryView: View {
                             .padding(.horizontal, 9).padding(.vertical, 5)
                             .accessibilityElement(children: .combine)
                             .accessibilityLabel(a.ended ? "Complete" : "\(left) minutes left")
-                            if !a.ended {
-                                Button { engine.addTime(10) } label: {
-                                    Text("+10").font(.subheadline.bold()).lineLimit(1).fixedSize().padding(.horizontal, 8).padding(.vertical, 5)
-                                        .background(color.opacity(0.16))
-                                }
-                                .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 1.5) }
-                                .accessibilityLabel("Add 10 minutes")
-                            }
                         }
                         .foregroundStyle(color)
                         .overlay(Capsule().stroke(color, lineWidth: 1.5))
@@ -136,8 +128,10 @@ struct StoryView: View {
             if !a.ended {
                 Button { engine.endNow() } label: { Label("Finish the experience now", systemImage: "flag.checkered") }
             }
-            Button { remixing = a } label: { Label("Remix story", systemImage: "arrow.triangle.2.circlepath") }
-                .disabled(engine.busy || a.transcript.isEmpty)
+            if a.ended {
+                Button { continuing = a } label: { Label("Continue the story", systemImage: "arrow.right.circle") }
+                    .disabled(engine.busy)
+            }
             if let url = app.library.exportFile(a.setup) {
                 ShareLink(item: url) { Label("Share this experience", systemImage: "square.and.arrow.up") }
             }
@@ -199,8 +193,8 @@ struct StoryView: View {
                             .frame(maxWidth: .infinity)
                     }
                     if a.ended {
-                        Button { remixing = a } label: {
-                            Text("The adventure is complete. Tap here to remix it: same cast, a new story.").italic()
+                        Button { continuing = a } label: {
+                            Text("The adventure is complete. Tap Continue for the next part.").italic()
                         }
                         .frame(maxWidth: .infinity)
                     }
@@ -376,24 +370,16 @@ struct StoryView: View {
     }
 
     private func endedBar(_ a: Adventure) -> some View {
-        // Two equal buttons: Remix (outlined) and keep going (solid). The reply box and microphone
-        // come back once more time is added.
-        HStack(spacing: 10) {
-            Button { remixing = a } label: {
-                Label("Remix", systemImage: "arrow.triangle.2.circlepath")
-                    .lineLimit(1).frame(maxWidth: .infinity, minHeight: 40)
-            }
-            .buttonStyle(.bordered)
-            .tint(Theme.accent)
-            Button { engine.addTime(10) } label: {
-                Label("+10 min", systemImage: "plus")
-                    .bold().lineLimit(1).frame(maxWidth: .infinity, minHeight: 40)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.accent)
-            .foregroundStyle(Theme.onAccent)
-            .accessibilityLabel("Add 10 minutes and keep going")
+        // One button: Continue sets up the next part, linked to this one, at whatever length you pick.
+        Button { continuing = a } label: {
+            Label("Continue", systemImage: "arrow.right")
+                .bold().lineLimit(1).frame(maxWidth: .infinity, minHeight: 40)
         }
+        .buttonStyle(.borderedProminent)
+        .tint(Theme.accent)
+        .foregroundStyle(Theme.onAccent)
+        .disabled(engine.busy)
+        .accessibilityHint("Starts the next part of the story with the same cast and world")
         .padding(12)
         .frame(maxWidth: 820)
         .frame(maxWidth: .infinity)
