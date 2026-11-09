@@ -23,6 +23,9 @@ final class StoryEngine {
     private(set) var resuming = false
     /// When the storyteller started on the current reply (for the "thinking" timer).
     private(set) var thinkingSince: Date?
+    /// What the player just sent, shown in the transcript at once while the turn waits for the
+    /// Game Master's review and recall (it joins the transcript proper when the reply starts).
+    private(set) var pendingInput: String?
     var error: String?
 
     /// Read replies aloud as they are written.
@@ -110,6 +113,7 @@ final class StoryEngine {
         narrator.stop()
         dictation.stop()
         streaming = ""
+        pendingInput = nil
         busy = false
         building = false
         resuming = false
@@ -217,7 +221,7 @@ final class StoryEngine {
             var raw = ""
             do {
                 for try await piece in llm.stream(system: nil, history: [ChatTurn(role: .user, text: request + "\n\n" + prompt)],
-                                                  options: .init(maxTokens: 1300, temperature: 0.7)) {
+                                                  options: .init(maxTokens: 1500, temperature: 0.7)) {
                     raw += piece
                     forge.feed(piece)
                 }
@@ -225,7 +229,7 @@ final class StoryEngine {
             guard !Task.isCancelled else { return }
             plan = JSONExtract.object(raw)
             if plan == nil, let retry = try? await llm.complete(system: nil, prompt: request + "\n\n" + prompt,
-                                                                options: .init(maxTokens: 1300, temperature: 0.5)) {
+                                                                options: .init(maxTokens: 1500, temperature: 0.5)) {
                 plan = JSONExtract.object(retry)
             }
             guard !Task.isCancelled else { return }
@@ -322,6 +326,11 @@ final class StoryEngine {
         }
         a.facts += ((plan["facts"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(10)
         a.facts = Array(a.facts.prefix(14))
+        a.storyTime = clip(str("time"), 160)
+        a.timeline = ((plan["timeline"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(5).map { clip($0, 200) }
+        a.whereabouts = Self.whereabouts(plan["people"]).filter { w in
+            w.name.caseInsensitiveCompare(playerName) != .orderedSame && w.name.caseInsensitiveCompare("you") != .orderedSame
+        }
         a.secrets = (plan["secrets"] as? [String]) ?? []
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
@@ -363,6 +372,22 @@ final class StoryEngine {
         library.save(a)
     }
 
+    /// The whole story as plain text, for copying out: the set-up, then every turn in order.
+    func storyText() -> String {
+        guard let a = adventure else { return "" }
+        var out = [a.title]
+        if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
+        if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
+        if !a.storyTime.isEmpty { out.append("Story time: " + a.storyTime) }
+        out.append("")
+        let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
+        for t in a.transcript {
+            out.append((t.role == .player ? me : "GAME MASTER") + ":\n" + t.text)
+            out.append("")
+        }
+        return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     // MARK: Playing
 
     func send(_ text: String) {
@@ -371,8 +396,9 @@ final class StoryEngine {
         dictation.stop()
         dictation.clear()
         busy = true
+        pendingInput = input   // shown at once, while the Game Master finishes its review
         currentTask = Task {
-            defer { busy = false }
+            defer { busy = false; pendingInput = nil }
             await runTurn(input: input, hidden: false)
         }
     }
@@ -469,10 +495,12 @@ final class StoryEngine {
             notes.insert("THE PLAYER IS MOVING: show them going where they said, the way there, and what they find when they arrive. People are where the scene puts them: someone elsewhere is found there, never suddenly beside the player.", at: playerAsks ? 1 : 0)
         }
         let planning = gmPlans && !hidden
+        let continuity = continuityText(a)
         func briefing(_ memories: [String], plan: String = "") -> String {
             "[GAME MASTER BRIEFING: private, for this reply only]\n"
                 + (plan.isEmpty ? "" : "YOUR PLAN FOR THIS REPLY (you wrote it after reviewing the story; carry it out)\n" + plan + "\n\n")
                 + briefingText(a, memories: memories, director: notes)
+                + (continuity.isEmpty ? "" : "\n\n" + continuity)
                 + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
         }
 
@@ -500,6 +528,7 @@ final class StoryEngine {
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
 
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
+        pendingInput = nil
         adventure = a
         streaming = ""
         thinkingSince = Date()
@@ -660,6 +689,8 @@ final class StoryEngine {
         prompt += "\n\nSTORY STATE:\n" + clip(briefingText(a, memories: memories, director: notes, withFacts: false), deepThinking ? 2200 : 3600)
         let last = a.transcript.dropLast().suffix(2)   // the player's new words are the last turn
         if !last.isEmpty { prompt += "\n\nLAST EXCHANGE:\n" + last.map { ($0.role == .player ? "PLAYER: " : "STORY: ") + clip($0.text, 600) }.joined(separator: "\n") }
+        let continuity = continuityText(a)
+        if !continuity.isEmpty { prompt += "\n\n" + continuity }
         prompt += "\n\nWHAT THE PLAYER JUST DID: " + clip(input, 800) + "\n\nYour six lines:"
         let reply = await think(prompt, quickTokens: Self.planTokens, deepTokens: Self.deepPlanTokens, temperature: 0.4)
         // Keep only the plan lines, in case the model wanders into writing the story itself.
@@ -680,6 +711,9 @@ final class StoryEngine {
         if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS:\n" + limits }
         prompt += "\n\nCURRENT FACTS:\n" + (start.facts.isEmpty ? "(none yet)" : start.facts.map { "- " + clip($0, 160) }.joined(separator: "\n"))
         if !start.scene.isEmpty { prompt += "\n\nSCENE BEFORE THIS REPLY:\n" + start.scene }
+        if !start.storyTime.isEmpty { prompt += "\n\nSTORY TIME BEFORE THIS REPLY: " + start.storyTime }
+        if !start.timeline.isEmpty { prompt += "\n\nTIMELINE SO FAR (keep every entry and its time):\n" + start.timeline.suffix(10).map { "- " + $0 }.joined(separator: "\n") }
+        if !start.whereabouts.isEmpty { prompt += "\n\nWHERE PEOPLE WERE BEFORE THIS REPLY:\n" + start.whereabouts.map { "- " + $0.line }.joined(separator: "\n") }
         let people = start.cast.prefix(6).map { "- \($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc, 160) }
         if !people.isEmpty { prompt += "\n\nPEOPLE:\n" + people.joined(separator: "\n") }
         let played = start.elapsed / 60
@@ -689,7 +723,7 @@ final class StoryEngine {
         }
         if !start.goalProgress.isEmpty { prompt += "\nPROGRESS: " + start.goalProgress }
         prompt += "\n\nRECENT TURNS (the last one is the reply to review):\n" + recentTurns(start, 3, each: 700)
-        let reply = await think(prompt, quickTokens: 450, deepTokens: 1100, temperature: 0.3)
+        let reply = await think(prompt, quickTokens: 700, deepTokens: 1400, temperature: 0.3)
         guard !Task.isCancelled, let m = JSONExtract.object(reply), var now = adventure, now.id == start.id else { return }
         func list(_ k: String) -> [String] {
             ((m[k] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
@@ -703,6 +737,19 @@ final class StoryEngine {
         now.fixes = fixes
         if let n = (m["next"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty { now.nextMove = clip(n, 600) }
         if let sc = (m["scene"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), sc.count > 10 { now.scene = clip(sc, 600) }
+        if let t = (m["time"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), t.count > 3 { now.storyTime = clip(t, 160) }
+        let timeline = list("timeline")
+        // The timeline only grows: a reply that drops earlier entries keeps them.
+        if timeline.count >= now.timeline.count || timeline.count >= 3 {
+            let kept = now.timeline.filter { old in !timeline.contains { Self.sameEvent($0, old) } }
+            now.timeline = Array((timeline.count >= now.timeline.count ? timeline : kept + timeline).map { clip($0, 200) }.suffix(12))
+        }
+        let whoWhere = Self.whereabouts(m["people"])
+        if !whoWhere.isEmpty {
+            // Someone the review forgot stays where they were.
+            now.whereabouts = whoWhere + now.whereabouts.filter { o in !whoWhere.contains { $0.name.caseInsensitiveCompare(o.name) == .orderedSame } }
+            now.whereabouts = Array(now.whereabouts.prefix(8))
+        }
         adventure = now
         library.save(now)
     }
@@ -812,6 +859,55 @@ final class StoryEngine {
             let first = c.name.split(separator: " ").first.map(String.init) ?? c.name
             return !(told.contains(c.name) || (first.count > 2 && told.contains(first)))
         }
+    }
+
+    /// People positions from a model's JSON: [{name, where, doing, heading}].
+    static func whereabouts(_ raw: Any?) -> [Whereabout] {
+        ((raw as? [[String: Any]]) ?? []).compactMap { d in
+            func f(_ k: String) -> String { (d[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+            let name = f("name"), at = f("where")
+            guard !name.isEmpty, !at.isEmpty else { return nil }
+            let heading = f("heading")
+            let none = ["", "none", "nowhere", "staying", "n/a", "-"].contains(heading.lowercased())
+            return Whereabout(name: String(name.prefix(60)), at: String(at.prefix(160)), doing: String(f("doing").prefix(120)),
+                              heading: none ? "" : String(heading.prefix(120)))
+        }
+    }
+
+    /// Two timeline entries about the same moment (the same words after the "when").
+    static func sameEvent(_ a: String, _ b: String) -> Bool {
+        func what(_ s: String) -> String { (s.split(separator: ":", maxSplits: 1).last.map(String.init) ?? s).lowercased().trimmingCharacters(in: .whitespaces) }
+        return what(a) == what(b)
+    }
+
+    /// Whether the player has told the story their name (or someone already knew them).
+    private func nameTold(_ a: Adventure) -> Bool {
+        let name = a.playerName.trimmingCharacters(in: .whitespaces)
+        let first = name.split(separator: " ").first.map(String.init) ?? name
+        guard first.count > 1 else { return true }
+        return a.transcript.contains { $0.role == .player && $0.text.range(of: "\\b\(NSRegularExpression.escapedPattern(for: first))\\b", options: [.regularExpression, .caseInsensitive]) != nil }
+    }
+
+    /// The continuity check, placed last in the briefing (right before the player's words, where a
+    /// small model pays the most attention): the story time, when past events happened, where each
+    /// person is and where they are heading, and who may use the player's name.
+    private func continuityText(_ a: Adventure) -> String {
+        var l: [String] = []
+        if !a.storyTime.isEmpty { l.append("- Story time now: " + a.storyTime + ". Time only moves forward, and only a little in one reply.") }
+        if !a.timeline.isEmpty {
+            l.append("- When things happened (never change these):")
+            l.append(contentsOf: a.timeline.suffix(8).map { "  - " + $0 })
+        }
+        if !a.whereabouts.isEmpty {
+            l.append("- Where people are (no one moves unless the reply shows them going; someone elsewhere cannot speak or be seen):")
+            l.append(contentsOf: a.whereabouts.prefix(6).map { "  - " + $0.line })
+        }
+        if !a.playerName.isEmpty, !nameTold(a) {
+            let knew = a.cast.filter(\.known).map(\.name)
+            l.append("- Nobody here knows the player's name (\(a.playerName)) because the player has not said it"
+                     + (knew.isEmpty ? "" : ", except " + knew.joined(separator: ", ") + ", who already knew them") + ". No one else says it.")
+        }
+        return l.isEmpty ? "" : "CONTINUITY CHECK (true right now; the reply must agree with every line)\n" + l.joined(separator: "\n")
     }
 
     private func briefingText(_ a: Adventure, memories: [String], director: [String], withFacts: Bool = true) -> String {
@@ -1027,6 +1123,9 @@ final class StoryEngine {
             a.fixes = now.fixes
             a.nextMove = now.nextMove
             a.scene = now.scene
+            a.storyTime = now.storyTime
+            a.timeline = now.timeline
+            a.whereabouts = now.whereabouts
             // Entries the player edited or added in the World panel meanwhile win.
             for e in now.lore where e.byPlayer {
                 if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }

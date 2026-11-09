@@ -288,6 +288,12 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// The scene right now, as the last review saw it: where the player is, who is with them and
     /// exactly where, where the other named people are, and what the player is wearing and carrying.
     var scene = ""
+    /// Story time and continuity, spelled out for the Game Master so it never loses track: the
+    /// time of day in the story, the timeline of what happened when ("Last night: the storm broke"),
+    /// and where each named person is, what they are doing and where they are heading.
+    var storyTime = ""
+    var timeline: [String] = []
+    var whereabouts: [Whereabout] = []
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -301,7 +307,8 @@ struct Adventure: Codable, Identifiable, Hashable {
     enum CodingKeys: String, CodingKey {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
-             notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene
+             notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
+             storyTime, timeline, whereabouts
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -330,6 +337,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         places = v(.places, []); links = v(.links, [])
         sequelOf = try? c.decodeIfPresent(UUID.self, forKey: .sequelOf); link = v(.link, "")
         facts = v(.facts, []); fixes = v(.fixes, []); nextMove = v(.nextMove, ""); scene = v(.scene, "")
+        storyTime = v(.storyTime, ""); timeline = v(.timeline, []); whereabouts = v(.whereabouts, [])
     }
 
     func encode(to encoder: Encoder) throws {
@@ -347,6 +355,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(notesStale, forKey: .notesStale); try c.encode(bibleTurn, forKey: .bibleTurn)
         try c.encodeIfPresent(sequelOf, forKey: .sequelOf); try c.encode(link, forKey: .link)
         try c.encode(facts, forKey: .facts); try c.encode(fixes, forKey: .fixes); try c.encode(nextMove, forKey: .nextMove); try c.encode(scene, forKey: .scene)
+        try c.encode(storyTime, forKey: .storyTime); try c.encode(timeline, forKey: .timeline); try c.encode(whereabouts, forKey: .whereabouts)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -357,6 +366,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         notes = o.notes; notesTurn = o.notesTurn; notesStale = o.notesStale; bibleTurn = o.bibleTurn
         places = o.places; links = o.links
         facts = o.facts; fixes = o.fixes; nextMove = o.nextMove; scene = o.scene
+        storyTime = o.storyTime; timeline = o.timeline; whereabouts = o.whereabouts
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
@@ -377,5 +387,22 @@ struct Adventure: Codable, Identifiable, Hashable {
         let seen = links.contains { ($0.from.caseInsensitiveCompare(q) == .orderedSame && $0.to.caseInsensitiveCompare(p) == .orderedSame)
             || ($0.from.caseInsensitiveCompare(p) == .orderedSame && $0.to.caseInsensitiveCompare(q) == .orderedSame) }
         if !seen { links.append(MapLink(from: q, to: p)); links = Array(links.suffix(24)) }
+    }
+}
+
+/// Where a named person is right now, what they are doing, and where they are heading (if anywhere).
+struct Whereabout: Codable, Hashable, Identifiable {
+    var name: String
+    var at: String
+    var doing: String = ""
+    var heading: String = ""
+    var id: String { name }
+
+    /// One plain line for the Game Master.
+    var line: String {
+        var s = "\(name): at \(at)"
+        if !doing.isEmpty { s += ", " + doing }
+        s += heading.isEmpty ? ". Staying there." : ". Heading to " + heading + " (arrives only when the story shows it)."
+        return s
     }
 }

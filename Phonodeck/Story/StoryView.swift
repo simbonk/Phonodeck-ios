@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The story as it is told, with typing and hands-free play, laid out like the web app:
 /// a timer pill with +10, the World button, the transcript, and the composer with Hands-free.
@@ -63,12 +64,18 @@ struct StoryView: View {
                     }
                     Spacer(minLength: 6)
                     HStack(spacing: 0) {
-                        Text(a.ended ? "complete" : "⏱ \(left) min")
-                            .font(.subheadline.bold().monospacedDigit())
-                            .padding(.horizontal, 10).padding(.vertical, 5)
+                        HStack(spacing: 4) {
+                            Image(systemName: a.ended ? "checkmark.circle" : "timer").font(.subheadline.weight(.semibold))
+                            Text(a.ended ? "done" : "\(left) min").font(.subheadline.bold().monospacedDigit())
+                        }
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(a.ended ? "Complete" : "\(left) minutes left")
                         if !a.ended {
                             Button { engine.addTime(10) } label: {
-                                Text("+10").font(.subheadline.bold()).padding(.horizontal, 9).padding(.vertical, 5)
+                                Text("+10").font(.subheadline.bold()).lineLimit(1).fixedSize().padding(.horizontal, 8).padding(.vertical, 5)
                                     .background(color.opacity(0.16))
                             }
                             .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 1.5) }
@@ -78,6 +85,8 @@ struct StoryView: View {
                     .foregroundStyle(color)
                     .overlay(Capsule().stroke(color, lineWidth: 1.5))
                     .clipShape(Capsule())
+                    .fixedSize()
+                    .layoutPriority(1)
                     Button { showWorld = true } label: {
                         Image(systemName: "globe").font(.title3)
                     }
@@ -111,6 +120,10 @@ struct StoryView: View {
                 Button { textSize = min(24, textSize + 1) } label: { Label("Larger text", systemImage: "textformat.size.larger") }
                     .disabled(textSize >= 24)
             }
+            Button { UIPasteboard.general.string = engine.storyText() } label: {
+                Label("Copy story text", systemImage: "doc.on.doc")
+            }
+            .disabled(a.transcript.isEmpty)
             Button { engine.undo() } label: { Label("Undo last turn", systemImage: "arrow.uturn.backward") }
                 .disabled(!engine.canUndo)
             if !a.ended {
@@ -129,6 +142,16 @@ struct StoryView: View {
 
     // MARK: Transcript
 
+    private func playerBubble(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: textSize))
+            .foregroundStyle(Theme.fg)
+            .padding(10)
+            .background(Theme.you, in: RoundedRectangle(cornerRadius: 12))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 50)
+    }
+
     private func transcript(_ a: Adventure) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -146,14 +169,11 @@ struct StoryView: View {
                                 .textSelection(.enabled)
                                 .onTapGesture { toggleReading(t.text) }
                         } else {
-                            Text(t.text)
-                                .font(.system(size: textSize))
-                                .foregroundStyle(Theme.fg)
-                                .padding(10)
-                                .background(Theme.you, in: RoundedRectangle(cornerRadius: 12))
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                                .padding(.leading, 50)
+                            playerBubble(t.text)
                         }
+                    }
+                    if let p = engine.pendingInput {
+                        playerBubble(p).id("pending")
                     }
                     if !engine.streaming.isEmpty {
                         Text(engine.streaming)
@@ -205,6 +225,9 @@ struct StoryView: View {
             .onChange(of: a.transcript.count) {
                 if a.transcript.last?.role != .gm { follow = true }   // the player just spoke: show what comes next
                 if follow { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+            }
+            .onChange(of: engine.pendingInput) {
+                if engine.pendingInput != nil { follow = true; withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
             }
             .onChange(of: engine.thinkingSince) { if follow { withAnimation { proxy.scrollTo("end", anchor: .bottom) } } }
             .onAppear { proxy.scrollTo("end", anchor: .bottom) }

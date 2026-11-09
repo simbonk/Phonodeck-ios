@@ -146,6 +146,9 @@ enum Prompts {
      "player":{"name":"the player character's name","desc":"one line: who they are here"},
      "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"two telling details","wants":"for a person: what they want"}],
      "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, what the player has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
+     "time":"when the story opens: time of day, day and season, e.g. 'Early morning, the day after the storm, late summer'",
+     "timeline":["2-4 things that already happened, each with exactly when, e.g. 'Last night: the storm wrecked your boat on the reef'"],
+     "people":[{"name":"","where":"exactly where they are when the story opens","doing":"what they are doing"}],
      "secrets":["2-4 hidden truths the player has not discovered"],
      "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}]}
     Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly.
@@ -173,8 +176,11 @@ enum Prompts {
      "facts":["the full updated list of 6-12 short facts that must stay true: keep the old ones that still hold, add what this exchange established (names learned, promises, who is present, what the player now has)"],
      "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
      "scene":"where the player is now; who is with them and exactly where (or alone); where each other named person is; what the player is wearing and carrying",
+     "time":"the story time now: time of day, and how long since the story began, e.g. 'Mid-morning, the day after the storm'",
+     "timeline":["the full timeline so far, oldest first, each with exactly when: keep every earlier entry unchanged and add what just happened, e.g. 'Last night: the storm wrecked your boat', 'This morning: Teina found you on the beach'"],
+     "people":[{"name":"each named person","where":"exactly where they are now","doing":"what they are doing","heading":"where they are going, or empty if staying"}],
      "next":"2 sentences: what the next reply should do if the player goes along (the next small step on the roadmap toward the feeling, with the people already present), and one concrete detail to use"}
-    A slip is anything that contradicts the bible, the facts, the scene or the limits: a changed pronoun, an object the player does not have, danger in a story without danger, someone appearing who was elsewhere, a new stranger from nowhere, a riddle in place of an answer, ignoring where the player said they were going. Keep the scene exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
+    Time only moves forward and only as far as the story showed; never rewrite when something happened. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip is anything that contradicts the bible, the facts, the scene or the limits: a changed pronoun, an object the player does not have, danger in a story without danger, someone appearing who was elsewhere, a new stranger from nowhere, a riddle in place of an answer, ignoring where the player said they were going, a changed time for a past event, a person in a new place with no movement shown, using a name the player was never told. Keep the scene exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
     """
 
     // MARK: Memory
