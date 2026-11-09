@@ -53,6 +53,8 @@ final class StoryEngine {
     /// True while housekeeping is actually talking to the model (a turn then waits for it).
     private var housekeepingRunning = false
     private var undoSnapshot: Adventure?
+    /// A turn the app had to stop because it left the foreground mid-reply; it runs again on return.
+    private var interruptedTurn: (input: String, hidden: Bool, forceFinal: Bool)?
     private var currentTask: Task<Void, Never>?
 
     static let secPerTurn = 90.0
@@ -104,6 +106,7 @@ final class StoryEngine {
 
     func stopAll() {
         currentTask?.cancel()
+        interruptedTurn = nil
         narrator.stop()
         dictation.stop()
         streaming = ""
@@ -374,6 +377,18 @@ final class StoryEngine {
         }
     }
 
+    /// Back in the foreground: a reply that was cut off by leaving the app is written again.
+    func resumeAfterBackground() {
+        guard let t = interruptedTurn, adventure != nil, !busy else { return }
+        interruptedTurn = nil
+        busy = true
+        currentTask = Task {
+            defer { busy = false }
+            await runTurn(input: t.input, hidden: t.hidden, forceFinal: t.forceFinal)
+            if t.hidden { building = false; forge?.close() }
+        }
+    }
+
     /// Asks the Game Master to wrap up now, with a final reply.
     func endNow() {
         guard var a = adventure, !a.ended, !busy else { return }
@@ -502,6 +517,7 @@ final class StoryEngine {
         stage = "The storyteller is writing"
         if narrate { narrator.begin() }
         var reply = ""
+        var interrupted = false
         do {
             for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
                 if stage != "" {
@@ -512,8 +528,22 @@ final class StoryEngine {
                 streaming = reply
                 if narrate { narrator.feed(piece) }
             }
+        } catch LLMError.interrupted {
+            interrupted = true
         } catch {
             if !Task.isCancelled { self.error = error.localizedDescription }
+        }
+        if interrupted {
+            // The app left the foreground mid-reply: drop the half-written reply and write it
+            // again when the app comes back.
+            narrator.stop()
+            ComputerSounds.shared.stopHum()
+            stage = ""
+            thinkingSince = nil
+            streaming = ""
+            adventure = snapshot
+            interruptedTurn = (input, hidden, forceFinal)
+            return
         }
         if narrate { narrator.finish() }
         if !narrate || !narrator.speaking { ComputerSounds.shared.stopHum() }

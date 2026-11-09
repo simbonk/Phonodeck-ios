@@ -14,7 +14,11 @@ struct PhonodeckApp: App {
                 .tint(Theme.accent)
         }
         .onChange(of: scenePhase) { _, phase in
+            // Stop GPU work as soon as the app starts to leave the foreground (inactive comes
+            // before background), so iOS never sees it submit GPU work from the background.
+            AppActivity.shared.set(foreground: phase == .active)
             if phase == .background { app.lock() }
+            if phase == .active { app.engine.resumeAfterBackground() }
         }
     }
 }

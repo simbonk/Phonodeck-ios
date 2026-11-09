@@ -17,12 +17,15 @@ struct ChatTurn: Codable, Hashable {
 enum LLMError: LocalizedError {
     case noModel, notDownloaded
     case tooBig(String)
+    /// The app left the foreground mid-reply, so the GPU work stopped (iOS forbids it there).
+    case interrupted
 
     var errorDescription: String? {
         switch self {
         case .noModel: "No storyteller model is selected yet. Open the Models tab and download one."
         case .notDownloaded: "The selected model is not on this phone. Open the Models tab and download it again."
         case .tooBig(let why): "\(why) Pick a smaller storyteller in the Models tab."
+        case .interrupted: "Paused while Phonodeck was in the background."
         }
     }
 }
@@ -169,12 +172,16 @@ final class LLMService {
                     let params = GenerateParameters(
                         maxTokens: options.maxTokens, temperature: options.temperature, topP: options.topP,
                         repetitionPenalty: options.repetitionPenalty, repetitionContextSize: 64)
+                    if AppActivity.shared.inBackground { throw LLMError.interrupted }
                     let events = try await container.generate(input: prepared, parameters: params)
                     // In thinking mode the template may already have opened the <think> block, so start inside it.
                     var filter = ThinkFilter(startInside: options.thinking)
                     self.thoughtChars = 0
+                    var interrupted = false
                     for await event in events {
                         if Task.isCancelled { break }
+                        // Stop between tokens the moment the app leaves the foreground.
+                        if AppActivity.shared.inBackground { interrupted = true; break }
                         switch event {
                         case .chunk(let text):
                             if filter.inside { self.thoughtChars += text.count }
@@ -186,6 +193,7 @@ final class LLMService {
                             break
                         }
                     }
+                    if interrupted { throw LLMError.interrupted }
                     let rest = filter.flush()
                     if !rest.isEmpty { continuation.yield(rest) }
                     continuation.finish()
