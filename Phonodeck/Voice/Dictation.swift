@@ -17,7 +17,7 @@ final class Dictation {
     private(set) var listening = false
     private(set) var transcribing = false
     private(set) var text = ""
-    /// Counts each message sent from here, so the screens can empty their text box after "make it so".
+    /// Counts each message sent from here, so the screens can empty their text box after the send phrase.
     private(set) var sent = 0
     var error: String?
     /// Called with the finished text when the player says the send phrase (or taps send).
@@ -200,7 +200,7 @@ final class Dictation {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         guard send else { return }
-        // Tapping send while listening counts as "make it so": the same chirp.
+        // Tapping send while listening counts as saying the send phrase: the same chirp.
         ComputerSounds.shared.play(.ack, after: Self.ackDelay)
         if wasModel {
             let tail = box.takeAll()

@@ -81,12 +81,12 @@ struct SettingsView: View {
                             .multilineTextAlignment(.trailing)
                             .textInputAutocapitalization(.never)
                     }
-                    Toggle("Computer sounds", isOn: $computerSounds)
+                    Toggle("Sound cues", isOn: $computerSounds)
                         .onChange(of: computerSounds) { _, on in if !on { ComputerSounds.shared.stopHum() } }
                 } header: {
                     Text("Hands-free")
                 } footer: {
-                    Text("Computer sounds: a chirp when the microphone opens, another when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
+                    Text("Sound cues: a chirp when the microphone opens, another when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
                 }
 
                 Section {
@@ -124,7 +124,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var about: some View {
         Section {
-            Text("Phonodeck is an audio-first take on the holodeck: interactive stories you play with your voice. You pick a world or build your own, a storyteller narrates, and you decide what happens next.")
+            Text("Phonodeck is interactive stories you play with your voice. You pick a world or build your own, a storyteller narrates, and you decide what happens next.")
         } header: {
             Text("What it is")
         }

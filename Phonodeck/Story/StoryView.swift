@@ -43,7 +43,7 @@ struct StoryView: View {
                 }
             }
             .onChange(of: dictation.text) { _, t in if dictation.listening { input = t } }
-            // "Make it so" sent what was said: empty the box for the next turn.
+            // The send phrase sent what was said: empty the box for the next turn.
             .onChange(of: dictation.sent) { input = "" }
             .onChange(of: engine.handsFree) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
             .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
