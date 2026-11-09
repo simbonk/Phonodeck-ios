@@ -42,18 +42,34 @@ final class ComputerSounds {
 
     // MARK: Playing
 
-    func play(_ cue: Cue) {
+    /// Plays a cue. `after` waits that long first; "make it so" uses it because the chirp comes the moment
+    /// the microphone shuts, and iOS takes a beat to rebuild the audio route then, swallowing anything
+    /// that starts during it (the chirp is only a third of a second long).
+    func play(_ cue: Cue, after delay: Double = 0) {
         guard Self.enabled else { return }
-        Narrator.configureSession()
         if cuePlayers[cue] == nil {
             cuePlayers[cue] = try? AVAudioPlayer(data: Self.wav(Self.renderCue(cue)), fileTypeHint: AVFileType.wav.rawValue)
             cuePlayers[cue]?.prepareToPlay()
         }
         guard let p = cuePlayers[cue] else { return }
-        p.currentTime = 0
-        p.volume = 1
-        p.play()
+        // The thinking hum waits for the chirp, so the chirp is heard on its own first.
+        cueEndsAt = max(cueEndsAt, Date().addingTimeInterval(delay + p.duration))
+        Task { @MainActor in
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            // If the route is still settling, play() refuses; try again a moment later.
+            for attempt in 0..<4 {
+                guard Self.enabled else { return }
+                Narrator.configureSession()
+                p.currentTime = 0
+                p.volume = 1
+                if p.play() { return }
+                try? await Task.sleep(for: .milliseconds(120 * (attempt + 1)))
+            }
+        }
     }
+
+    /// When the last cue that was asked for finishes.
+    private var cueEndsAt = Date.distantPast
 
     /// Starts the thinking hum (fades in over two seconds). Does nothing if it is already playing.
     func startHum() {
@@ -64,6 +80,8 @@ final class ComputerSounds {
         warm()
         let clip = humClip
         Task { @MainActor in
+            let wait = self.cueEndsAt.timeIntervalSinceNow
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
             if self.humPlayer == nil, let data = await clip?.value {
                 self.humPlayer = try? AVAudioPlayer(data: data, fileTypeHint: AVFileType.wav.rawValue)
                 self.humPlayer?.numberOfLoops = -1
