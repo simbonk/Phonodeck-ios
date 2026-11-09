@@ -286,6 +286,8 @@ final class StoryEngine {
         a.visit(a.location, from: "")
         if !a.location.isEmpty, !a.lore.contains(where: { $0.name.caseInsensitiveCompare(a.location) == .orderedSame }) {
             addLore(&a, LoreEntry(name: a.location, kind: .place, desc: openingPlace == a.location ? "" : openingPlace))
+        } else {
+            Self.enrichPlace(&a, a.location, with: openingPlace)
         }
         let cap = (a.minutes >= 30 ? 3 : 2) + 1
         var people = 0
@@ -990,6 +992,19 @@ final class StoryEngine {
         return name.prefix(1).uppercased() + name.dropFirst()
     }
 
+    /// A description the model wrote where a place's name belonged is added to that place's details
+    /// (once), so nothing it painted is lost when the name snaps to the known place.
+    static func enrichPlace(_ a: inout Adventure, _ name: String, with raw: String) {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count > 40 || text.contains(". "), text.caseInsensitiveCompare(name) != .orderedSame,
+              let i = a.lore.firstIndex(where: { $0.kind == .place && $0.name.caseInsensitiveCompare(name) == .orderedSame }),
+              !a.lore[i].byPlayer else { return }
+        let desc = a.lore[i].desc
+        guard !desc.lowercased().contains(String(text.lowercased().prefix(30))) else { return }
+        let joined = desc.isEmpty ? text : desc.trimmingCharacters(in: .whitespaces) + (desc.hasSuffix(".") ? " " : ". ") + text
+        a.lore[i].desc = joined.count <= 600 ? joined : String(joined.prefix(600)) + "…"
+    }
+
     /// People positions from a model's JSON: [{name, where, doing, heading}].
     static func whereabouts(_ raw: Any?) -> [Whereabout] {
         ((raw as? [[String: Any]]) ?? []).compactMap { d in
@@ -1212,6 +1227,7 @@ final class StoryEngine {
         a.events = Array(a.events.suffix(30))
         if let raw = (m["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
             let loc = Self.placeName(raw, known: a.lore.filter { $0.kind == .place }.map(\.name) + a.places)
+            Self.enrichPlace(&a, loc, with: raw)
             a.visit(loc, from: a.location)
             a.location = loc
         }
