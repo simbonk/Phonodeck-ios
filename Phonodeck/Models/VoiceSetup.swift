@@ -253,7 +253,8 @@ struct OptionCard<Extra: View>: View {
         }
         .padding(12)
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(selected && installed ? Theme.accent.opacity(0.7) : Theme.line))
+        // strokeBorder keeps the outline inside the card, so a list row can't clip its edge.
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected && installed ? Theme.accent.opacity(0.7) : Theme.line, lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: 10))
         .onTapGesture { if installed && !selected { use() } }
         .task { if let e = entry, app.store.facts[e.id] == nil { await app.store.loadFacts(e) } }
@@ -295,24 +296,28 @@ struct DeleteModelButton: View {
     }
 }
 
-/// What is in memory right now for one kind of model, with Load, Unload and Restart, for when things go squirrelly.
+/// What is in memory right now, with Load, Unload and Restart, for when things go squirrelly.
+/// Shows every kind of model, or only one when `kind` is set.
 struct MemoryPanel: View {
     @Environment(AppModel.self) private var app
-    let kind: ModelEntry.Kind
+    var kind: ModelEntry.Kind? = nil
 
-    /// Whether there is anything to show for that kind (a downloaded model is chosen).
-    @MainActor static func shows(_ kind: ModelEntry.Kind, _ app: AppModel) -> Bool {
+    /// Whether there is anything to show (a downloaded model is chosen), for one kind or any.
+    @MainActor static func shows(_ kind: ModelEntry.Kind?, _ app: AppModel) -> Bool {
         switch kind {
         case .language: app.store.hasLanguageModel
         case .voice: app.store.voiceModel != nil
         case .listening: app.store.listeningModel != nil
+        case nil: app.store.hasLanguageModel || app.store.voiceModel != nil || app.store.listeningModel != nil
         }
     }
+
+    private func has(_ k: ModelEntry.Kind) -> Bool { kind == nil || kind == k }
 
     var body: some View {
         let busy = app.llm.busy || app.engine.busy
         VStack(alignment: .leading, spacing: 12) {
-            if kind == .language, let e = app.store.language, app.store.hasLanguageModel {
+            if has(.language), let e = app.store.language, app.store.hasLanguageModel {
                 row(icon: "brain", name: e.name, state: llmState) {
                     if app.llm.loadedID == nil {
                         Button("Load") { Task { await app.llm.preload() } }.disabled(app.llm.phase == .loading)
@@ -322,20 +327,20 @@ struct MemoryPanel: View {
                     }
                 }
             }
-            if kind == .voice, let v = app.store.voiceModel {
+            if has(.voice), let v = app.store.voiceModel {
                 row(icon: "speaker.wave.2", name: v.name,
                     state: app.narrator.preparing ? "Loading…" : app.narrator.loadedVoiceID == v.id ? String(format: "In memory · about %.1f GB", app.narrator.neuralLoadedGB) : "Not loaded (loads when it first speaks)") {
                     if app.narrator.loadedVoiceID != nil { Button("Unload") { app.narrator.unloadNeural() } }
                 }
             }
-            if kind == .listening, let l = app.store.listeningModel {
+            if has(.listening), let l = app.store.listeningModel {
                 row(icon: "mic", name: l.name,
                     state: app.dictation.loadedModelID == l.id ? "In memory" : "Not loaded (loads when you speak)") {
                     if app.dictation.loadedModelID != nil { Button("Unload") { app.dictation.unloadModel() }.disabled(app.dictation.listening) }
                 }
             }
-            if kind == .language, case .failed(let m) = app.llm.phase { Text(m).font(.caption).foregroundStyle(Theme.warn) }
-            if kind == .language, busy { Text("The model is busy; Unload and Restart are available when it finishes.").font(.caption).foregroundStyle(Theme.dim) }
+            if has(.language), case .failed(let m) = app.llm.phase { Text(m).font(.caption).foregroundStyle(Theme.warn) }
+            if has(.language), busy { Text("The model is busy; Unload and Restart are available when it finishes.").font(.caption).foregroundStyle(Theme.dim) }
         }
     }
 

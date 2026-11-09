@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The three jobs a model does, one tab each in Models.
 enum ModelsTab: String, CaseIterable, Identifiable {
-    case thinking, listening, speaking
+    case thinking, speaking, listening
     var id: Self { self }
 
     var title: String {
@@ -40,6 +40,16 @@ struct ModelsView: View {
         @Bindable var app = app
         NavigationStack {
             List {
+                if MemoryPanel.shows(nil, app) {
+                    Section {
+                        MemoryPanel()
+                    } header: {
+                        Text("In memory")
+                    } footer: {
+                        Text("If replies get strange or slow, Restart loads the thinking model fresh. Unloading frees memory; models load again by themselves when needed.")
+                    }
+                }
+
                 Section {
                     Picker("Models", selection: $app.modelsTab) {
                         ForEach(ModelsTab.allCases) { Text($0.title).tag($0) }
@@ -57,28 +67,16 @@ struct ModelsView: View {
                 case .thinking:
                     Section { ThinkingModels() }
                         .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                 case .listening:
                     Section { ListeningSetup(manage: true, showsIntro: false) }
                         .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                 case .speaking:
                     Section { NarratorSetup(manage: true, showsIntro: false) }
                         .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                     AppleVoiceSection()
-                }
-
-                if MemoryPanel.shows(app.modelsTab.kind, app) {
-                    Section {
-                        MemoryPanel(kind: app.modelsTab.kind)
-                    } header: {
-                        Text("In memory")
-                    } footer: {
-                        Text(app.modelsTab == .thinking
-                             ? "If replies get strange or slow, Restart loads the model fresh. Models load again by themselves when needed."
-                             : "Unloading frees memory for the thinking model; it loads again by itself when needed.")
-                    }
                 }
 
                 ModelSearchSection(kind: app.modelsTab.kind)
