@@ -10,12 +10,44 @@ struct SettingsView: View {
     @AppStorage("computerSounds") private var computerSounds = true
     @AppStorage(Reading.textSizeKey) private var textSize: Double = Reading.defaultTextSize
     @State private var editingCode = false
+    @State private var tab = SettingsTab.gameplay
 
+    enum SettingsTab: String, CaseIterable, Identifiable {
+        case gameplay = "Gameplay", privacy = "Privacy", about = "About"
+        var id: Self { self }
+    }
 
     var body: some View {
         @Bindable var engine = app.engine
         NavigationStack {
             Form {
+                switch tab {
+                case .gameplay: gameplay(engine)
+                case .privacy: privacy
+                case .about: about
+                }
+            }
+            .safeAreaInset(edge: .top) {
+                Picker("Settings", selection: $tab) {
+                    ForEach(SettingsTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Theme.bg)
+            }
+            .navigationTitle("Settings")
+            .sheet(isPresented: $editingCode) {
+                PasscodeSheet()
+            }
+        }
+    }
+
+    // MARK: Gameplay: you in stories, reading, hands-free and the Game Master
+
+    @ViewBuilder
+    private func gameplay(_ engine: StoryEngine) -> some View {
+        @Bindable var engine = engine
                 Section {
                     profileRow("Name", "Given by each story", $playerName)
                     profileRow("Gender", "Your own words", $playerGender)
@@ -67,6 +99,12 @@ struct SettingsView: View {
                     Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen), which can take up to about a minute a turn.")
                 }
 
+    }
+
+    // MARK: Privacy: the lock, and where to find help
+
+    @ViewBuilder
+    private var privacy: some View {
                 lockSection
 
                 Section {
@@ -79,17 +117,31 @@ struct SettingsView: View {
                     Text("Phonodeck's characters are fiction made up by an AI. They aren't a therapist or a friend who can help in a crisis; a real person can.")
                 }
 
-                Section {
-                    Text("Everything runs on this \(DeviceFit.deviceWord). Once the models are downloaded, Phonodeck works in Airplane Mode, and nothing you say or write leaves it.")
-                        .foregroundStyle(.secondary)
-                } header: {
-                    Text("About")
-                }
-            }
-            .navigationTitle("Settings")
-            .sheet(isPresented: $editingCode) {
-                PasscodeSheet()
-            }
+    }
+
+    // MARK: About: what Phonodeck is and how it works (to be expanded)
+
+    @ViewBuilder
+    private var about: some View {
+        Section {
+            Text("Phonodeck is an audio-first take on the holodeck: interactive stories you play with your voice. You pick a world or build your own, a storyteller narrates, and you decide what happens next.")
+        } header: {
+            Text("What it is")
+        }
+        Section {
+            Label("A thinking model (a language model) writes the story and the chat replies.", systemImage: "brain")
+            Label("A Game Master plans each reply and keeps track of time, places and people.", systemImage: "map")
+            Label("A speaking model reads the story aloud, and a listening model hears you in hands-free mode.", systemImage: "waveform")
+        } header: {
+            Text("How it works")
+        }
+        Section {
+            Text("Everything runs on this \(DeviceFit.deviceWord). Once the models are downloaded, Phonodeck works in Airplane Mode, and nothing you say or write leaves it.")
+        } header: {
+            Text("Private by design")
+        }
+        Section {
+            LabeledContent("Version", value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "–")
         }
     }
 
