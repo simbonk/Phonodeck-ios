@@ -77,7 +77,7 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent("Say this to send") {
-                        TextField("over to you", text: $sendPhrase)
+                        TextField("make it so", text: $sendPhrase)
                             .multilineTextAlignment(.trailing)
                             .textInputAutocapitalization(.never)
                     }

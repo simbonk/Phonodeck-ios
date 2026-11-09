@@ -5,7 +5,7 @@ import MLXAudioSTT
 import Observation
 import Speech
 
-/// Listens to the player. Say "over to you" at the end to send.
+/// Listens to the player. Say "make it so" at the end to send.
 ///
 /// Two engines, both fully offline:
 /// - Apple's on-device dictation (built in, words appear as you speak).
@@ -28,8 +28,7 @@ final class Dictation {
     /// The words that send what you said (Settings > Story can change them).
     static var sendPhrase: String {
         let s = UserDefaults.standard.string(forKey: "sendPhrase")?.trimmingCharacters(in: .whitespaces) ?? ""
-        // The old default is treated as unset, so it moves to the new one.
-        return s.isEmpty || s.lowercased() == "make it so" ? "over to you" : s.lowercased()
+        return s.isEmpty ? "make it so" : s.lowercased()
     }
 
     private let store: ModelStore
