@@ -611,6 +611,21 @@ final class StoryEngine {
         // gave no clear pronouns for takes them from it.
         if opening { checkPronouns(&a, texts: [a.bible, reply]) }
         var before: [String] = []
+        // How the context was packed, so a playthrough can be reviewed (token counts are estimates).
+        let memTokens: Int = memories.reduce(0) { $0 + Self.tokens($1) }
+        let turnTokens: Int = kept.reduce(0) { $0 + Self.tokens($1.1.text) + 8 }
+        let systemTokens = Self.tokens(system)
+        let briefTokens = Self.tokens(briefing(memories, plan: plan))
+        var ctx: [String] = []
+        ctx.append("CONTEXT (about \(systemTokens + briefTokens + turnTokens + maxOut) of \(LLMService.contextBudget) tokens, \(maxOut) kept for the reply):")
+        ctx.append("- rules and story bible: \(systemTokens)")
+        ctx.append("- briefing with memories and plan: \(briefTokens) (facts, continuity, notes and people alone: \(Self.tokens(briefing([]))))")
+        ctx.append("- recent turns word for word: \(kept.count) of \(max(0, a.transcript.count - 1)) (\(turnTokens))")
+        ctx.append("- recalled memories: \(memories.count) (\(memTokens), room for \(room * 2 / 7))")
+        if !plan.isEmpty { ctx.append("- plan: \(Self.tokens(plan))") }
+        ctx.append("- older turns folded into \(a.chapters.count) chapter summaries: \(a.summarisedTurns)")
+        ctx.append("- continuity: \(a.timeline.count) timeline entries, \(a.whereabouts.count) people placed, \(a.facts.count) facts")
+        before.append(ctx.joined(separator: "\n"))
         if !notes.isEmpty { before.append("DIRECTOR NOTES:\n" + notes.map { "- " + $0 }.joined(separator: "\n")) }
         if !memories.isEmpty { before.append("RECALLED MEMORIES:\n" + memories.map { "- " + $0 }.joined(separator: "\n")) }
         if planning, !planThoughts.isEmpty { before.append("REASONING:\n" + planThoughts) }
