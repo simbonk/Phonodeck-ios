@@ -23,6 +23,13 @@ struct LockView: View {
                 .focused($focused)
                 .onSubmit(tryCode)
             if wrong { Text("That passcode didn't match.").foregroundStyle(.red).font(.footnote) }
+            if app.vault.needsPasscodeOnce {
+                Text("Enter your passcode once to turn on encryption for your stories and chats.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 280)
+            }
             Button("Unlock", action: tryCode)
                 .buttonStyle(.borderedProminent)
                 .disabled(code.isEmpty)
@@ -34,7 +41,8 @@ struct LockView: View {
                 }
             }
             Spacer()
-            Spacer()
+            CrisisLine()
+                .frame(maxWidth: 320)
         }
         .padding()
         .onAppear {
