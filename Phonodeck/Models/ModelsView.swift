@@ -40,14 +40,13 @@ struct ModelsView: View {
         @Bindable var app = app
         NavigationStack {
             List {
-                if MemoryPanel.shows(nil, app) {
-                    Section {
-                        MemoryPanel()
-                    } header: {
-                        Text("In memory")
-                    } footer: {
-                        Text("If replies get strange or slow, Restart loads the thinking model fresh. Unloading frees memory; models load again by themselves when needed.")
-                    }
+                Section {
+                    MemoryBar()
+                    if MemoryPanel.shows(nil, app) { MemoryPanel() }
+                } header: {
+                    Text("In memory")
+                } footer: {
+                    Text("\(DeviceFit.deviceName), \(String(format: "%.0f", DeviceFit.ramGB.rounded())) GB. iOS lets an app use about \(String(format: "%.1f", DeviceFit.modelBudgetGB)) GB for models. If replies get strange or slow, Restart loads the thinking model fresh; models load again by themselves when needed.")
                 }
 
                 Section {
@@ -76,14 +75,17 @@ struct ModelsView: View {
                     Section { NarratorSetup(manage: true, showsIntro: false) }
                         .listRowBackground(Color.clear)
                         .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-                    AppleVoiceSection()
+                    if store.voiceID == nil { AppleVoiceSection() }
                 }
 
-                ModelSearchSection(kind: app.modelsTab.kind)
-                AddByLinkSection(kind: app.modelsTab.kind)
-
-                Section {} footer: {
-                    Text("This \(DeviceFit.deviceWord): \(DeviceFit.deviceName), \(String(format: "%.0f", DeviceFit.ramGB.rounded())) GB memory, of which iOS lets an app use about \(String(format: "%.1f", DeviceFit.modelBudgetGB)) GB for models. Models that can't fit are left out. Downloads are big, so use Wi-Fi.")
+                Section {
+                    NavigationLink {
+                        AddModelPage(kind: app.modelsTab.kind, title: app.modelsTab.title)
+                    } label: {
+                        Label("Add a custom model…", systemImage: "plus.magnifyingglass")
+                    }
+                } footer: {
+                    Text("Search Hugging Face or paste a link. Models that can't fit on this \(DeviceFit.deviceWord) are left out. Downloads are big, so use Wi-Fi.")
                 }
             }
             .buttonStyle(.borderless)   // keeps each button in a row separate
@@ -189,7 +191,54 @@ private struct ThinkingModels: View {
     }
 }
 
-/// Apple's built-in voice: which one, and how fast it speaks. (Neural voices are chosen above.)
+/// Search Hugging Face, paste a link, or set a token, for one kind of model.
+private struct AddModelPage: View {
+    let kind: ModelEntry.Kind
+    let title: String
+
+    var body: some View {
+        List {
+            ModelSearchSection(kind: kind)
+            AddByLinkSection(kind: kind)
+        }
+        .buttonStyle(.borderless)
+        .navigationTitle("Add a \(title.lowercased()) model")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// How much of the memory iOS gives the app the loaded models take, with Unload all.
+private struct MemoryBar: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        let used = usedGB
+        let budget = DeviceFit.modelBudgetGB
+        let f = min(1, used / max(budget, 0.1))
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(String(format: "%.1f of %.1f GB used", used, budget)).font(.subheadline.bold().monospacedDigit())
+                Spacer()
+                Button("Unload all") {
+                    app.llm.unload()
+                    app.narrator.unloadNeural()
+                    app.dictation.unloadModel()
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                .disabled(used < 0.05 || app.llm.busy || app.engine.busy || app.dictation.listening)
+            }
+            ProgressView(value: f)
+                .tint(f < 0.75 ? Theme.accent : f < 0.9 ? .orange : .red)
+        }
+    }
+
+    private var usedGB: Double {
+        app.llm.loadedGB + app.narrator.neuralLoadedGB + app.dictation.loadedGB
+    }
+}
+
+/// Apple's built-in voice: which one, and how fast it speaks. Shown only while it is the narrator.
 private struct AppleVoiceSection: View {
     @AppStorage("appleVoice") private var appleVoice = ""
     @AppStorage("speechRate") private var speechRate = 0.5
@@ -199,14 +248,14 @@ private struct AppleVoiceSection: View {
             NavigationLink {
                 AppleVoicePicker(selection: $appleVoice)
             } label: {
-                LabeledContent("Apple voice", value: appleVoiceName)
+                LabeledContent("Voice", value: appleVoiceName)
             }
             VStack(alignment: .leading) {
-                Text("Apple voice speed")
+                Text("Speed")
                 Slider(value: $speechRate, in: 0.35...0.6)
             }
         } header: {
-            Text("Apple voice")
+            Text("Apple voice settings")
         } footer: {
             Text("For a better Apple voice, download a Premium or Enhanced one in the iPhone's Settings > Accessibility > Spoken Content > Voices.")
         }
