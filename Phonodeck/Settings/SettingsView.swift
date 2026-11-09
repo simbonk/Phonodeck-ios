@@ -233,6 +233,11 @@ struct SupportView: View {
     var body: some View {
         Form {
             Section {
+                Text("Use Phonodeck responsibly. Stories are for fun and imagination, not for leaning into anything that harms you or someone else. And remember that no data on a phone is ever completely private, so be careful what you save.")
+            } header: {
+                Text("Play responsibly")
+            }
+            Section {
                 Text("Stories are best in doses. If you've been playing for a long time, or a story is weighing on you, put the phone down for a while: go outside, get some air and daylight, move around, or message a friend.")
             } header: {
                 Text("Take a break")
@@ -267,7 +272,7 @@ struct ParentNoteView: View {
             }
             Section {
                 Text("Phonodeck tells interactive stories using an AI language model that runs entirely on this phone. There's no account, and nothing is sent to a server or the cloud.")
-                Text("That doesn't mean nothing is kept. Stories and chats are saved on the phone. The passcode keeps them private from other people; it doesn't make what's written in them harmless.")
+                Text("That doesn't mean nothing is kept. Stories and chats are saved on the phone, and no data on a phone is ever completely private. The passcode keeps them from casual eyes; it doesn't make what's written in them harmless.")
             } header: {
                 Text("What it is")
             }
