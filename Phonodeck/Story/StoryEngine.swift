@@ -419,13 +419,15 @@ final class StoryEngine {
         a.places = src.places
         a.links = src.links
         if !opening.isEmpty { a.visit(opening, from: src.location) }
+        // Every place keeps its props from part to part, even after time passes; the new part's
+        // own opening scene wins for the place it opens in.
+        for (place, props) in src.placeThings where a.placeThings[place] == nil { a.placeThings[place] = props }
         guard !later else { return }
         if a.location.isEmpty, !src.location.isEmpty { a.location = src.location; a.visit(src.location, from: "") }
         if a.storyTime.isEmpty, let c = src.clock { a.clock = c; a.storyTime = src.storyTime }
         if a.whereabouts.isEmpty { a.whereabouts = src.whereabouts }
         if a.carrying.isEmpty { a.carrying = src.carrying }
         if a.things.isEmpty { a.things = src.things }
-        if a.placeThings.isEmpty { a.placeThings = src.placeThings }
     }
 
     /// "Right where it left off": the new part opens where the final scene ended, set in code from
@@ -1133,7 +1135,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10p"
+    static let build = "build 2026-11-10q"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
