@@ -613,7 +613,7 @@ final class StoryEngine {
         if !a.facts.isEmpty { out += ["", "## Facts now"] + a.facts.map { "- " + $0 } }
         if !a.storyTime.isEmpty { out += ["", "## Story time now", a.storyTime] }
         if !a.timeline.isEmpty { out += ["", "## Timeline"] + a.timeline.map { "- " + $0 } }
-        if !a.whereabouts.isEmpty { out += ["", "## Where people are"] + a.whereabouts.map { "- " + ($0.here == true ? "[in the room] " : $0.here == false ? "[elsewhere] " : "") + $0.line } }
+        if !a.whereabouts.isEmpty { out += ["", "## Where people are"] + a.whereabouts.map { "- " + ($0.here == false ? "[elsewhere] " : $0.engaged == true ? "[with you] " : $0.engaged == false ? "[in the room, background] " : $0.here == true ? "[in the room] " : "") + $0.line } }
         if !a.scene.isEmpty { out += ["", "## Scene now", a.scene] }
         if !a.carrying.isEmpty { out += ["", "## You have", a.carrying.joined(separator: "; ")] }
         if !a.things.isEmpty { out += ["", "## In this place", a.things.joined(separator: "; ")] }
@@ -936,7 +936,7 @@ final class StoryEngine {
         if planning, !planThoughts.isEmpty { before.append("REASONING:\n" + planThoughts) }
         if !plan.isEmpty { before.append("PLAN:\n" + plan) }
         if let f = presence, !f.dropped.isEmpty {
-            var why: [String] = f.caught.map { "\($0.name) is at \($0.at), not in the room with the player" }
+            var why: [String] = f.caught.map { "\($0.name) is at \($0.at), not with the player" }
             if f.echoes > 0 { why.append("\(f.echoes) sentence\(f.echoes == 1 ? "" : "s") copied word for word from earlier replies") }
             before.append("REPLY CHECK (in code, as the reply was written): "
                 + (f.restored ? "something should have been left out, but too little would have remained, so the reply was kept whole."
@@ -1001,7 +1001,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10g"
+    static let build = "build 2026-11-10h"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1245,12 +1245,15 @@ final class StoryEngine {
             let before = now.whereabouts
             now.whereabouts = whoWhere.map { w in
                 var w = w
-                if let old = before.first(where: { $0.name.caseInsensitiveCompare(w.name) == .orderedSame }) { w.here = old.here; w.leftAt = old.leftAt }
+                if let old = before.first(where: { $0.name.caseInsensitiveCompare(w.name) == .orderedSame }) { w.here = old.here; w.leftAt = old.leftAt; w.engaged = old.engaged }
                 return w
             } + before.filter { o in !whoWhere.contains { $0.name.caseInsensitiveCompare(o.name) == .orderedSame } }
             now.whereabouts = Array(now.whereabouts.filter { !Self.echoesPrompt($0.at) }.prefix(8))
         }
-        // Who is in the room with the player is kept in code. A small model cannot be trusted to say
+        // Presence has three states. With the player: the people the review names. In the room but
+        // in the background: there, visible, but they keep to themselves until the player turns to
+        // them. Elsewhere: left behind when the player went somewhere else; never shown.
+        // Who is in the room at all is kept in code. A small model cannot be trusted to say
         // it: asked who is "here", it names only whoever the player is talking to. So everyone the
         // story has placed counts as in the room until the player leaves the place without them.
         // That takes two things agreeing: the review's "left" answer, and an exchange that reads
@@ -1261,8 +1264,12 @@ final class StoryEngine {
         let left = (m["left"] as? Bool) == true && Continuity.leavesPlace(playerSaid + " " + lastReply)
         let named = ((m["here"] as? [Any]) ?? []).compactMap { ($0 as? String)?.lowercased().split(separator: " ").first.map(String.init) }
         let me = now.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
+        let toldWho = m["here"] is [Any]
         for i in now.whereabouts.indices {
             let first = now.whereabouts[i].name.lowercased().split(separator: " ").first.map(String.init) ?? ""
+            // The review's list is really "who the player is dealing with": that is kept too. The
+            // others in the room are background, and do not break into the conversation.
+            if toldWho { now.whereabouts[i].engaged = named.contains(first) }
             if first == me || first == "you" || named.contains(first) {
                 now.whereabouts[i].here = true
                 now.whereabouts[i].leftAt = nil
@@ -1675,8 +1682,15 @@ final class StoryEngine {
         let dull: Set<String> = ["with", "from", "near", "there", "their", "into", "onto", "that", "this", "where", "while", "inside", "outside", "sitting", "standing", "seated", "walking"]
         let going = Set(said.split(whereSeparator: { !$0.isLetter }).map(String.init).filter { $0.count >= 4 && !dull.contains($0) })
         let me = a.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
+        // Someone in the room the player is not dealing with stays in the background too, as long as
+        // the player is dealing with somebody.
+        let someone = a.whereabouts.contains { w in
+            let first = w.name.lowercased().split(separator: " ").first.map(String.init) ?? ""
+            return first != me && first != "you" && w.here != false && w.engaged == true
+        }
         return a.whereabouts.compactMap { w -> PresenceFilter.Absent? in
-            guard w.here == false, w.heading.isEmpty else { return nil }
+            let background = someone && w.here != false && w.engaged == false
+            guard w.here == false || background, w.heading.isEmpty || background else { return nil }
             let first = w.name.lowercased().split(separator: " ").first.map(String.init) ?? w.name.lowercased()
             if first == me || first == "you" || first.count < 3 { return nil }
             if said.contains(first) || planned.contains(first) { return nil }
@@ -1821,7 +1835,14 @@ final class StoryEngine {
                 w.name + " (" + pronoun(w.name) + clip(w.at + (w.doing.isEmpty ? "" : ", " + w.doing), tight >= 2 ? 90 : 130)
                     + (w.heading.isEmpty ? "" : ", heading to " + clip(w.heading, 60)) + ")"
             }
-            let here = others.filter { $0.here == true }, away = others.filter { $0.here == false }, unknown = others.filter { $0.here == nil }
+            let inRoom = others.filter { $0.here == true }, away = others.filter { $0.here == false }, unknown = others.filter { $0.here == nil }
+            // With nobody named as with the player, nobody is pushed into the background.
+            let someone = inRoom.contains { $0.engaged == true }
+            let here = inRoom.filter { !someone || $0.engaged != false }
+            let background = inRoom.filter { someone && $0.engaged == false }
+            if !background.isEmpty {
+                l.append("- In the room, in the background (they keep to their own business and stay quiet unless the player speaks to them): " + background.prefix(4).map(brief).joined(separator: "; "))
+            }
             if !here.isEmpty {
                 l.append("- With you (only they can speak, act or be seen; nobody changes place or posture unless the reply shows it): " + here.prefix(5).map(brief).joined(separator: "; "))
             } else if !away.isEmpty, unknown.isEmpty {
