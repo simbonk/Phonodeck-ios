@@ -36,7 +36,7 @@ enum Prompts {
     KEEP THE WORLD SOLID
     - Pronouns, looks, history and places stay exactly as the facts give them, including the city and region the story is set in.
     - People stay where they are, sitting or standing, until the reply shows them move. Nobody appears from nowhere.
-    - When the player goes somewhere, the scene goes with them and stays there. People left behind are out of sight and earshot: they do not speak, watch or call out until the player returns.
+    - When the player goes somewhere, the scene goes with them and stays there. People left behind are out of sight and earshot: they do not speak, watch or call out, and the story never cuts away to show them, until the player returns.
     - The player has only what the facts say they carry: never hand them new tickets, keys or props. What was paid, given or taken stays that way.
     - Time only moves forward, and the light and sky match the story time.
     """
@@ -129,7 +129,7 @@ enum Prompts {
     PLAYER: the NEW MESSAGE, restated faithfully with nothing added (a question stays a question; never invent the player's words, answers or feelings)
     ANSWER: if they asked anything, the concrete, factual answer a character or the narration gives first (names, places, what happened); otherwise "none"
     BEAT: the one thing that happens in this reply, and how it delivers the FEELING TO ACHIEVE and moves the story one step along the roadmap for this minute
-    WHO: where the player ends up in this reply, who is with them there, exactly where and whether sitting or standing, with pronouns (people elsewhere stay where they are)
+    WHO: where the player ends up in this reply and who is with them there, sitting or standing, with pronouns. Name only people who are with the player; leave out anyone who is somewhere else
     USE: one memory, character, place or earlier detail to bring back
     Each line at most 30 words. Plain words, no prose for the player.
     """
@@ -209,16 +209,18 @@ enum Prompts {
     /// aloud: it checks the reply against the facts, notes slips to correct from now on, keeps the
     /// list of facts current, and proposes the next move. The next turn's plan realigns it.
     static let review = """
-    You are the Game Master of an interactive audio story, reviewing the reply you just wrote while the player listens to it. Check it against the bible, the facts and the set-up limits, then output ONLY one JSON object:
-    {"fixes":["at most 3 real slips in the latest reply, each as the true version, e.g. 'The ferry left at noon, so it is gone now'; [] if there are none"],
-     "facts":["the full updated list of 6-12 short facts that must stay true, as separate strings: keep the old ones that still hold, add what this exchange established (names learned, promises, who is present, what the player now has, what was paid or given and to whom, the city and region the story is in). Lasting truths only: where people are right now goes in scene and people, never here"],
-     "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
-     "scene":"where the player is now; who is with them and exactly where (or alone); where each other named person is; what the player is wearing and carrying",
+    You are the Game Master of an interactive audio story, reviewing the reply you just wrote while the player listens to it. Output ONLY one JSON object:
+    {"scene":"where the player is now; who is in the same place with them and exactly where, sitting or standing; where anyone else is; what the player is wearing and carrying",
+     "here":["the name of each named person who is in the same room or open space as the player right now and could hear them speak"],
+     "people":[{"name":"each named person","where":"exactly where they are now, sitting or standing","doing":"what they are doing","heading":"where they are going, or empty if staying"}],
      "time":"the story time now: time of day, and how long since the story began, e.g. 'Mid-morning, the day after the storm'",
-     "timeline":["only what this reply added to the story's history, each with its story time, e.g. 'Tuesday, 8:50 PM: Walter poured you a whiskey' (never 'now', 'just now' or 'ten minutes ago')"],
-     "people":[{"name":"each named person","where":"exactly where they are now, sitting or standing","with_player":true,"doing":"what they are doing","heading":"where they are going, or empty if staying"}],
-     "next":"2 sentences: what the next reply should do if the player goes along (the next small step on the roadmap toward the feeling, with the people already present), and one concrete detail to use"}
-    All eight keys are required, "next" included. Time only moves forward and only as far as the story showed; never rewrite when something happened. A person moves only if the reply showed them going; someone heading somewhere is not there yet. "with_player" is true only for someone in the same place as the player right now, close enough to talk; when the player walks away from someone, it turns false for them. A slip is anything that contradicts the bible, the facts, the scene or the limits: a changed pronoun, an object the player does not have, danger in a story without danger, someone appearing who was elsewhere, a new stranger from nowhere, a riddle in place of an answer, ignoring where the player said they were going, a changed time for a past event, a person in a new place or posture with no movement shown, a payment undone, a prop the player never had, narration that calls the player "they" or by name, using a name the player was never told. Only list a slip you can point to in the reply's own words; if the reply got something right, it is not a slip. Write real content about this story; never copy these descriptions. Never repeat a line. Keep the scene exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
+     "timeline":["at most 2 things this reply added to the story's history, each with its story time, e.g. 'Tuesday, 8:50 PM: Walter poured you a whiskey' (never 'now' or 'just now')"],
+     "new_facts":["0 to 3 short lasting facts this exchange established that CURRENT FACTS does not list yet: a name learned, a promise, something given or paid and to whom, something true about a person's life; [] if none"],
+     "fixes":["at most 1 real slip in the latest reply, as the true version, e.g. 'The ferry left at noon, so it is gone now'; [] if there is none"],
+     "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
+     "next":"2 sentences: what the next reply should do if the player goes along (the next small step on the roadmap toward the feeling, with the people who are here), and one concrete detail to use"}
+    "here" decides who may appear in the next reply, so get it exactly right. The bartender behind the bar and a guest at another table of the same room are both here. Someone in another room, indoors while the player is outdoors, or left behind when the player walked away is not here, even if they could watch through a window. If the player is alone, "here" is [].
+    Time only moves forward and only as far as the story showed. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip contradicts the bible, the facts or the scene: a changed pronoun, an object the player does not have, someone acting in the scene who was elsewhere, a person in a new place with no movement shown. Only list a slip you can point to in the reply's own words. Write real content about this story; never copy these descriptions. Keep the scene exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
     """
 
     /// Each key of the review, for asking again when a review leaves some out.
@@ -290,6 +292,9 @@ enum Prompts {
         "End with a quiet observation that invites the player to act.",
         "End on an interruption: someone arrives or a message lands.",
     ]
+
+    /// The ending nudge that brings someone or something new into the scene (not for calm scenes).
+    static let interruptingEnding = "End on an interruption: someone arrives or a message lands."
 
     // MARK: The set-up wizard
 
