@@ -41,6 +41,7 @@ enum JSONGrammar {
         return [
             "root ::= \"{\" ws " + [
                 key("scene") + " s240",
+                key("left") + " bool",
                 key("here") + " here",
                 key("people") + " people",
                 key("carrying") + " items",
@@ -61,6 +62,7 @@ enum JSONGrammar {
             #"timeline ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
             #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
             #"fixes ::= "[" ws ( s240 )? ws "]""#,
+            #"bool ::= "true" | "false""#,
             capped("s40", 40), capped("s60", 60), capped("s120", 120), capped("s160", 160), capped("s240", 240), capped("s400", 400),
             common,
         ].joined(separator: "\n")

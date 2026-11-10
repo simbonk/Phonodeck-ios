@@ -308,6 +308,15 @@ enum Continuity {
         return words.allSatisfy { w in have.contains(w) || have.contains(w + "s") || (w.hasSuffix("s") && have.contains(String(w.dropLast()))) }
     }
 
+    /// Whether an exchange reads like the player going from one place to another (out a door, down
+    /// a street), as opposed to crossing a room. Used with the review's own "left" answer: both
+    /// must agree before anyone is counted as left behind.
+    static func leavesPlace(_ text: String) -> Bool {
+        let t = text.lowercased().replacingOccurrences(of: "’", with: "'")
+        let exit = #"\b(outside|outdoors|out (into|onto|the door|we go|of the|of here)|steps? out|step(s|ped)? through|walk(s|ed|ing)? (out|to|toward|towards|down|along|away|home|into)|leav(e|es|ing)|left the|street|alley|alleyway|sidewalk|pavement|road|path|shore|beach|harbor|harbour|upstairs|downstairs|next door|another room|hallway|corridor|doorway|drive|drives|ride|rides|boards?|climbs?|follow(s|ed)? (him|her|them) (out|to|into|down|up))\b"#
+        return t.range(of: exit, options: .regularExpression) != nil
+    }
+
     // MARK: The review's shape
 
     /// The keys a review must have to be any use, in the order the prompt asks for them.

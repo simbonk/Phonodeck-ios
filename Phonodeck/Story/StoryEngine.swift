@@ -59,6 +59,8 @@ final class StoryEngine {
     private var housekeepingRunning = false
     private var undoSnapshot: Adventure?
     /// A turn the app had to stop because it left the foreground mid-reply; it runs again on return.
+    /// Where the player was when the turn began, so the review knows which place people were left in.
+    private var placeBeforeTurn = ""
     private var interruptedTurn: (input: String, hidden: Bool, forceFinal: Bool)?
     private var currentTask: Task<Void, Never>?
 
@@ -712,6 +714,7 @@ final class StoryEngine {
             a = adventure ?? a
         }
         let snapshot = a
+        placeBeforeTurn = a.location
         // The clock pauses while the Game Master thinks: the wait for its review just now, and the
         // planning before the last reply began.
         let played = clockTick(&a, hidden: hidden, paused: Date().timeIntervalSince(turnBegan) + a.gmWait)
@@ -767,7 +770,9 @@ final class StoryEngine {
             system = systemPrompt(a, tight: tight)
         }
         let fixed = Self.tokens(system) + Self.tokens(briefing([]))
-        let recallReserve = Self.recallChars * 2 / 7
+        // The story's own recent turns come first; recalled memories get what is left (never less
+        // than the minimum), because most of what they would say is already in those turns.
+        let recallReserve = minRecall + 40
         var kept: [(Int, StoryTurn)] = []
         var used = fixed
         for (i, t) in recent.reversed() {
@@ -791,9 +796,11 @@ final class StoryEngine {
         let keptIDs = Set(kept.map { $0.1.id })
         let older = a.transcript.enumerated().filter { !keptIDs.contains($0.element.id) }.map { ($0.offset + 1, $0.element) }
         let room = min(Self.recallChars, max(0, (budget - used) * 7 / 2))
-        let memories = hidden ? [] : await Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: min(6, a.chapters.count), budget: room,
+        let recalled = hidden ? [] : await Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: min(6, a.chapters.count), budget: room,
                                                            earlier: earlierStories(a))
         guard !Task.isCancelled else { adventure = snapshot; return }
+        // A recalled note about someone the briefing already describes says nothing new.
+        let memories = recalled.filter { m in !a.cast.contains { m.hasPrefix($0.name) } }
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
 
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
@@ -994,7 +1001,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10f"
+    static let build = "build 2026-11-10g"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1196,7 +1203,10 @@ final class StoryEngine {
         func items(_ k: String, cap: Int) -> [String] {
             list(k, cap: cap).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }.filter { $0.count >= 3 }
         }
-        if m["carrying"] is [Any] { now.carrying = items("carrying", cap: 6) }
+        // The model often answers [] while the player plainly holds something, so an empty list
+        // changes nothing.
+        let held = items("carrying", cap: 6)
+        if !held.isEmpty { now.carrying = held }
         let around = items("things", cap: 8)
         if !around.isEmpty { now.things = around }
         // The story clock is kept in code: the review may move it on (a little), never back.
@@ -1232,23 +1242,46 @@ final class StoryEngine {
         }
         if !whoWhere.isEmpty {
             // Someone the review forgot stays where they were.
-            now.whereabouts = whoWhere + now.whereabouts.filter { o in !whoWhere.contains { $0.name.caseInsensitiveCompare(o.name) == .orderedSame } }
+            let before = now.whereabouts
+            now.whereabouts = whoWhere.map { w in
+                var w = w
+                if let old = before.first(where: { $0.name.caseInsensitiveCompare(w.name) == .orderedSame }) { w.here = old.here; w.leftAt = old.leftAt }
+                return w
+            } + before.filter { o in !whoWhere.contains { $0.name.caseInsensitiveCompare(o.name) == .orderedSame } }
             now.whereabouts = Array(now.whereabouts.filter { !Self.echoesPrompt($0.at) }.prefix(8))
         }
-        // Who is in the room with the player: the review's "here" list decides it for everyone the
-        // story has placed. Someone it names who has no place yet is placed with the player.
-        if let here = m["here"] as? [Any] {
-            let inRoom = here.compactMap { ($0 as? String)?.lowercased().split(separator: " ").first.map(String.init) }
-            let me = now.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
-            for i in now.whereabouts.indices {
-                let first = now.whereabouts[i].name.lowercased().split(separator: " ").first.map(String.init) ?? ""
-                now.whereabouts[i].here = first == me || first == "you" || inRoom.contains(first)
-            }
-            for p in now.cast where now.whereabouts.count < 8 {
-                let first = p.name.lowercased().split(separator: " ").first.map(String.init) ?? ""
-                if inRoom.contains(first), !now.whereabouts.contains(where: { $0.name.lowercased().hasPrefix(first) }) {
-                    now.whereabouts.append(Whereabout(name: p.name, at: "with the player", here: true))
+        // Who is in the room with the player is kept in code. A small model cannot be trusted to say
+        // it: asked who is "here", it names only whoever the player is talking to. So everyone the
+        // story has placed counts as in the room until the player leaves the place without them.
+        // That takes two things agreeing: the review's "left" answer, and an exchange that reads
+        // like going from one place to another. Then whoever the review names as with the player
+        // came along and the rest stay where the player left them. They are back in the scene when
+        // the review names them again or the player returns to that place.
+        let playerSaid = start.transcript.last(where: { $0.role == .player })?.text ?? ""
+        let left = (m["left"] as? Bool) == true && Continuity.leavesPlace(playerSaid + " " + lastReply)
+        let named = ((m["here"] as? [Any]) ?? []).compactMap { ($0 as? String)?.lowercased().split(separator: " ").first.map(String.init) }
+        let me = now.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
+        for i in now.whereabouts.indices {
+            let first = now.whereabouts[i].name.lowercased().split(separator: " ").first.map(String.init) ?? ""
+            if first == me || first == "you" || named.contains(first) {
+                now.whereabouts[i].here = true
+                now.whereabouts[i].leftAt = nil
+            } else if left {
+                if now.whereabouts[i].here != false {
+                    now.whereabouts[i].here = false
+                    now.whereabouts[i].leftAt = placeBeforeTurn.isEmpty ? start.location : placeBeforeTurn
+                } else if let at = now.whereabouts[i].leftAt, !at.isEmpty, at.caseInsensitiveCompare(now.location) == .orderedSame || Continuity.names(place: at, in: now.location) {
+                    now.whereabouts[i].here = true
+                    now.whereabouts[i].leftAt = nil
                 }
+            } else if now.whereabouts[i].here == nil {
+                now.whereabouts[i].here = true
+            }
+        }
+        for p in now.cast where now.whereabouts.count < 8 {
+            let first = p.name.lowercased().split(separator: " ").first.map(String.init) ?? ""
+            if named.contains(first), !now.whereabouts.contains(where: { $0.name.lowercased().hasPrefix(first) }) {
+                now.whereabouts.append(Whereabout(name: p.name, at: "with the player", here: true))
             }
         }
         adventure = now
