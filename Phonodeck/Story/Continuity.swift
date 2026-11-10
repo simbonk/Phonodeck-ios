@@ -13,6 +13,102 @@ enum Continuity {
         return leads.contains(first) ? at : "at " + at
     }
 
+    // MARK: Names
+
+    /// What someone goes by before their name is said: their role, short ("the bartender at The
+    /// Hidden Root" becomes "the bartender", "a regular" becomes "the regular").
+    static func roleLabel(_ role: String) -> String {
+        var r = role.trimmingCharacters(in: .whitespacesAndNewlines)
+        for cut in [" at ", " in ", " who ", " whom ", " of the ", " from ", " on ", " with ", ",", ";", "("] {
+            if let range = r.range(of: cut) { r = String(r[..<range.lowerBound]) }
+        }
+        r = r.split(separator: " ").prefix(4).joined(separator: " ")
+        let low = r.lowercased()
+        if low.hasPrefix("a ") { r = "the " + r.dropFirst(2) }
+        else if low.hasPrefix("an ") { r = "the " + r.dropFirst(3) }
+        else if !low.hasPrefix("the ") && !low.hasPrefix("your ") && !low.isEmpty { r = "the " + r }
+        if r.isEmpty || r.lowercased() == "the" { return "the stranger" }
+        return r.prefix(1).lowercased() + r.dropFirst()
+    }
+
+    /// The people whose names have not been said in the story yet, each with the role they go by.
+    static func hiddenNames(_ a: Adventure) -> [(name: String, role: String)] {
+        guard a.nameless else { return [] }
+        return a.lore.filter { $0.kind == .person && !$0.isPlayer && !$0.known && !$0.byPlayer }
+            .map { ($0.name, roleLabel($0.role)) }
+    }
+
+    /// A text with every name the story has not said yet put back to the role it stands for
+    /// ("Walter pours" becomes "The bartender pours"). The player's own name, until they say it,
+    /// becomes "you". Used on everything the storyteller reads and on what the World panel shows.
+    static func unnamed(_ text: String, in a: Adventure, playerTold: Bool = true) -> String {
+        guard a.nameless, !text.isEmpty else { return text }
+        var out = text
+        var swaps: [(String, String)] = []
+        for h in hiddenNames(a) {
+            swaps.append((h.name, h.role))
+            for part in h.name.split(separator: " ").map(String.init) where part.count >= 3 && part.first?.isUppercase == true {
+                swaps.append((part, h.role))
+            }
+        }
+        if !playerTold, !a.playerName.isEmpty {
+            out = out.replacingOccurrences(of: "You are " + a.playerName + ", ", with: "You are ")
+            swaps.append((a.playerName, "you"))
+            if let first = a.playerName.split(separator: " ").first.map(String.init), first.count >= 3, first != a.playerName { swaps.append((first, "you")) }
+        }
+        // Longest first, so a full name goes before its first name.
+        for (name, role) in swaps.sorted(by: { $0.0.count > $1.0.count }) {
+            let pattern = #"(?:\b(?:Mr|Mrs|Ms|Miss|Mister|Señor|Señora|Senor|Senora)\.?\s+)?\b"# + NSRegularExpression.escapedPattern(for: name) + #"\b"#
+            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            let ns = out as NSString
+            var result = ""
+            var at = 0
+            for m in re.matches(in: out, range: NSRange(location: 0, length: ns.length)) {
+                let before = ns.substring(with: NSRange(location: at, length: m.range.location - at))
+                result += before
+                // Capitalised where a sentence or a quote begins.
+                let lead = (ns.substring(to: m.range.location) as String).reversed().first { !$0.isWhitespace }
+                let opens = lead == nil || ".!?\n\"“‘(:—".contains(lead!)
+                result += opens ? role.prefix(1).uppercased() + role.dropFirst() : role
+                at = m.range.location + m.range.length
+            }
+            out = result + ns.substring(from: at)
+        }
+        return out
+    }
+
+    /// A name the player gives for themselves: "My name is Ada", "I'm Ada Byron", "call me Ada".
+    static func selfIntroduction(_ input: String) -> String? {
+        let plain = #"(?i:my name is|my name's|name's|call me|they call me|the name is)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)"#
+        let short = #"(?i:\bi'm|\bi am|\bim)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)"#
+        let notNames: Set<String> = ["Sorry", "Fine", "Good", "Okay", "Ok", "Not", "Just", "Here", "So", "Tired", "Exhausted", "Hungry", "Lost", "New", "From",
+                                     "Looking", "Going", "Trying", "The", "A", "An", "Very", "Really", "Happy", "Glad", "Sure", "Well", "Alright", "All", "In", "On", "At"]
+        for pattern in [plain, short] {
+            guard let re = try? NSRegularExpression(pattern: pattern),
+                  let m = re.firstMatch(in: input, range: NSRange(location: 0, length: (input as NSString).length)),
+                  m.numberOfRanges > 1 else { continue }
+            var name = (input as NSString).substring(with: m.range(at: 1))
+            let words = name.split(separator: " ").map(String.init)
+            guard let first = words.first, !notNames.contains(first) else { continue }
+            if words.count > 1, notNames.contains(words[1]) || words[1].first?.isUppercase != true { name = first }
+            return name
+        }
+        return nil
+    }
+
+    /// Whom the player asks the name of: "you" (the person they are speaking to), "other" (someone
+    /// else, "what's her name?"), or nil when they don't ask a name at all.
+    static func asksName(_ input: String) -> String? {
+        let t = input.lowercased()
+        if t.range(of: #"\b(what'?s|what is|whats|tell me|may i (have|ask)|can i (have|get|ask))\s+(your|ur)\s+name\b|\bwho are you\b|\byour name\b|\bintroduce yourself\b|\bwho might you be\b|\band you are\b"#, options: .regularExpression) != nil {
+            return "you"
+        }
+        if t.range(of: #"\b(what'?s|what is|whats|know)\s+(his|her|their)\s+name\b|\bwho('?s| is)\s+(he|she|that|the)\b|\b(his|her|their) name\b"#, options: .regularExpression) != nil {
+            return "other"
+        }
+        return nil
+    }
+
     // MARK: Movement
 
     private static let motionVerbs = "go|goes|going|head|heading|walk|walking|run|running|hurry|hurrying|climb|climbing|swim|swimming|wander|wandering|stroll|strolling|drive|driving|ride|riding|step|stepping|move|moving|cross|crossing|return|returning|slip|slipping|sneak|sneaking|dash|dashing|race|racing|jog|jogging|come|coming|make my way|making my way|go back|come back"
@@ -443,7 +539,8 @@ enum Continuity {
 /// - Sentences copied word for word from the last few replies (small models sometimes start a
 ///   reply by repeating the previous one).
 struct PresenceFilter {
-    struct Absent { let name: String; let at: String }
+    /// `also`: what the story calls them while their name is not known ("the bartender").
+    struct Absent { let name: String; let at: String; var also: [String] = [] }
 
     let absent: [Absent]
     private let acts: NSRegularExpression?
@@ -479,9 +576,10 @@ struct PresenceFilter {
             if let first = p.name.split(separator: " ").first.map(String.init), first.count >= 3, first != p.name { names.append(first) }
         }
         names = names.filter { $0.count >= 3 && $0.first?.isUppercase == true }.sorted { $0.count > $1.count }
+        let roles = absent.flatMap(\.also).filter { $0.count >= 5 }.sorted { $0.count > $1.count }
         var re: NSRegularExpression?
-        if !names.isEmpty {
-            let n = "(?:" + names.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|") + ")"
+        if !names.isEmpty || !roles.isEmpty {
+            let n = "(?:" + (names.map { NSRegularExpression.escapedPattern(for: $0) } + roles.map { "(?i:" + NSRegularExpression.escapedPattern(for: $0) + ")" }).joined(separator: "|") + ")"
             // The person does something now ("Walter leans", "Walter quietly watches", "Walter is"), or
             // someone in the scene deals with them directly ("you hand it to Walter").
             let pattern = #"\b"# + n + #"\b(?!['’]s)\s+(?:[a-z]+ly\s+)?(?:[a-z]+s|is|has)\b"#

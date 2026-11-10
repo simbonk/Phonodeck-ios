@@ -364,7 +364,6 @@ struct CuratorView: View {
         let full = [first, last].map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: " ")
         // Remember the details for next time (never overwriting what Settings already has).
         let d = UserDefaults.standard
-        if (d.string(forKey: "playerName") ?? "").isEmpty, !full.isEmpty { d.set(full, forKey: "playerName") }
         if (d.string(forKey: "playerGender") ?? "").isEmpty, !gender.isEmpty { d.set(gender, forKey: "playerGender") }
         if !romNone, !romInterest.isEmpty, (d.string(forKey: "playerInterest") ?? "").isEmpty { d.set(romInterest, forKey: "playerInterest") }
 

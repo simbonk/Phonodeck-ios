@@ -9,6 +9,9 @@ struct WorldView: View {
     @State private var tab = Tab.world
     @State private var bible = ""
     @State private var editing: LoreEntry?
+    /// The bible as the panel shows it (names not said yet are shown as roles), to tell an edit apart.
+    @State private var shownBible = ""
+    @State private var myName = ""
 
     enum Tab: String, CaseIterable { case mission = "Mission", story = "Story", world = "World" }
 
@@ -37,7 +40,11 @@ struct WorldView: View {
                         }
                         .scrollDismissesKeyboard(.interactively)
                     }
-                    .onAppear { bible = a.bible }
+                    .onAppear {
+                        shownBible = Continuity.unnamed(a.bible, in: a)
+                        bible = shownBible
+                        myName = a.playerName
+                    }
                 }
             }
             .background(Theme.bg)
@@ -45,7 +52,7 @@ struct WorldView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { saveBible(); dismiss() }
+                    Button("Done") { saveBible(); app.engine.setPlayerName(myName); dismiss() }
                 }
             }
             .sheet(item: $editing) { e in
@@ -92,7 +99,7 @@ struct WorldView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(a.whereabouts) { w in
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(w.name).font(.subheadline.bold()).foregroundStyle(Theme.fg)
+                            Text(display(w.name, a)).font(.subheadline.bold()).foregroundStyle(Theme.fg)
                             Text([w.at, w.doing].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(Theme.dim)
                             if !w.heading.isEmpty { Text("Heading to " + w.heading).font(.caption).foregroundStyle(Theme.accent) }
                         }
@@ -106,7 +113,7 @@ struct WorldView: View {
             card {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(a.timeline.enumerated()), id: \.offset) { _, t in
-                        Text(t).font(.caption).foregroundStyle(Theme.fg)
+                        Text(Continuity.unnamed(t, in: a)).font(.caption).foregroundStyle(Theme.fg)
                     }
                 }
             }
@@ -185,13 +192,13 @@ struct WorldView: View {
             .frame(minHeight: 360)
             .padding(8)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(bible == a.bible ? Theme.line : Theme.accent.opacity(0.6)))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(bible == shownBible ? Theme.line : Theme.accent.opacity(0.6)))
         // Save appears only once something has been changed.
-        if bible != a.bible {
+        if bible != shownBible {
             HStack {
                 Button("Save story") { saveBible() }
                     .buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(Theme.onAccent)
-                Button("Discard changes") { bible = a.bible }
+                Button("Discard changes") { bible = shownBible }
                     .buttonStyle(.bordered)
             }
             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -199,13 +206,14 @@ struct WorldView: View {
     }
 
     private func saveBible() {
-        if let a = app.engine.adventure, bible != a.bible, !bible.isEmpty { app.engine.editBible(bible) }
+        if app.engine.adventure != nil, bible != shownBible, !bible.isEmpty { app.engine.editBible(bible); shownBible = bible }
     }
 
     // MARK: World (lore)
 
     @ViewBuilder
     private func world(_ a: Adventure) -> some View {
+        attributes(a)
         HStack {
             Text("\(a.lore.count) entries, collected as you play. Edit any of them; your words always win.")
                 .font(.footnote).foregroundStyle(Theme.dim)
@@ -241,17 +249,115 @@ struct WorldView: View {
 
     /// People the story hasn't named yet are shown by their role, so the panel never gives a name away.
     private func hidden(_ e: LoreEntry, _ a: Adventure) -> Bool {
-        e.kind == .person && !e.isPlayer && !e.known && !e.role.isEmpty && !e.byPlayer
+        e.kind == .person && !e.isPlayer && !e.known && !e.byPlayer && (a.nameless || !e.role.isEmpty)
     }
 
     private func shown(_ e: LoreEntry, _ a: Adventure) -> String {
-        hidden(e, a) ? e.role.prefix(1).uppercased() + e.role.dropFirst() : e.name
+        if e.isPlayer { return a.playerName.isEmpty ? "You" : a.playerName }
+        guard hidden(e, a) else { return e.name }
+        let r = a.nameless ? Continuity.roleLabel(e.role) : e.role
+        return r.prefix(1).uppercased() + r.dropFirst()
+    }
+
+    /// A person's name as the panel shows it.
+    private func display(_ name: String, _ a: Adventure) -> String {
+        if let e = a.lore.first(where: { $0.name == name && $0.kind == .person }) { return shown(e, a) }
+        return Continuity.unnamed(name, in: a)
+    }
+
+    // MARK: Attributes
+
+    /// Everything the game holds about the world right now, as the world check after each reply
+    /// leaves it. It updates while you play.
+    @ViewBuilder
+    private func attributes(_ a: Adventure) -> some View {
+        Caps(text: "You")
+        card {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Name").font(.caption.bold()).foregroundStyle(Theme.dim).frame(width: 92, alignment: .leading)
+                    TextField("None yet: say it in the story, or type it", text: $myName)
+                        .textFieldStyle(.roundedBorder)
+                        .submitLabel(.done)
+                        .onSubmit { app.engine.setPlayerName(myName) }
+                }
+                Text("Only for this story. Characters learn it when you say it to them.").font(.caption).foregroundStyle(Theme.dim)
+                Toggle("Hide names until they're said", isOn: Binding(get: { app.engine.adventure?.nameless ?? false },
+                                                                     set: { app.engine.setNameless($0) }))
+                    .font(.subheadline)
+                    .tint(Theme.accent)
+                if !a.carrying.isEmpty { attr("You have", a.carrying.joined(separator: "; ")) }
+            }
+        }
+        Caps(text: "Right now").padding(.top, 8)
+        card {
+            VStack(alignment: .leading, spacing: 6) {
+                if !a.location.isEmpty { attr("Place", a.location) }
+                if !a.storyTime.isEmpty { attr("Time", a.storyTime) }
+                if !a.scene.isEmpty { attr("Scene", Continuity.unnamed(a.scene, in: a)) }
+                let around = a.placeThings[a.location.lowercased()] ?? a.things
+                if !around.isEmpty { attr("In this place", around.joined(separator: "; ")) }
+            }
+        }
+        if !a.cast.isEmpty {
+            Caps(text: "People").padding(.top, 8)
+            ForEach(a.cast) { p in card { person(p, a) } }
+        }
+        if !a.facts.isEmpty {
+            Caps(text: "Facts").padding(.top, 8)
+            card {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(a.facts.enumerated()), id: \.offset) { _, f in
+                        Text("• " + Continuity.unnamed(f, in: a)).font(.callout).foregroundStyle(Theme.fg)
+                    }
+                }
+            }
+        }
+        if !a.checks.isEmpty {
+            Caps(text: "Last world check").padding(.top, 8)
+            card {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(a.checks.enumerated()), id: \.offset) { _, c in
+                        Text(Continuity.unnamed(c, in: a)).font(.caption).foregroundStyle(c.hasPrefix("Kept off") ? Theme.dim : Theme.fg)
+                    }
+                }
+            }
+        }
+        Divider().padding(.vertical, 8)
+    }
+
+    private func person(_ p: LoreEntry, _ a: Adventure) -> some View {
+        let w = a.whereabouts.first { $0.name == p.name }
+        let state = w.map { $0.here == false ? "elsewhere" : $0.engaged == true ? "with you" : $0.here == true ? "in the room" : "" } ?? ""
+        let pronouns = a.facts.first { $0.hasPrefix(p.name + " uses ") }.map { String($0.dropFirst(p.name.count + 6)).trimmingCharacters(in: CharacterSet(charactersIn: ". ")) } ?? ""
+        let first = p.name.split(separator: " ").first.map(String.init) ?? p.name
+        let about = a.facts.filter { $0.contains(first) && !$0.hasPrefix(p.name + " uses ") }
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(shown(p, a)).font(.headline).foregroundStyle(Theme.accent)
+                Text([hidden(p, a) ? "name not said yet" : "name known", pronouns, state].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(Theme.dim)
+            }
+            if let w, !w.at.isEmpty { attr("Where", w.at) }
+            if let w, !w.doing.isEmpty { attr("Doing", Continuity.unnamed(w.doing, in: a)) }
+            if let w, !w.heading.isEmpty { attr("Heading to", w.heading) }
+            ForEach(Array(about.enumerated()), id: \.offset) { _, f in
+                Text("• " + Continuity.unnamed(f, in: a)).font(.caption).foregroundStyle(Theme.fg)
+            }
+        }
+    }
+
+    private func attr(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label).font(.caption.bold()).foregroundStyle(Theme.dim).frame(width: 92, alignment: .leading)
+            Text(value).font(.callout).foregroundStyle(Theme.fg).frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func loreCard(_ e: LoreEntry, _ a: Adventure) -> some View {
         let masked = hidden(e, a)
-        var desc = e.desc
-        if masked {
+        var desc = Continuity.unnamed(e.desc, in: a)
+        if masked, !a.nameless {
             for part in [e.name] + e.name.split(separator: " ").map(String.init) where part.count > 2 {
                 desc = desc.replacingOccurrences(of: part, with: e.role)
             }

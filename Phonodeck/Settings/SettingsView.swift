@@ -3,7 +3,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var app
-    @AppStorage("playerName") private var playerName = ""
     @AppStorage("playerGender") private var playerGender = ""
     @AppStorage("playerInterest") private var playerInterest = ""
     @AppStorage("sendPhrase") private var sendPhrase = ""
@@ -49,13 +48,12 @@ struct SettingsView: View {
     private func gameplay(_ engine: StoryEngine) -> some View {
         @Bindable var engine = engine
                 Section {
-                    profileRow("Name", "Given by each story", $playerName)
                     profileRow("Gender", "Your own words", $playerGender)
                     profileRow("Attracted to", "Anyone", $playerInterest)
                 } header: {
                     Text("You in stories (optional)")
                 } footer: {
-                    Text("All optional and can be made up. Leave the name blank and each story gives you one that fits its world. Gender shapes how characters see and address you; Attracted to tells the story who your romantic interests might be.")
+                    Text("All optional and can be made up. Your name is set inside each story instead: say it to a character, or type it under the globe. Gender shapes how characters see and address you; Attracted to tells the story who your romantic interests might be.")
                 }
 
                 Section {

@@ -75,6 +75,16 @@ enum Prompts {
         return "## NAMED CHARACTERS\nAt most \(cap) named characters besides the player. Everyone else is known by their role (\"the pilot\")."
     }
 
+    /// Nameless until introduced: what the storyteller is told about the people it knows only by role.
+    static let namelessRule = "Anyone written by their role (\"the bartender\", \"the regular\") has no name the player knows yet: call them by that role and never make up a name for them. A name comes only when your briefing gives it."
+
+    /// Nameless until introduced: what the architect is told. The game still needs every person's
+    /// name to keep track of them; it keeps them secret until the story says them.
+    static func architectNameless(playerNamed: Bool) -> String {
+        "Every person still gets a name, and a short, clear \"role\" that says how the player sees them before they are introduced (\"the bartender\", \"the regular in the corner booth\"); the game keeps names hidden until they are said. In the bible, refer to each person by name once, then by role."
+            + (playerNamed ? "" : " The player has no name: leave the player's \"name\" empty and never name the player in the bible; write to them as 'you'.")
+    }
+
     static let shortRules = """
     ## SHORT STORY (15 minutes or less)
     - Impactful and clean: 70 to 130 words per reply, one clear goal, one main place, a small cast.
