@@ -214,28 +214,13 @@ struct WorldView: View {
     @ViewBuilder
     private func world(_ a: Adventure) -> some View {
         attributes(a)
-        HStack {
-            Text("Places and things, collected as you play. Tap any card to edit it; your words always win.")
-                .font(.footnote).foregroundStyle(Theme.dim)
-            Spacer()
-            Button {
-                editing = LoreEntry(name: "", kind: .person)
-            } label: {
-                Label("Add", systemImage: "plus")
-            }
-            .buttonStyle(.bordered)
+        Button {
+            editing = LoreEntry(name: "", kind: .person)
+        } label: {
+            Label("Add a person or thing", systemImage: "plus")
         }
-        // People are shown once, above, with everything the game holds about them.
-        let order: [LoreEntry.Kind] = [.place, .item, .faction, .other]
-        ForEach(order, id: \.self) { kind in
-            let list = a.lore.filter { $0.kind == kind }.sorted { ($0.isPlayer ? 0 : 1, shown($0, a)) < ($1.isPlayer ? 0 : 1, shown($1, a)) }
-            if !list.isEmpty {
-                Caps(text: title(kind)).padding(.top, 8)
-                ForEach(list) { e in
-                    Button { editing = e } label: { loreCard(e, a) }.buttonStyle(.plain)
-                }
-            }
-        }
+        .buttonStyle(.bordered)
+        .padding(.top, 4)
     }
 
     private func title(_ k: LoreEntry.Kind) -> String {
@@ -302,14 +287,20 @@ struct WorldView: View {
                 }
             }
         }
-        Caps(text: "Right now").padding(.top, 8)
+        // The scene: where you are and what is around you. Moving to a new room or going outside
+        // redraws it; the last place's things stay behind with it.
+        Caps(text: "The scene").padding(.top, 8)
         card {
             VStack(alignment: .leading, spacing: 6) {
-                if !a.location.isEmpty { attr("Place", a.location) }
+                attr("Place", a.location.isEmpty ? "On the way somewhere new" : a.location)
                 if !a.storyTime.isEmpty { attr("Time", a.storyTime) }
-                if !a.scene.isEmpty { attr("Scene", Continuity.unnamed(a.scene, in: a)) }
-                let around = a.placeThings[a.location.lowercased()] ?? a.things
-                if !around.isEmpty { attr("In this place", around.joined(separator: "; ")) }
+                if !a.scene.isEmpty { attr("What's happening", Continuity.unnamed(a.scene, in: a)) }
+                let around = a.location.isEmpty ? [] : (a.placeThings[a.location.lowercased()] ?? a.things)
+                if !around.isEmpty { attr("Props here", around.joined(separator: "; ")) }
+                let here = a.whereabouts.filter { $0.here != false }.map { display($0.name, a) + ($0.engaged == true ? " (with you)" : "") }
+                attr("People here", here.isEmpty ? "Nobody but you" : here.joined(separator: ", "))
+                let away = a.whereabouts.filter { $0.here == false }.map { w in display(w.name, a) + (w.leftAt.map { " (at " + $0 + ")" } ?? "") }
+                if !away.isEmpty { attr("Elsewhere", away.joined(separator: ", ")) }
             }
         }
         if !a.cast.isEmpty {
@@ -318,11 +309,12 @@ struct WorldView: View {
                 Button { editing = p } label: { card { person(p, a) } }.buttonStyle(.plain)
             }
         }
-        if !a.facts.isEmpty {
+        let facts = a.facts.filter { !Continuity.elsewhereFact($0, in: a) }
+        if !facts.isEmpty {
             Caps(text: "Facts").padding(.top, 8)
             card {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(a.facts.enumerated()), id: \.offset) { _, f in
+                    ForEach(Array(facts.enumerated()), id: \.offset) { _, f in
                         Text("• " + Continuity.unnamed(f, in: a)).font(.callout).foregroundStyle(Theme.fg)
                     }
                 }
@@ -338,7 +330,6 @@ struct WorldView: View {
                 }
             }
         }
-        Divider().padding(.vertical, 8)
     }
 
     private func person(_ p: LoreEntry, _ a: Adventure) -> some View {
