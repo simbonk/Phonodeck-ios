@@ -433,7 +433,15 @@ final class StoryEngine {
                 a.storyTime = end.time
             }
         }
-        if !end.people.isEmpty { a.whereabouts = end.people }
+        if !end.people.isEmpty {
+            // The ending says who was with the player at the last line; everyone else is elsewhere.
+            let with = end.withYou.lowercased()
+            a.whereabouts = end.people.map { p in
+                var w = p
+                if !with.isEmpty, let first = p.name.lowercased().split(separator: " ").first { w.here = with.contains(first) }
+                return w
+            }
+        }
         if !end.facts.isEmpty {
             let people = a.cast.map(\.name) + [a.playerName]
             var facts = end.facts.compactMap { Continuity.lastingFact($0, people: people) }
@@ -798,15 +806,30 @@ final class StoryEngine {
         if narrate { narrator.begin() }
         var reply = ""
         var interrupted = false
+        // Who is known to be somewhere else: they stay out of this reply (see PresenceFilter).
+        var presence = opening || hidden ? nil : PresenceFilter(absent: absentPeople(a, input: input, plan: plan))
         do {
             for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
                 if stage != "" {
                     stage = ""; thinkingSince = nil; forge?.close()
                     if !narrate { ComputerSounds.shared.stopHum() }   // otherwise it hums on until the voice starts
                 }
-                reply += piece
+                if presence != nil {
+                    let ok = presence!.feed(piece)
+                    reply = presence!.accepted
+                    streaming = presence!.preview
+                    if narrate, !ok.isEmpty { narrator.feed(ok) }
+                } else {
+                    reply += piece
+                    streaming = reply
+                    if narrate { narrator.feed(piece) }
+                }
+            }
+            if presence != nil {
+                let ok = presence!.finish()
+                reply = presence!.accepted
                 streaming = reply
-                if narrate { narrator.feed(piece) }
+                if narrate, !ok.isEmpty { narrator.feed(ok) }
             }
         } catch LLMError.interrupted {
             interrupted = true
@@ -852,6 +875,9 @@ final class StoryEngine {
         if !opening {
             a.fixes.removeAll { $0.hasPrefix(Self.checked) }
             a.fixes += continuitySlips(a, reply: reply).map { Self.checked + $0 }
+            for p in presence?.caught ?? [] {
+                a.fixes.append(Self.checked + "\(p.name) is not with the player: \(p.name) is at \(p.at) and stays out of the scene until the story shows them arriving.")
+            }
         }
         var before: [String] = []
         // How the context was packed, so a playthrough can be reviewed (token counts are estimates).
@@ -873,6 +899,12 @@ final class StoryEngine {
         if !memories.isEmpty { before.append("RECALLED MEMORIES:\n" + memories.map { "- " + $0 }.joined(separator: "\n")) }
         if planning, !planThoughts.isEmpty { before.append("REASONING:\n" + planThoughts) }
         if !plan.isEmpty { before.append("PLAN:\n" + plan) }
+        if let f = presence, !f.dropped.isEmpty {
+            before.append("PRESENCE CHECK (in code, as the reply was written): "
+                + (f.restored ? "an absent person appeared, but too little was left without them, so the reply was kept whole."
+                              : f.caught.map { "\($0.name) is at \($0.at), not with the player" }.joined(separator: "; ") + ". Left out of the reply:")
+                + (f.restored ? "" : "\n" + f.dropped.joined().trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
         a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.isEmpty ? nil : before.joined(separator: "\n\n")))
         streaming = ""
         if a.left == 0 && !hidden { a.ended = true }
@@ -932,7 +964,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10c"
+    static let build = "build 2026-11-10d"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1539,6 +1571,28 @@ final class StoryEngine {
     /// Slips a reply makes that code can see: a person's pronouns that contradict their fact, a time
     /// of day earlier than the story clock (or two far-apart times at once), narration that left
     /// second person, and things handed to the player that the story never gave them.
+    /// The people the tracker places somewhere other than with the player, for the presence check.
+    /// Anyone who may fairly turn up in this reply is left off: someone on their way, someone the
+    /// player names or goes looking for, someone the plan brings in, and someone whose place is
+    /// the place the player is in.
+    private func absentPeople(_ a: Adventure, input: String, plan: String) -> [PresenceFilter.Absent] {
+        guard !Continuity.moves(input) else { return [] }
+        let said = input.lowercased()
+        let who = plan.split(separator: "\n").first { $0.uppercased().hasPrefix("WHO") }.map { $0.lowercased() } ?? ""
+        let place = a.location.lowercased().trimmingCharacters(in: .whitespaces)
+        let me = a.playerName.lowercased()
+        return a.whereabouts.compactMap { w -> PresenceFilter.Absent? in
+            guard w.here == false, w.heading.isEmpty else { return nil }
+            let name = w.name.lowercased()
+            let first = name.split(separator: " ").first.map(String.init) ?? name
+            if name == me || name == "you" || (!me.isEmpty && first == me.split(separator: " ").first.map(String.init)) { return nil }
+            if said.contains(first) || who.contains(first) { return nil }
+            let at = w.at.lowercased()
+            if place.count >= 4, at.contains(place) || place.contains(at) { return nil }
+            return .init(name: w.name, at: w.at)
+        }
+    }
+
     private func continuitySlips(_ a: Adventure, reply: String) -> [String] {
         var out: [String] = []
         let firsts = a.cast.map { $0.name.split(separator: " ").first.map(String.init) ?? $0.name }
@@ -1588,8 +1642,12 @@ final class StoryEngine {
             guard !name.isEmpty, !at.isEmpty else { return nil }
             let heading = f("heading")
             let none = ["", "none", "nowhere", "staying", "n/a", "-"].contains(heading.lowercased())
+            var here = d["with_player"] as? Bool
+            if here == nil, let t = (d["with_player"] as? String)?.lowercased() {
+                here = ["true", "yes"].contains(t) ? true : ["false", "no"].contains(t) ? false : nil
+            }
             return Whereabout(name: String(name.prefix(60)), at: String(at.prefix(160)), doing: String(f("doing").prefix(120)),
-                              heading: none ? "" : String(heading.prefix(120)))
+                              heading: none ? "" : String(heading.prefix(120)), here: here)
         }
     }
 
@@ -1656,7 +1714,11 @@ final class StoryEngine {
         }
         if !a.whereabouts.isEmpty {
             l.append("- Where people are, sitting or standing (no one moves or changes posture unless the reply shows it; someone elsewhere cannot speak or be seen):")
-            l.append(contentsOf: a.whereabouts.prefix(tight >= 2 ? 4 : 6).map { "  - " + $0.line })
+            // People with the player come first, and each line says which side of the door they are on.
+            let placed = a.whereabouts.filter { $0.here == true } + a.whereabouts.filter { $0.here == nil } + a.whereabouts.filter { $0.here == false }
+            l.append(contentsOf: placed.prefix(tight >= 2 ? 4 : 6).map {
+                "  - " + ($0.here == true ? "[WITH THE PLAYER] " : $0.here == false ? "[NOT HERE: cannot speak, act or be seen] " : "") + $0.line
+            })
         }
         if !a.playerName.isEmpty, !nameTold(a) {
             let knew = a.cast.filter(\.known).map(\.name)
