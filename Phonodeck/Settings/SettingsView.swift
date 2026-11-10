@@ -93,6 +93,8 @@ struct SettingsView: View {
                     Toggle("Plans each reply", isOn: $engine.gmPlans)
                     Toggle("Reasons first (slower)", isOn: $engine.deepThinking)
                         .disabled(!engine.gmPlans)
+                    Toggle("Grounded engine", isOn: $engine.grounded)
+                        .disabled(!engine.gmPlans)
                 } header: {
                     Text("Game Master")
                 } footer: {
