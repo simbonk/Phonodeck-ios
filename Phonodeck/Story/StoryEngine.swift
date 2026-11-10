@@ -842,8 +842,10 @@ final class StoryEngine {
             plan = Self.fitTokens(plan, Self.planRoom - 40)
         }
         // Room the plan was promised and did not use goes to the story's own recent words.
-        if planning, let oldest = kept.first, !oldest.1.text.hasPrefix("…") {
-            var spare = Self.planRoom - 40 - Self.tokens(plan)
+        // So does room kept for recalled memories that none came back to fill.
+        if let oldest = kept.first, !oldest.1.text.hasPrefix("…") {
+            var spare = planning ? max(0, Self.planRoom - 40 - Self.tokens(plan)) : 0
+            spare += max(0, budget - used - memories.reduce(0) { $0 + Self.tokens($1) + 8 } - 40)
             for (i, t) in recent.reversed() where i < kept[0].0 {
                 let cost = Self.tokens(t.text) + 8
                 guard cost <= spare else { break }
@@ -903,7 +905,8 @@ final class StoryEngine {
                     var again = history
                     if let last = again.popLast() { again.append(ChatTurn(role: .user, text: last.text + "\n\n" + note)) }
                     var second = PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text))
-                    let survived = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let left = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let survived = left.split(whereSeparator: \.isWhitespace).count < 12 ? "" : left
                     for try await piece in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
                         let ok = second.feed(piece)
                         streaming = (survived.isEmpty ? "" : survived + "\n\n") + second.preview
@@ -968,7 +971,7 @@ final class StoryEngine {
             a.fixes.removeAll { $0.hasPrefix(Self.checked) }
             a.fixes += continuitySlips(a, reply: reply).map { Self.checked + $0 }
             for p in presence?.caught ?? [] {
-                a.fixes.append(Self.checked + "\(p.name) is not with the player: \(p.name) is at \(p.at) and stays out of the scene until the story shows them arriving.")
+                a.fixes.append(Self.checked + "\(p.name) is not with the player: \(p.name) is \(Continuity.placed(p.at)) and stays out of the scene until the story shows them arriving.")
             }
         }
         var before: [String] = []
@@ -992,7 +995,7 @@ final class StoryEngine {
         if planning, !planThoughts.isEmpty { before.append("REASONING:\n" + planThoughts) }
         if !plan.isEmpty { before.append((lastRead.isEmpty ? "" : "READ (fixed choices, settled in code): " + lastRead + "\n") + "PLAN:\n" + plan) }
         if let f = presence, !f.dropped.isEmpty {
-            var why: [String] = f.caught.map { "\($0.name) is at \($0.at), not with the player" }
+            var why: [String] = f.caught.map { "\($0.name) is \(Continuity.placed($0.at)), not with the player" }
             if f.echoes > 0 { why.append("\(f.echoes) sentence\(f.echoes == 1 ? "" : "s") copied word for word from earlier replies") }
             let cut = f.dropped.joined().trimmingCharacters(in: .whitespacesAndNewlines)
             var check = "REPLY CHECK (in code, as the reply was written): "
@@ -1064,7 +1067,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10l"
+    static let build = "build 2026-11-10m"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1175,6 +1178,8 @@ final class StoryEngine {
         if let act = a.roadmap.first(where: { played >= $0.from && played <= $0.to }) ?? a.roadmap.first(where: { played < $0.to }) {
             prompt += "\nTHE STORY IS HEADING TOWARD (only if the player goes along): " + clip(act.goal, 220)
         }
+        let known = a.facts.suffix(8).map { clip($0, 140) } + a.timeline.suffix(4).map { clip($0, 140) }
+        if !known.isEmpty { prompt += "\n\nKNOWN SO FAR (an answer never contradicts these):\n" + known.map { "- " + $0 }.joined(separator: "\n") }
         if let last = a.transcript.dropLast().last(where: { $0.role == .gm }) {
             prompt += "\n\nTHE STORY JUST SAID (already answered; context only):\n" + clip("…" + String(last.text.suffix(600)), 620)
         }
@@ -1196,6 +1201,16 @@ final class StoryEngine {
         else if let p = places.first(where: { $0.lowercased() == going }) { read.going = p }
         read.answer = Self.echoesPrompt(s("answer")) ? "" : clip(s("answer"), 260)
         read.beat = Self.echoesPrompt(s("beat")) ? "" : clip(s("beat"), 260)
+        // A beat lifted from the reply before would make the storyteller say it twice.
+        if let last = a.transcript.dropLast().last(where: { $0.role == .gm }), read.beat.count > 20 {
+            let b = PresenceFilter.key(read.beat)
+            var lifted = false
+            for sentence in PresenceFilter.sentences(last.text) {
+                let k = PresenceFilter.key(sentence)
+                if k == b || (k.count > 30 && (k.contains(b) || b.contains(k))) || Self.similar(sentence, read.beat) { lifted = true; break }
+            }
+            if lifted { read.beat = "" }
+        }
         return read.beat.isEmpty && read.to.isEmpty && read.going.isEmpty ? nil : read
     }
 
@@ -1247,13 +1262,19 @@ final class StoryEngine {
             + (!read.going.isEmpty && !leaving ? " (not acted on: the message does not read like leaving)" : "")
         // An answer is only kept when the player asked something, and never when it is the player's
         // own words handed back (an order or a request written as "I'll have...").
+        // A beat that opens on someone in the background would pull them into the conversation.
+        var beat = read.beat
+        if !with.isEmpty, let lead = beat.lowercased().split(whereSeparator: { !$0.isLetter }).first.map(String.init),
+           back.contains(where: { $0.lowercased().split(separator: " ").first.map(String.init) == lead }), !said.contains(lead) {
+            beat = ""
+        }
         let low = read.answer.lowercased()
         let own = ["i ", "i'll ", "i'd ", "i'm ", "yes, i", "my "].contains { low.hasPrefix($0) }
         let answer = Self.asks(input) && !own ? read.answer : ""
         return [
             "PLAYER: " + clip(input.replacingOccurrences(of: "\n", with: " "), 300),
             "ANSWER: " + (answer.isEmpty ? "none" : answer),
-            "BEAT: " + (read.beat.isEmpty ? "follow the player's lead and deliver the feeling" : read.beat),
+            "BEAT: " + (beat.isEmpty ? "follow the player's lead and deliver the feeling" : read.beat),
             "WHO: " + who,
         ].joined(separator: "\n")
     }
@@ -1372,7 +1393,7 @@ final class StoryEngine {
             if let i = facts.firstIndex(where: { Self.similar($0, f) }) { facts[i] = clip(f, 200) } else { facts.append(clip(f, 200)) }
         }
         // The first facts are the story's foundation (pronouns, the city); the newest are what just happened.
-        if facts.count > 12 { facts = Array(facts.prefix(5) + facts.suffix(7)) }
+        if facts.count > 15 { facts = Array(facts.prefix(6) + facts.suffix(9)) }
         now.facts = facts
         // A pronoun "fix" for something the reply got right is a false alarm (code checks pronouns itself).
         let castNames = start.cast.map(\.name)
@@ -1900,7 +1921,7 @@ final class StoryEngine {
     /// somewhere, anyone at a place the player mentions.
     private func absentPeople(_ a: Adventure, input: String, plan: String) -> [PresenceFilter.Absent] {
         let said = input.lowercased()
-        let planned = plan.split(separator: "\n").filter { l in ["ANSWER", "BEAT"].contains { l.uppercased().hasPrefix($0) } }
+        let planned = plan.split(separator: "\n").filter { l in (grounded ? ["ANSWER"] : ["ANSWER", "BEAT"]).contains { l.uppercased().hasPrefix($0) } }
             .joined(separator: " ").lowercased()
         let moving = Continuity.moves(input)
         let dull: Set<String> = ["with", "from", "near", "there", "their", "into", "onto", "that", "this", "where", "while", "inside", "outside", "sitting", "standing", "seated", "walking"]

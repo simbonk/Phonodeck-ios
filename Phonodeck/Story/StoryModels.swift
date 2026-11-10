@@ -430,7 +430,7 @@ struct Whereabout: Codable, Hashable, Identifiable {
 
     /// One plain line for the Game Master.
     var line: String {
-        var s = "\(name): at \(at)"
+        var s = "\(name): \(Continuity.placed(at))"
         if !doing.isEmpty { s += ", " + doing }
         s += heading.isEmpty ? ". Staying there." : ". Heading to " + heading + " (arrives only when the story shows it)."
         return s
