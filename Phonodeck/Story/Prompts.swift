@@ -110,6 +110,17 @@ enum Prompts {
     Each line at most 30 words. Plain words, no prose for the player.
     """
 
+    /// The grounded engine's first step: read the player's new message into fixed choices, so code
+    /// can settle who is in the scene and where it is before any prose is written.
+    static let readPlayer = """
+    You read the player's NEW MESSAGE in an interactive audio story and fill in a short form. Output ONLY one JSON object:
+    {"to":"the one person the player is speaking to or doing something with in the new message, or \"nobody\"",
+     "going":"\"staying\" if the player stays in the place they are in; the name of a place if they go there; \"somewhere new\" if they leave for a place that is not listed",
+     "answer":"if the player asked something, the plain factual answer the person they asked gives (names, places, what happened); otherwise empty",
+     "beat":"one sentence: the one thing that happens in the reply, between the player and whoever they are with, that delivers the FEELING"}
+    Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going. Never add to what the player said. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
+    """
+
     // MARK: Building the world
 
     /// The architect's reply is streamed, and the build screen lights up each stage as the model

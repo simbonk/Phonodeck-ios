@@ -68,6 +68,32 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// One of a fixed set of answers, as a JSON string. Names that can't be spelled safely in a
+    /// grammar are left out.
+    private static func choice(_ name: String, _ options: [String]) -> String {
+        let safe = options.filter { n in
+            !n.isEmpty && n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) }
+        }
+        return name + " ::= " + safe.map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
+    }
+
+    /// The reading of the player's new message (see `Prompts.readPlayer`): who they turn to and
+    /// where they go are picked from what exists, never written freely.
+    static func intent(cast: [String], places: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [
+                key("to") + " who",
+                key("going") + " where",
+                key("answer") + " s240",
+                key("beat") + " s240",
+            ].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("who", cast + ["nobody"]),
+            choice("where", ["staying"] + places + ["somewhere new"]),
+            capped("s240", 240),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// The memory pass (see `Prompts.memory`).
     static let memory = [
         "root ::= \"{\" ws " + [
