@@ -159,6 +159,24 @@ enum Continuity {
         return nil
     }
 
+    // MARK: Facts that last
+
+    /// A fact worth keeping as "always true", or nil. A line that only says where a person is or
+    /// what posture they are in right now ("Dolores sits beside Simon now", "Simon is alone at the
+    /// bar") is not one: it goes stale the moment they move, and then pulls the story back. If such
+    /// a line also says what they wear or carry, that part is kept.
+    static func lastingFact(_ fact: String, people: [String]) -> String? {
+        let firsts = people.compactMap { $0.split(separator: " ").first.map(String.init) }.filter { $0.count > 1 } + ["You", "The player"]
+        let names = firsts.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
+        let position = "^(" + names + #")(\s+\w+)?\s+(is|are|sits|stands|leans|waits|remains|stays)\s+(now\s+|still\s+|currently\s+)?(sitting|seated|standing|leaning|waiting|alone|at|behind|beside|next to|near|in|inside|outside|on|by|with|here|there|up)\b"#
+        guard fact.range(of: position, options: [.regularExpression, .caseInsensitive]) != nil else { return fact }
+        guard let keep = fact.range(of: #"\b(wearing|wears|carrying|carries|holding a|has a)\b"#, options: [.regularExpression, .caseInsensitive]) else { return nil }
+        let who = fact.split(separator: " ").prefix(while: { !["is", "are", "sits", "stands", "leans", "waits", "remains", "stays"].contains($0.lowercased()) }).joined(separator: " ")
+        let rest = String(fact[keep.lowerBound...])
+        let verb = rest.lowercased()
+        return who + (verb.hasPrefix("wears") || verb.hasPrefix("carries") || verb.hasPrefix("has") ? " " : " is ") + rest
+    }
+
     /// The reply writes the player's own words: a quote tagged "you say", "you whisper" and the
     /// like, before or after it.
     static func speaksForPlayer(_ reply: String) -> Bool {
@@ -350,5 +368,152 @@ enum Continuity {
         let toPrev = Double(p.intersection(contentWords(previous)).count) / Double(p.count)
         let toNew = Double(p.intersection(contentWords(input)).count) / Double(p.count)
         return toPrev >= 0.5 && toPrev > toNew + 0.2
+    }
+}
+
+/// Keeps people who are somewhere else out of the reply while it is being written.
+///
+/// The tracker knows who is with the player and who is not. A small model still lets an absent
+/// person lean over the bar, answer a question or watch from a doorway. This reads the reply
+/// sentence by sentence as it streams (plain string work, no model call, so it costs no wait) and,
+/// when the narration has an absent person acting in the scene, leaves out the rest of that
+/// paragraph before it is shown or read aloud. Names inside dialogue are fine (people talk about
+/// each other), so are possessives ("Walter's bar"), memories ("the key Walter gave you") and a
+/// sentence that shows the person arriving.
+struct PresenceFilter {
+    struct Absent { let name: String; let at: String }
+
+    let absent: [Absent]
+    private let acts: NSRegularExpression
+    private static let boundary = try! NSRegularExpression(pattern: #"[.!?…]["”’]?\s+(?=\S)"#)
+    private static let arrival = try! NSRegularExpression(
+        pattern: #"\b(arrives?|enters?|appears?|joins?|returns?|approach(es)?|(walks?|comes?|steps?|hurries|runs?|strides?|slips?|wanders?|climbs?|pushes) (in|into|up|over|out|through|back|down|toward|towards)|calls? (out|over|from)|voice (carries|comes|calls|drifts)|on the (phone|radio|line))\b"#,
+        options: [.caseInsensitive])
+
+    private var pending = ""
+    private var inQuote = false
+    private var dropping = false
+    private var raw = ""
+    /// What has been let through so far.
+    private(set) var accepted = ""
+    /// The sentences left out, in order.
+    private(set) var dropped: [String] = []
+    /// Who was caught acting in a scene they are not in.
+    private(set) var caught: [Absent] = []
+    /// True when so little was left that the reply was let through whole after all.
+    private(set) var restored = false
+
+    /// Nil when nobody is known to be elsewhere (then there is nothing to check).
+    init?(absent: [Absent]) {
+        var names: [String] = []
+        for p in absent {
+            names.append(p.name)
+            if let first = p.name.split(separator: " ").first.map(String.init), first.count >= 3, first != p.name { names.append(first) }
+        }
+        names = names.filter { $0.count >= 3 && $0.first?.isUppercase == true }.sorted { $0.count > $1.count }
+        guard !names.isEmpty else { return nil }
+        let n = "(?:" + names.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|") + ")"
+        // The person does something now ("Walter leans", "Walter quietly watches", "Walter is"), or
+        // someone in the scene deals with them directly ("you hand it to Walter").
+        let pattern = #"\b"# + n + #"\b(?!['’]s)\s+(?:[a-z]+ly\s+)?(?:[a-z]+s|is|has)\b"#
+            + #"|\b(?:to|at|with|beside|toward|towards)\s+"# + n + #"\b(?!['’]s)"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        self.absent = absent
+        self.acts = re
+    }
+
+    /// What to show while the reply streams: the accepted text plus the sentence being written,
+    /// unless that sentence is already on its way out.
+    var preview: String {
+        if dropping || hit(narration(of: pending, from: inQuote)) != nil { return accepted }
+        return accepted + pending
+    }
+
+    /// Takes the next piece of the stream and returns the text that may be shown and spoken.
+    mutating func feed(_ piece: String) -> String {
+        raw += piece
+        pending += piece
+        var out = ""
+        while true {
+            let ns = pending as NSString
+            guard let m = Self.boundary.firstMatch(in: pending, range: NSRange(location: 0, length: ns.length)) else { break }
+            let end = m.range.location + m.range.length
+            out += judge(ns.substring(to: end))
+            pending = ns.substring(from: end)
+        }
+        return out
+    }
+
+    /// The end of the stream: judges the last sentence. If almost nothing survived, the tracker
+    /// was probably wrong about who is here, so the left-out text is let through after all.
+    mutating func finish() -> String {
+        var out = pending.isEmpty ? "" : judge(pending)
+        pending = ""
+        if !dropped.isEmpty, accepted.split(whereSeparator: \.isWhitespace).count < 30 {
+            let rest = dropped.joined()
+            out += (out.hasSuffix("\n") || accepted.hasSuffix("\n") ? "" : " ") + rest
+            accepted = raw
+            restored = true
+            caught = []
+        }
+        return out
+    }
+
+    private mutating func judge(_ unit: String) -> String {
+        let narrated = narration(of: unit, from: inQuote)
+        for ch in unit {
+            switch ch {
+            case "\"": inQuote.toggle()
+            case "“": inQuote = true
+            case "”": inQuote = false
+            default: break
+            }
+        }
+        let endsParagraph = unit.reversed().prefix { $0.isWhitespace }.contains { $0.isNewline }
+        var keep = true
+        if dropping {
+            keep = false
+        } else if caught.count < 2, let who = hit(narrated) {
+            dropping = true
+            keep = false
+            caught.append(who)
+        }
+        if endsParagraph { dropping = false; inQuote = false }
+        if keep {
+            accepted += unit
+            return unit
+        }
+        dropped.append(unit)
+        // The paragraph break survives, so what follows does not run into what came before.
+        if endsParagraph, !accepted.isEmpty, !accepted.hasSuffix("\n") {
+            accepted += "\n\n"
+            return "\n\n"
+        }
+        return ""
+    }
+
+    /// The part of a sentence outside quotation marks.
+    private func narration(of unit: String, from quoted: Bool) -> String {
+        var q = quoted
+        var out = ""
+        for ch in unit {
+            switch ch {
+            case "\"": q.toggle()
+            case "“": q = true
+            case "”": q = false
+            default: if !q { out.append(ch) }
+            }
+        }
+        return out
+    }
+
+    /// The absent person this narration has acting in the scene, unless it shows them arriving.
+    private func hit(_ narrated: String) -> Absent? {
+        let range = NSRange(location: 0, length: (narrated as NSString).length)
+        guard let m = acts.firstMatch(in: narrated, range: range) else { return nil }
+        if Self.arrival.firstMatch(in: narrated, range: range) != nil { return nil }
+        let found = (narrated as NSString).substring(with: m.range)
+        return absent.first { found.contains($0.name) }
+            ?? absent.first { p in p.name.split(separator: " ").first.map { found.contains($0) } ?? false }
     }
 }

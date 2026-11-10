@@ -408,6 +408,9 @@ struct Whereabout: Codable, Hashable, Identifiable {
     var at: String
     var doing: String = ""
     var heading: String = ""
+    /// Whether this person is with the player (close enough to talk), as the last review saw it.
+    /// Nil when nobody has said yet.
+    var here: Bool? = nil
     var id: String { name }
 
     /// One plain line for the Game Master.

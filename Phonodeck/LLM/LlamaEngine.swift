@@ -145,6 +145,9 @@ final class LlamaEngine: @unchecked Sendable {
         } else {
             llama_sampler_chain_add(chain, llama_sampler_init_top_k(64))
             llama_sampler_chain_add(chain, llama_sampler_init_top_p(topP, 1))
+            // Drops words far less likely than the best one: a small quantized model's odd picks
+            // ("a warm throat behind the door") come from that tail.
+            llama_sampler_chain_add(chain, llama_sampler_init_min_p(0.05, 1))
             llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
             llama_sampler_chain_add(chain, llama_sampler_init_dist(UInt32.random(in: 0...UInt32.max)))
         }

@@ -79,7 +79,14 @@ final class LLMService {
         }
     }
 
+    /// UTF-8 bytes per token, for estimating prompt sizes. 3.5 is a cautious guess that overcounts
+    /// English prose by about a fifth; a GGUF model replaces it with its own tokenizer's measure
+    /// (less 6% for safety) when it loads. The hard limit is still enforced with real token counts
+    /// in `llamaPromptWithinBudget` and `prepareWithinBudget`.
+    nonisolated(unsafe) static var bytesPerToken = 3.5
+
     func unload() {
+        Self.bytesPerToken = 3.5
         loadTask?.cancel()
         loadTask = nil
         container = nil
@@ -103,6 +110,13 @@ final class LLMService {
             }.value
             llama = engine
             loadedID = entry.id
+            // Measure how this model's tokenizer really counts story text, so prompts are packed
+            // to the true size of the context instead of a cautious guess (see `bytesPerToken`).
+            let sample = Prompts.gmRules + "\n" + Prompts.review
+            let count = engine.tokenize(sample).count
+            if count > 50 {
+                Self.bytesPerToken = max(3.2, min(5.0, Double(sample.utf8.count) / Double(count) * 0.94))
+            }
             phase = .idle
             return engine
         } catch {

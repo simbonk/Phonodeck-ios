@@ -39,8 +39,9 @@ enum JSONGrammar {
         list("list3", 3),
         list("list12", 12),
         #"people ::= "[" ws ( person ( "," ws person ){0,5} )? ws "]""#,
-        "person ::= \"{\" ws " + [key("name") + " str", key("where") + " str", key("doing") + " str", key("heading") + " str"]
+        "person ::= \"{\" ws " + [key("name") + " str", key("where") + " str", key("with_player") + " bool", key("doing") + " str", key("heading") + " str"]
             .joined(separator: " \",\" ws ") + " ws \"}\"",
+        #"bool ::= "true" | "false""#,
         common,
     ].joined(separator: "\n")
 
