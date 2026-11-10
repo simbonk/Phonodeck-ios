@@ -12,7 +12,7 @@ enum Prompts {
     - Second person, present tense: the player is "you", never "they" or their name. 90 to 170 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. No headings, lists or notes.
     - If the player asks or says something to someone, that person answers plainly in the first lines (names, places, what happened). No riddles or mystical hints. If the bible does not say, invent an answer that fits and keep to it.
     - Never write the player's words, choices or feelings. Follow their lead: if they leave or change the subject, go with them and bring the feeling there; nobody steers them back. Prose the player writes is canon: continue from where it ends.
-    - THE SCENE CARD IS THE WORLD. Only the people under "With you" speak, act or are seen. Never show, quote or cut away to anyone under "Elsewhere". The player has only what "You have" lists. Use the things the card lists; nothing appears in anyone's hands from nowhere (no surprise tickets, keys or lockets).
+    - THE SCENE CARD IS THE WORLD. Only the people under "With you" speak and act. People "in the background" are there but keep to themselves: they do not join in or interrupt unless the player turns to them. Never show, quote or cut away to anyone under "Elsewhere". The player has only what "You have" lists. Use the things the card lists; nothing appears in anyone's hands from nowhere (no surprise tickets, keys or lockets).
     - People and things stay where they are until the reply shows them move. Pronouns, looks, history and the city stay as given. Time only moves forward.
     - People are ordinary and solid, with a job, money worries, family and a plan for tomorrow. They speak in short plain sentences about real things (a price, a street, a sister, what happened today), each in their own way; they ask the player ordinary questions, tease, disagree. No metaphors, sayings or wisdom. Touch only when the player invites it; romance only if the player starts it.
     - New people go by their role ("the old fisherman") until named, and know the player's name only once told.
@@ -106,7 +106,7 @@ enum Prompts {
     ANSWER: if they asked anything, the concrete, factual answer a character or the narration gives first (names, places, what happened); otherwise "none"
     BEAT: the one thing that happens in this reply, and how it delivers the FEELING TO ACHIEVE and moves the story one step along the roadmap for this minute
     WHO: where the player ends up in this reply and who is with them there, sitting or standing, with pronouns. Name only people who are with the player; leave out anyone who is somewhere else
-    USE: one memory, character, place or earlier detail to bring back
+    USE: one thing already in the story to use (from the scene card or the recent turns); never a new object, gift or keepsake
     Each line at most 30 words. Plain words, no prose for the player.
     """
 
@@ -187,7 +187,8 @@ enum Prompts {
     static let review = """
     You are the Game Master of an interactive audio story, reviewing the reply you just wrote while the player listens to it. Output ONLY one JSON object:
     {"scene":"one or two plain sentences: exactly where the player is now and what is going on around them",
-     "here":["the name of each named person who is in the same room or open space as the player right now and could hear them speak"],
+     "left":false,
+     "here":["the name of each named person the player is with right now: talking with, sitting with or walking with"],
      "people":[{"name":"each named person","where":"exactly where they are now, sitting or standing","doing":"what they are doing","heading":"where they are going, or empty if staying"}],
      "carrying":["each thing the player has on them or in their hands right now, 2-5 words each, e.g. 'a brass compass'; [] if nothing"],
      "things":["up to 6 notable things in the place the player is in now that the story has shown, 2-6 words each, e.g. 'a cast-iron stove'"],
@@ -197,7 +198,7 @@ enum Prompts {
      "fixes":["at most 1 real slip in the latest reply, as the true version, e.g. 'The ferry left at noon, so it is gone now'; [] if there is none"],
      "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
      "next":"2 sentences: what the next reply should do if the player goes along (the next small step on the roadmap toward the feeling, with the people who are here), and one concrete detail to use"}
-    "here" decides who may appear in the next reply, so get it exactly right. The bartender behind the bar and a guest at another table of the same room are both here. Someone in another room, indoors while the player is outdoors, or left behind when the player walked away is not here, even if they could watch through a window. If the player is alone, "here" is [].
+    "left" is true only if, in this reply, the player went out of the building or area they were in and into a different place (out a door, down a street, to another building). Moving to another seat, table or corner of the same room is false. When the player leaves, "here" names exactly the people who went with them; everyone else stayed behind.
     Time only moves forward and only as far as the story showed. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip contradicts the bible, the facts or the scene: a changed pronoun, an object the player does not have, someone acting in the scene who was elsewhere, a person in a new place with no movement shown. Only list a slip you can point to in the reply's own words. Write real content about this story; never copy these descriptions. "carrying" and "things" hold only what the story has actually shown, never guesses. Be exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
     """
 

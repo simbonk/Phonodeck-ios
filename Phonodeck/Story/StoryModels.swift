@@ -416,6 +416,12 @@ struct Whereabout: Codable, Hashable, Identifiable {
     /// Whether this person is with the player (close enough to talk), as the last review saw it.
     /// Nil when nobody has said yet.
     var here: Bool? = nil
+    /// For someone who is elsewhere: the place the player left them in, so they are back in the
+    /// scene when the player returns there.
+    var leftAt: String? = nil
+    /// Whether the player is dealing with this person right now (the review names them as with the
+    /// player). Someone in the room who is not stays in the background: seen, but not butting in.
+    var engaged: Bool? = nil
     var id: String { name }
 
     /// One plain line for the Game Master.
