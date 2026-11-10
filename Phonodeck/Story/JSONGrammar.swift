@@ -67,7 +67,8 @@ enum JSONGrammar {
                 .joined(separator: " \",\" ws ") + " ws \"}\"",
             #"items ::= "[" ws ( s60 ( "," ws s60 ){0,5} )? ws "]""#,
             #"timeline ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
-            #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
+            // The grounded update always names what was learned: left optional, it came back empty every time.
+            grounded ? #"newfacts ::= "[" ws s160 ( "," ws s160 )? ws "]""# : #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
             #"fixes ::= "[" ws ( s240 )? ws "]""#,
             #"bool ::= "true" | "false""#,
             #"score ::= "10" | [0-9]"#,

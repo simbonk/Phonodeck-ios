@@ -116,9 +116,9 @@ enum Prompts {
     You read the player's NEW MESSAGE in an interactive audio story and fill in a short form. Output ONLY one JSON object:
     {"to":"the one person the player is speaking to or doing something with in the new message, or \"nobody\"",
      "going":"\"staying\" if the player stays in the place they are in; the name of a place if they go there; \"somewhere new\" if they leave for a place that is not listed",
-     "answer":"only if the player asked a question: the plain facts the person they asked tells them (names, places, what happened), never the player's own words; otherwise empty",
+     "answer":"only if the player asked a question: the plain facts the person they asked tells them (names, places, what happened), taken from KNOWN SO FAR or THE STORY JUST SAID where they cover it, never the player's own words; otherwise empty",
      "beat":"one sentence: the one thing that happens in the reply, between the player and whoever they are with, that delivers the FEELING"}
-    Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going. Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
+    Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going. Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
 
     // MARK: Building the world
@@ -219,14 +219,14 @@ enum Prompts {
     You keep the books for an interactive audio story. Read the latest exchange and fill in the form about how things stand NOW. Output ONLY one JSON object:
     {"place":"the short name of the building or area the player is in now, 1-4 words; keep the name it had if they have not left",
      "left":false,
-     "scene":"one or two plain sentences: exactly where the player is now and what is going on around them",
+     "scene":"one or two plain sentences, written to the player as 'you': exactly where the player is now and what is going on around them",
      "here":["the name of each named person the player is with right now: talking with, sitting with or walking with"],
      "people":[{"name":"each named person","where":"exactly where they are now, sitting or standing","doing":"what they are doing","heading":"where they are going, or empty if staying"}],
      "carrying":["each thing the player has on them or in their hands right now, 2-5 words each, e.g. 'a brass compass'; leave out anything they gave away, paid, ate, drank or put down; [] if nothing"],
      "things":["up to 6 notable things in the place the player is in now that the story has shown, 2-6 words each, e.g. 'a cast-iron stove'"],
      "time":"the story time now: time of day, and how long since the story began, e.g. 'Mid-morning, the day after the storm'",
      "timeline":["at most 2 things this reply added to the story's history, each with its story time, e.g. 'Tuesday, 8:50 PM: Walter poured you a whiskey' (never 'now' or 'just now')"],
-     "new_facts":["0 to 3 short lasting facts this exchange established that CURRENT FACTS does not list yet: a name learned, a promise, something given or paid and to whom, something true about a person's life; [] if none"],
+     "new_facts":["the 1 or 2 most important things this exchange established that will still be true tomorrow, each a full sentence with the person's name: what someone told the player about their life, family, work or plans (with the place), a promise, something given or paid and to whom"],
      "feeling":7,
      "enjoying":"a person, place or activity the player clearly wants more of, or empty",
      "steps_done":["the exact text of any OPEN STORY STEP the player completed in this exchange; [] if none"],

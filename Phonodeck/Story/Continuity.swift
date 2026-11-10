@@ -6,6 +6,13 @@ import NaturalLanguage
 /// the shape of the Game Master's review. Small models slip on these in ways code can see, so
 /// each check turns a slip into a plain correction for the next reply instead of trusting the model.
 enum Continuity {
+    /// "at the bar" for "the bar", and "in the corner chair" left as it is.
+    static func placed(_ at: String) -> String {
+        let first = at.lowercased().split(separator: " ").first.map(String.init) ?? ""
+        let leads: Set<String> = ["in", "at", "on", "behind", "by", "near", "beside", "under", "inside", "outside", "sitting", "standing", "seated", "leaning", "across", "over", "next", "up", "down", "among", "between"]
+        return leads.contains(first) ? at : "at " + at
+    }
+
     // MARK: Movement
 
     private static let motionVerbs = "go|goes|going|head|heading|walk|walking|run|running|hurry|hurrying|climb|climbing|swim|swimming|wander|wandering|stroll|strolling|drive|driving|ride|riding|step|stepping|move|moving|cross|crossing|return|returning|slip|slipping|sneak|sneaking|dash|dashing|race|racing|jog|jogging|come|coming|make my way|making my way|go back|come back"
@@ -487,7 +494,7 @@ struct PresenceFilter {
         for text in earlier {
             for s in Self.sentences(text) {
                 let k = Self.key(s)
-                if k.count >= 40 { seen.insert(k) }
+                if k.count >= 24 { seen.insert(k) }
             }
         }
         said = seen
