@@ -40,9 +40,11 @@ enum JSONGrammar {
         let more = names.isEmpty ? 5 : names.count - 1
         return [
             "root ::= \"{\" ws " + [
-                key("scene") + " s480",
+                key("scene") + " s240",
                 key("here") + " here",
                 key("people") + " people",
+                key("carrying") + " items",
+                key("things") + " items",
                 key("time") + " s120",
                 key("timeline") + " timeline",
                 key("new_facts") + " newfacts",
@@ -55,10 +57,11 @@ enum JSONGrammar {
             #"people ::= "[" ws ( person ( "," ws person ){0,5} )? ws "]""#,
             "person ::= \"{\" ws " + [key("name") + " s40", key("where") + " s160", key("doing") + " s160", key("heading") + " s120"]
                 .joined(separator: " \",\" ws ") + " ws \"}\"",
+            #"items ::= "[" ws ( s60 ( "," ws s60 ){0,5} )? ws "]""#,
             #"timeline ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
             #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
             #"fixes ::= "[" ws ( s240 )? ws "]""#,
-            capped("s40", 40), capped("s120", 120), capped("s160", 160), capped("s240", 240), capped("s400", 400), capped("s480", 480),
+            capped("s40", 40), capped("s60", 60), capped("s120", 120), capped("s160", 160), capped("s240", 240), capped("s400", 400),
             common,
         ].joined(separator: "\n")
     }

@@ -410,6 +410,8 @@ final class StoryEngine {
         if a.location.isEmpty, !src.location.isEmpty { a.location = src.location; a.visit(src.location, from: "") }
         if a.storyTime.isEmpty, let c = src.clock { a.clock = c; a.storyTime = src.storyTime }
         if a.whereabouts.isEmpty { a.whereabouts = src.whereabouts }
+        if a.carrying.isEmpty { a.carrying = src.carrying }
+        if a.things.isEmpty { a.things = src.things }
     }
 
     /// "Right where it left off": the new part opens where the final scene ended, set in code from
@@ -611,6 +613,8 @@ final class StoryEngine {
         if !a.timeline.isEmpty { out += ["", "## Timeline"] + a.timeline.map { "- " + $0 } }
         if !a.whereabouts.isEmpty { out += ["", "## Where people are"] + a.whereabouts.map { "- " + ($0.here == true ? "[in the room] " : $0.here == false ? "[elsewhere] " : "") + $0.line } }
         if !a.scene.isEmpty { out += ["", "## Scene now", a.scene] }
+        if !a.carrying.isEmpty { out += ["", "## You have", a.carrying.joined(separator: "; ")] }
+        if !a.things.isEmpty { out += ["", "## In this place", a.things.joined(separator: "; ")] }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
         for t in a.transcript {
@@ -726,18 +730,6 @@ final class StoryEngine {
         var notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks, opening: opening)
         if !hidden, !playerNarrates, Continuity.moves(input) {
             notes.insert("THE PLAYER IS MOVING: show them going where they said, the way there, and what they find when they arrive. People are where the scene puts them: someone elsewhere is found there, never suddenly beside the player.", at: playerAsks ? 1 : 0)
-        }
-        if !hidden {
-            let said = input.lowercased()
-            let me = a.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
-            let away = a.whereabouts.filter { w in
-                let first = w.name.lowercased().split(separator: " ").first.map(String.init) ?? ""
-                return w.here == false && first != me && first != "you" && !said.contains(first)
-            }.map(\.name)
-            if !away.isEmpty {
-                notes.append("STAY WITH THE PLAYER: " + away.joined(separator: " and ") + (away.count == 1 ? " is" : " are")
-                             + " somewhere else, out of sight. Do not show, quote or cut away to them in this reply.")
-            }
         }
         let planning = gmPlans && !hidden
         // How hard the rules, bible and briefing are squeezed to make room (0 = not at all).
@@ -1002,7 +994,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10e"
+    static let build = "build 2026-11-10f"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1103,7 +1095,6 @@ final class StoryEngine {
         if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS (never break):\n" + limits }
         let facts = factsText(a)
         if !facts.isEmpty { prompt += "\n\n" + clip(facts, n(1200)) }
-        if !a.scene.isEmpty { prompt += "\n\nSCENE BEFORE THE PLAYER'S ACTION:\n" + clip(a.scene, n(500)) }
         if !a.nextMove.isEmpty { prompt += "\n\nYOUR LOOK-AHEAD (written before the player spoke; only if they went along):\n" + clip(a.nextMove, n(500)) }
         if let notes = a.notes, !notes.text.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + clip(notes.text, n(500)) }
         else if !a.secrets.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + a.secrets.prefix(4).map { "- " + clip($0, n(160)) }.joined(separator: "\n") }
@@ -1199,7 +1190,15 @@ final class StoryEngine {
         }
         now.fixes = fixes + now.fixes.filter { $0.hasPrefix(Self.checked) }
         if let n = text("next") { now.nextMove = clip(n, 600) }
-        if let sc = text("scene"), sc.count > 10 { now.scene = clip(sc, 500) }
+        if let sc = text("scene"), sc.count > 10 { now.scene = clip(sc, 320) }
+        // The scene card's lists. What the player has is replaced whenever the review gives it (an
+        // empty list means empty hands); the things in the place are replaced when it names some.
+        func items(_ k: String, cap: Int) -> [String] {
+            list(k, cap: cap).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }.filter { $0.count >= 3 }
+        }
+        if m["carrying"] is [Any] { now.carrying = items("carrying", cap: 6) }
+        let around = items("things", cap: 8)
+        if !around.isEmpty { now.things = around }
         // The story clock is kept in code: the review may move it on (a little), never back.
         if let t = text("time") {
             if let mm = Continuity.minutes(in: t) {
@@ -1389,7 +1388,7 @@ final class StoryEngine {
     /// long story, so the whole prompt fits the context: first the showrunner's notes and the story so
     /// far, then the bible itself (its start, which holds the premise and the people, is kept).
     private func systemPrompt(_ a: Adventure, tight: Int = 0) -> String {
-        let bibleChars = [4000, 4000, 1300, 900][min(tight, 3)]
+        let bibleChars = [1600, 1300, 1000, 800][min(tight, 3)]
         let notesChars = [1200, 600, 350, 200][min(tight, 3)]
         let chapterCount = [6, 4, 3, 2][min(tight, 3)]
         let chapterChars = [600, 300, 220, 180][min(tight, 3)]
@@ -1417,7 +1416,7 @@ final class StoryEngine {
         } else if !a.secrets.isEmpty {
             s += "\n\n## PRIVATE NOTES (do not blurt these out; seed clues. If the player asks directly, characters still answer what they honestly know)\n" + clip(a.secrets.map { "- " + $0 }.joined(separator: "\n"), notesChars)
         }
-        s += "\n\n## HOW EACH TURN ARRIVES\nThe latest message starts with a private briefing for this reply only (mission map, relevant memories, director notes), then the player's action. Follow the briefing, never mention it, and reply to the action."
+        s += "\n\n## HOW EACH TURN ARRIVES\nThe latest message starts with a private briefing (notes, then the SCENE CARD), then the player's action. Follow it, never mention it, and reply to the action."
         return s
     }
 
@@ -1762,18 +1761,17 @@ final class StoryEngine {
         return a.transcript.contains { $0.role == .player && $0.text.range(of: "\\b\(NSRegularExpression.escapedPattern(for: first))\\b", options: [.regularExpression, .caseInsensitive]) != nil }
     }
 
-    /// The continuity check, placed last in the briefing (right before the player's words, where a
-    /// small model pays the most attention): the story time, when past events happened, where each
-    /// person is and where they are heading, and who may use the player's name.
+    /// The scene card: the world as it stands right now, kept in code and rendered small. It comes
+    /// last in the briefing (right before the player's words, where a small model pays the most
+    /// attention): the place, the time, who is in the room, who is elsewhere, what the player has,
+    /// what is in the room, when past events happened, and who may use the player's name.
     private func continuityText(_ a: Adventure, tight: Int = 0) -> String {
         var l: [String] = []
-        if !a.storyTime.isEmpty {
-            l.append("- Story time now: " + a.storyTime + ". " + (a.clock.map { Continuity.skyHint($0) + " " } ?? "")
-                     + "Time only moves forward, a few minutes in one reply.")
+        if !a.location.isEmpty || !a.scene.isEmpty {
+            l.append("- Place: " + [a.location, clip(a.scene, tight >= 2 ? 200 : 280)].filter { !$0.isEmpty }.joined(separator: ". "))
         }
-        if !a.timeline.isEmpty {
-            l.append("- When things happened (never change these):")
-            l.append(contentsOf: a.timeline.suffix(tight >= 2 ? 3 : tight == 1 ? 4 : 6).map { "  - " + clip($0, tight >= 2 ? 120 : 160) })
+        if !a.storyTime.isEmpty {
+            l.append("- Time: " + a.storyTime + ". " + (a.clock.map { Continuity.skyHint($0) + " " } ?? "") + "It only moves forward, a few minutes in one reply.")
         }
         if !a.whereabouts.isEmpty {
             let me = a.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
@@ -1781,27 +1779,39 @@ final class StoryEngine {
                 let first = w.name.lowercased().split(separator: " ").first.map(String.init) ?? ""
                 return first != me && first != "you"
             }
-            func brief(_ w: Whereabout) -> String { w.name + " (" + clip(w.at + (w.doing.isEmpty ? "" : ", " + w.doing), tight >= 2 ? 90 : 130) + ")" }
+            func pronoun(_ name: String) -> String {
+                guard let f = a.facts.first(where: { $0.hasPrefix(name + " uses ") }) else { return "" }
+                let rest = f.dropFirst(name.count + 6)
+                return rest.hasPrefix("he") ? "he, " : rest.hasPrefix("she") ? "she, " : rest.hasPrefix("they") ? "they, " : ""
+            }
+            func brief(_ w: Whereabout) -> String {
+                w.name + " (" + pronoun(w.name) + clip(w.at + (w.doing.isEmpty ? "" : ", " + w.doing), tight >= 2 ? 90 : 130)
+                    + (w.heading.isEmpty ? "" : ", heading to " + clip(w.heading, 60)) + ")"
+            }
             let here = others.filter { $0.here == true }, away = others.filter { $0.here == false }, unknown = others.filter { $0.here == nil }
             if !here.isEmpty {
-                l.append("- In the room with the player (only they can speak, act or be seen; nobody changes place or posture unless the reply shows it): " + here.prefix(5).map(brief).joined(separator: "; "))
+                l.append("- With you (only they can speak, act or be seen; nobody changes place or posture unless the reply shows it): " + here.prefix(5).map(brief).joined(separator: "; "))
             } else if !away.isEmpty, unknown.isEmpty {
-                l.append("- Nobody else is with the player right now.")
+                l.append("- With you: nobody.")
             }
             if !away.isEmpty {
-                l.append("- Somewhere else, out of sight and earshot (leave them out of this reply; no cutting away to them): " + away.prefix(4).map(brief).joined(separator: "; "))
+                l.append("- Elsewhere, out of sight and earshot (leave them out of this reply; no cutting away to them): " + away.prefix(4).map(brief).joined(separator: "; "))
             }
             if !unknown.isEmpty {
-                l.append("- Where people are (no one moves or changes posture unless the reply shows it; someone elsewhere cannot speak or be seen):")
-                l.append(contentsOf: unknown.prefix(tight >= 2 ? 4 : 6).map { "  - " + $0.line })
+                l.append("- People (no one moves or changes posture unless the reply shows it; someone elsewhere cannot speak or be seen): " + unknown.prefix(tight >= 2 ? 4 : 6).map(brief).joined(separator: "; "))
             }
+        }
+        if !a.carrying.isEmpty { l.append("- You have (nothing else): " + a.carrying.prefix(6).joined(separator: "; ")) }
+        if !a.things.isEmpty { l.append("- In this place: " + a.things.prefix(tight >= 2 ? 6 : 8).joined(separator: "; ")) }
+        if !a.timeline.isEmpty {
+            l.append("- Earlier (never change these): " + a.timeline.suffix(tight >= 2 ? 3 : 4).map { clip($0, tight >= 2 ? 110 : 140) }.joined(separator: " | "))
         }
         if !a.playerName.isEmpty, !nameTold(a) {
             let knew = a.cast.filter(\.known).map(\.name)
             l.append("- Nobody here knows the player's name (\(a.playerName)) because the player has not said it"
                      + (knew.isEmpty ? "" : ", except " + knew.joined(separator: ", ") + ", who already knew them") + ". No one else says it.")
         }
-        return l.isEmpty ? "" : "CONTINUITY CHECK (true right now; the reply must agree with every line)\n" + l.joined(separator: "\n")
+        return l.isEmpty ? "" : "SCENE CARD (the world right now; the reply must agree with every line)\n" + l.joined(separator: "\n")
     }
 
     /// The briefing's body. `tight` (0 to `tightest`) drops the least needed parts first (recent events,
@@ -1809,12 +1819,10 @@ final class StoryEngine {
     private func briefingText(_ a: Adventure, memories: [String], director: [String], withFacts: Bool = true, tight: Int = 0) -> String {
         var lines: [String] = []
         if withFacts {
-            if !a.scene.isEmpty { lines.append("SCENE BEFORE THE PLAYER'S ACTION (only people present can speak or act; anyone elsewhere stays there until the player reaches them or they visibly arrive):\n" + clip(a.scene, tight >= 2 ? 300 : 400)); lines.append("") }
             let f = factsText(a)
-            if !f.isEmpty { lines.append(clip(f, [1100, 1100, 800, 600][min(tight, 3)])); lines.append("") }
+            if !f.isEmpty { lines.append(clip(f, [900, 800, 650, 500][min(tight, 3)])); lines.append("") }
         }
-        lines.append("Location: " + (a.location.isEmpty ? "unknown" : a.location))
-        if tight == 0, !a.mapText.isEmpty { lines.append("Mission map: " + a.mapText) }
+        if tight == 0, !a.mapText.isEmpty, a.places.count > 2 { lines.append("Mission map: " + a.mapText) }
         if a.setup.simulator {
             lines.append("Player's goal" + (movedOn(a) ? " when they set out (they have since moved on; follow them, do not steer back): " : ": ")
                          + (a.setup.goal.isEmpty ? "(open: follow their lead)" : a.setup.goal))
@@ -1823,14 +1831,13 @@ final class StoryEngine {
             let next = a.beats.first { !$0.done }
             lines.append("Story steps: " + a.beats.map { ($0.done ? "[done] " : $0 == next ? "[now] " : "[later] ") + $0.text }.joined(separator: "; "))
         }
-        if tight == 0, !a.events.isEmpty { lines.append("Recent events: " + a.events.suffix(6).joined(separator: "; ")) }
-        let descChars = [180, 120, 100, 60][min(tight, 3)]
-        let people = a.cast.map { "\($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc, descChars)
+        let descChars = [200, 160, 120, 90][min(tight, 3)]
+        let people = a.cast.map { "\($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc.components(separatedBy: " Lately: ").first ?? $0.desc, descChars)
             + ($0.wants.isEmpty ? "" : " Wants: " + clip($0.wants, tight > 0 ? 60 : 100)) }
         if !people.isEmpty { lines.append("People: " + people.joined(separator: " | ")) }
         let recent = (a.transcript.suffix(2).map(\.text) + [a.location]).joined(separator: " ").lowercased()
         let things = a.lore.filter { $0.kind != .person && !$0.desc.isEmpty && recent.contains($0.name.lowercased()) }.prefix(tight == 0 ? 5 : 2)
-        if tight < 2, !things.isEmpty { lines.append("Places and things here: " + things.map { "\($0.name): " + clip($0.desc, tight == 0 ? 160 : 100) }.joined(separator: " | ")) }
+        if tight == 0, a.things.isEmpty, !things.isEmpty { lines.append("Places and things here: " + things.map { "\($0.name): " + clip($0.desc, tight == 0 ? 160 : 100) }.joined(separator: " | ")) }
         let hidden = hiddenPeople(a)
         if !hidden.isEmpty {
             lines.append("Not yet introduced by name (call them by role until the story reveals it): " + hidden.map { "\"\($0.role)\" is \($0.name)" }.joined(separator: "; "))
@@ -1935,8 +1942,6 @@ final class StoryEngine {
             notes.append("Motive in action: \(c.name) wants \(c.wants)" + (c.fears.isEmpty ? "" : " and fears \(c.fears)")
                 + ". Show them pursuing it visibly in this reply (a choice, a lie, a favour, a closed door), even where it cuts against what the player wants.")
         }
-        // Small models drift into dreamy, proverb-like dialogue; said last, this holds best.
-        notes.append("SPEECH: people say plain, specific things about their own life or about what the player just said. No metaphors, sayings or philosophy.")
         let repeats = repeatedPhrases(a)
         if !repeats.isEmpty { notes.append("Avoid repeating these phrases from recent replies: " + repeats.joined(separator: ", ")) }
         // Last, right before the player's words: small models follow what they read most recently.
@@ -2049,6 +2054,8 @@ final class StoryEngine {
             a.clock = now.clock
             a.timeline = now.timeline
             a.whereabouts = now.whereabouts
+            a.carrying = now.carrying
+            a.things = now.things
             // Entries the player edited or added in the World panel meanwhile win.
             for e in now.lore where e.byPlayer {
                 if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }

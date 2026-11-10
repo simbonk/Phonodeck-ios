@@ -311,7 +311,7 @@ enum Continuity {
     // MARK: The review's shape
 
     /// The keys a review must have to be any use, in the order the prompt asks for them.
-    static let reviewKeys = ["scene", "here", "people", "time", "timeline", "new_facts", "fixes", "unanswered", "next"]
+    static let reviewKeys = ["scene", "here", "people", "carrying", "things", "time", "timeline", "new_facts", "fixes", "unanswered", "next"]
     static let requiredReviewKeys = ["scene", "people", "next"]
 
     /// Puts a review's JSON into the shape the engine reads: lists that came back as one string are
@@ -329,7 +329,7 @@ enum Continuity {
             r["here"] = ["", "none", "[]", "n/a", "nobody", "no one", "alone"].contains(t.lowercased()) ? [String]()
                 : t.components(separatedBy: CharacterSet(charactersIn: ",;")).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
-        for k in ["facts", "new_facts", "fixes", "timeline"] {
+        for k in ["facts", "new_facts", "fixes", "timeline", "carrying", "things"] {
             if let s = r[k] as? String {
                 let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
                 r[k] = ["", "none", "[]", "n/a"].contains(t.lowercased()) ? [] : sentences(t)
