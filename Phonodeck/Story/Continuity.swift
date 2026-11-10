@@ -317,6 +317,33 @@ enum Continuity {
         return t.range(of: exit, options: .regularExpression) != nil
     }
 
+    /// The words of a text, for checking what the story has actually said.
+    static func wordSet(_ text: String) -> Set<String> {
+        Set(text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+    }
+
+    /// Whether a card entry ("a brass candlestick holder", "Dolores owes her brother money") is
+    /// backed by the story's own words: at least `share` of its real words appear in them. The
+    /// review writes the card, and a small model invents things there that the story never showed;
+    /// once on the card they would be fed back and become real.
+    static func grounded(_ entry: String, in story: Set<String>, share: Double = 0.6) -> Bool {
+        let skip: Set<String> = ["the", "a", "an", "of", "and", "at", "in", "on", "with", "from", "for", "to", "is", "are", "was", "has", "have",
+                                 "his", "her", "their", "your", "its", "that", "this", "some", "small", "little", "old", "who", "uses"]
+        let words = entry.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { $0.count >= 3 && !skip.contains($0) }
+        guard !words.isEmpty else { return false }
+        func has(_ w: String) -> Bool {
+            if story.contains(w) || story.contains(w + "s") || story.contains(w + "es") { return true }
+            if w.hasSuffix("s"), story.contains(String(w.dropLast())) { return true }
+            // "crackling" against "crackle", "hanging" against "hang", "soaked" against "soak".
+            for end in ["ing", "ed", "es"] where w.hasSuffix(end) && w.count > end.count + 3 {
+                let stem = String(w.dropLast(end.count))
+                if story.contains(stem) || story.contains(stem + "e") || story.contains(stem + "s") { return true }
+            }
+            return false
+        }
+        return Double(words.filter(has).count) / Double(words.count) >= share
+    }
+
     // MARK: The review's shape
 
     /// The keys a review must have to be any use, in the order the prompt asks for them.

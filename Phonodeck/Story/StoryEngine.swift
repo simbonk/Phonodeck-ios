@@ -800,7 +800,11 @@ final class StoryEngine {
                                                            earlier: earlierStories(a))
         guard !Task.isCancelled else { adventure = snapshot; return }
         // A recalled note about someone the briefing already describes says nothing new.
-        let memories = recalled.filter { m in !a.cast.contains { m.hasPrefix($0.name) } }
+        // Things made when the world was built stay locked until the story or the player brings
+        // them up: an item nobody has mentioned is not offered to the storyteller.
+        let spoken = a.transcript.map(\.text).joined(separator: " ") + " " + input
+        let locked = a.lore.filter { ($0.kind == .item || $0.kind == .faction) && !$0.byPlayer && !Continuity.names(place: $0.name, in: spoken) }.map(\.name)
+        let memories = recalled.filter { m in !a.cast.contains { m.hasPrefix($0.name) } && !locked.contains { m.hasPrefix($0) } }
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
 
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
@@ -1001,7 +1005,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10h"
+    static let build = "build 2026-11-10i"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1180,7 +1184,18 @@ final class StoryEngine {
         // A new fact that says an old one better takes its place. (A model without the grammar may
         // still send the whole list as "facts"; it is read the same way.)
         let people = start.cast.map(\.name) + [start.playerName]
-        let fresh = (list("new_facts", cap: 6) + list("facts", cap: 30)).flatMap { $0.count > 180 ? Self.sentences($0) : [$0] }
+        // The card checker: whatever the review wants on the card must be in the story's own words
+        // (the bible and everything said so far). What is not is refused and noted in the export.
+        let story = Continuity.wordSet(start.bible + " " + start.transcript.map(\.text).joined(separator: " "))
+        var refused: [String] = []
+        func checked(_ entries: [String], share: Double = 0.6) -> [String] {
+            entries.filter { e in
+                if Continuity.grounded(e, in: story, share: share) { return true }
+                refused.append(e)
+                return false
+            }
+        }
+        let fresh = checked((list("new_facts", cap: 6) + list("facts", cap: 30)).flatMap { $0.count > 180 ? Self.sentences($0) : [$0] }, share: 0.5)
             .compactMap { Continuity.lastingFact($0, people: people) }
         var facts = now.facts
         for f in fresh {
@@ -1205,9 +1220,9 @@ final class StoryEngine {
         }
         // The model often answers [] while the player plainly holds something, so an empty list
         // changes nothing.
-        let held = items("carrying", cap: 6)
+        let held = checked(items("carrying", cap: 6))
         if !held.isEmpty { now.carrying = held }
-        let around = items("things", cap: 8)
+        let around = checked(items("things", cap: 8))
         if !around.isEmpty { now.things = around }
         // The story clock is kept in code: the review may move it on (a little), never back.
         if let t = text("time") {
@@ -1290,6 +1305,10 @@ final class StoryEngine {
             if named.contains(first), !now.whereabouts.contains(where: { $0.name.lowercased().hasPrefix(first) }) {
                 now.whereabouts.append(Whereabout(name: p.name, at: "with the player", here: true))
             }
+        }
+        if !refused.isEmpty, let id = start.transcript.last?.id, let i = now.transcript.firstIndex(where: { $0.id == id }) {
+            now.transcript[i].after = (now.transcript[i].after ?? "") + "\n\n(Card check in code: not in the story, so kept off the card: "
+                + refused.prefix(8).joined(separator: "; ") + ".)"
         }
         adventure = now
         library.save(now)

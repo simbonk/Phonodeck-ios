@@ -106,7 +106,7 @@ enum Prompts {
     ANSWER: if they asked anything, the concrete, factual answer a character or the narration gives first (names, places, what happened); otherwise "none"
     BEAT: the one thing that happens in this reply, and how it delivers the FEELING TO ACHIEVE and moves the story one step along the roadmap for this minute
     WHO: where the player ends up in this reply and who is with them there, sitting or standing, with pronouns. Name only people who are with the player; leave out anyone who is somewhere else
-    USE: one memory, character, place or earlier detail to bring back
+    USE: one thing already in the story to use (from the scene card or the recent turns); never a new object, gift or keepsake
     Each line at most 30 words. Plain words, no prose for the player.
     """
 
