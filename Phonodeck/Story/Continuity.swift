@@ -347,7 +347,7 @@ enum Continuity {
     // MARK: The review's shape
 
     /// The keys a review must have to be any use, in the order the prompt asks for them.
-    static let reviewKeys = ["scene", "here", "people", "carrying", "things", "time", "timeline", "new_facts", "fixes", "unanswered", "next"]
+    static let reviewKeys = ["place", "left", "scene", "here", "people", "carrying", "things", "time", "timeline", "new_facts", "fixes", "feeling", "enjoying", "steps_done", "unanswered", "next"]
     static let requiredReviewKeys = ["scene", "people", "next"]
 
     /// Puts a review's JSON into the shape the engine reads: lists that came back as one string are
@@ -365,7 +365,7 @@ enum Continuity {
             r["here"] = ["", "none", "[]", "n/a", "nobody", "no one", "alone"].contains(t.lowercased()) ? [String]()
                 : t.components(separatedBy: CharacterSet(charactersIn: ",;")).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         }
-        for k in ["facts", "new_facts", "fixes", "timeline", "carrying", "things"] {
+        for k in ["facts", "new_facts", "fixes", "timeline", "carrying", "things", "steps_done"] {
             if let s = r[k] as? String {
                 let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
                 r[k] = ["", "none", "[]", "n/a"].contains(t.lowercased()) ? [] : sentences(t)
@@ -460,6 +460,8 @@ struct PresenceFilter {
     private(set) var echoes = 0
     /// True when so little was left that the reply was let through whole after all.
     private(set) var restored = false
+    /// True when so little was left that the reply needs writing again (see `finish(restore:)`).
+    private(set) var gutted = false
 
     /// `absent`: the people known to be somewhere else. `earlier`: the last few replies, whose
     /// sentences must not come back word for word.
@@ -518,16 +520,25 @@ struct PresenceFilter {
 
     /// The end of the stream: judges the last sentence. If almost nothing survived, the tracker
     /// was probably wrong, so the left-out text is let through after all.
-    mutating func finish() -> String {
+    /// With `restore` off, a reply left too short is only marked as gutted, so the caller can have
+    /// it written again (and fall back to `giveBack()` if that fails too).
+    mutating func finish(restore: Bool = true) -> String {
         var out = pending.isEmpty ? "" : judge(pending)
         pending = ""
         if !dropped.isEmpty, accepted.split(whereSeparator: \.isWhitespace).count < 30 {
-            let rest = dropped.joined()
-            out += (out.hasSuffix("\n") || accepted.hasSuffix("\n") || accepted.isEmpty ? "" : " ") + rest
-            accepted = raw
-            restored = true
-            caught = []
+            if restore { out += giveBack() } else { gutted = true }
         }
+        return out
+    }
+
+    /// Lets the left-out text through after all. Returns it, for the voice.
+    mutating func giveBack() -> String {
+        let rest = dropped.joined()
+        let out = (accepted.hasSuffix("\n") || accepted.isEmpty ? "" : " ") + rest
+        accepted = raw
+        restored = true
+        gutted = false
+        caught = []
         return out
     }
 

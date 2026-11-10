@@ -213,6 +213,28 @@ enum Prompts {
     Time only moves forward and only as far as the story showed. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip contradicts the bible, the facts or the scene: a changed pronoun, an object the player does not have, someone acting in the scene who was elsewhere, a person in a new place with no movement shown. Only list a slip you can point to in the reply's own words. Write real content about this story; never copy these descriptions. "carrying" and "things" hold only what the story has actually shown, never guesses. Be exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
     """
 
+    /// The grounded engine's update: the one call after a reply. It proposes how the cards change
+    /// (place, people, things, facts, time, mood); code checks every proposal before storing it.
+    static let reviewGrounded = """
+    You keep the books for an interactive audio story. Read the latest exchange and fill in the form about how things stand NOW. Output ONLY one JSON object:
+    {"place":"the short name of the building or area the player is in now, 1-4 words; keep the name it had if they have not left",
+     "left":false,
+     "scene":"one or two plain sentences: exactly where the player is now and what is going on around them",
+     "here":["the name of each named person the player is with right now: talking with, sitting with or walking with"],
+     "people":[{"name":"each named person","where":"exactly where they are now, sitting or standing","doing":"what they are doing","heading":"where they are going, or empty if staying"}],
+     "carrying":["each thing the player has on them or in their hands right now, 2-5 words each, e.g. 'a brass compass'; [] if nothing"],
+     "things":["up to 6 notable things in the place the player is in now that the story has shown, 2-6 words each, e.g. 'a cast-iron stove'"],
+     "time":"the story time now: time of day, and how long since the story began, e.g. 'Mid-morning, the day after the storm'",
+     "timeline":["at most 2 things this reply added to the story's history, each with its story time, e.g. 'Tuesday, 8:50 PM: Walter poured you a whiskey' (never 'now' or 'just now')"],
+     "new_facts":["0 to 3 short lasting facts this exchange established that CURRENT FACTS does not list yet: a name learned, a promise, something given or paid and to whom, something true about a person's life; [] if none"],
+     "feeling":7,
+     "enjoying":"a person, place or activity the player clearly wants more of, or empty",
+     "steps_done":["the exact text of any OPEN STORY STEP the player completed in this exchange; [] if none"],
+     "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
+     "next":"2 sentences: what the next reply should do if the player goes along (the next small step toward the feeling, with the people who are here), and one concrete detail already in the story to use"}
+    "left" is true only if, in this reply, the player went out of the building or area they were in and into a different place (out a door, down a street, to another building). Moving to another seat, table or corner of the same room is false. When the player leaves, "here" names exactly the people who went with them. "feeling" is 0-10: how strongly the player seems to feel the FEELING TO ACHIEVE. "carrying", "things" and "new_facts" hold only what the story has actually shown, never guesses. Time only moves forward. Write real content about this story; never copy these descriptions. No commentary.
+    """
+
     /// Each key of the review, for asking again when a review leaves some out.
     static let reviewKeyHelp: [String: String] = [
         "facts": "[\"6-12 short facts that must stay true, as separate strings: pronouns, looks, who is present, what the player has, what was paid or given, the city and region\"]",

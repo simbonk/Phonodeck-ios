@@ -31,28 +31,35 @@ enum JSONGrammar {
     /// The Game Master's review of the reply just written (see `Prompts.review`). `cast` is the
     /// named people of this story: "here" (who is in the room with the player) may only hold
     /// those names, so presence is always about real people, spelled the way the code knows them.
-    static func review(cast: [String]) -> String {
+    static func review(cast: [String], grounded: Bool = false) -> String {
         let names = cast.filter { n in
             !n.isEmpty && n.count <= 40 && n.unicodeScalars.allSatisfy { CharacterSet.letters.contains($0) || " -.'".unicodeScalars.contains($0) }
         }
         let who = names.isEmpty ? "who ::= s40" : "who ::= " + names.map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
         // How many more names may follow the first.
         let more = names.isEmpty ? 5 : names.count - 1
+        // The grounded engine's update is the only call after a reply, so it also carries what the
+        // memory pass used to find out (the place, the mood, story steps done) and drops the slips.
+        var keys = grounded ? [key("place") + " s60"] : []
+        keys += [
+            key("left") + " bool",
+            key("scene") + " s240",
+            key("here") + " here",
+            key("people") + " people",
+            key("carrying") + " items",
+            key("things") + " items",
+            key("time") + " s120",
+            key("timeline") + " timeline",
+            key("new_facts") + " newfacts",
+        ]
+        keys += grounded
+            ? [key("feeling") + " score", key("enjoying") + " s60", key("steps_done") + " timeline"]
+            : [key("fixes") + " fixes"]
+        keys += [key("unanswered") + " s240", key("next") + " s400"]
+        // The first version of this grammar put "scene" before "left"; the prompt's order is kept here.
+        if !grounded { keys.swapAt(0, 1) }
         return [
-            "root ::= \"{\" ws " + [
-                key("scene") + " s240",
-                key("left") + " bool",
-                key("here") + " here",
-                key("people") + " people",
-                key("carrying") + " items",
-                key("things") + " items",
-                key("time") + " s120",
-                key("timeline") + " timeline",
-                key("new_facts") + " newfacts",
-                key("fixes") + " fixes",
-                key("unanswered") + " s240",
-                key("next") + " s400",
-            ].joined(separator: " \",\" ws ") + " ws \"}\"",
+            "root ::= \"{\" ws " + keys.joined(separator: " \",\" ws ") + " ws \"}\"",
             more > 0 ? #"here ::= "[" ws ( who ( "," ws who ){0,\#(more)} )? ws "]""# : #"here ::= "[" ws ( who )? ws "]""#,
             who,
             #"people ::= "[" ws ( person ( "," ws person ){0,5} )? ws "]""#,
@@ -63,6 +70,7 @@ enum JSONGrammar {
             #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
             #"fixes ::= "[" ws ( s240 )? ws "]""#,
             #"bool ::= "true" | "false""#,
+            #"score ::= "10" | [0-9]"#,
             capped("s40", 40), capped("s60", 60), capped("s120", 120), capped("s160", 160), capped("s240", 240), capped("s400", 400),
             common,
         ].joined(separator: "\n")
