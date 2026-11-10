@@ -733,6 +733,13 @@ final class StoryEngine {
         let minRecall = hidden ? 0 : Self.minRecallTokens
         let newestCost = newest.reduce(0) { $0 + min(Self.tokens($1.element.text), 300) + 8 }
         var system = systemPrompt(a, tight: tight)
+        // The story's own recent words keep its voice and its thread better than any list of facts,
+        // so the extras (map, recent events, long notes) give way before the last four turns do.
+        let wanted = min(900, recent.suffix(4).reduce(0) { $0 + Self.tokens($1.element.text) + 8 })
+        if Self.tokens(system) + Self.tokens(briefing([])) + wanted + minRecall > budget {
+            tight = 1
+            system = systemPrompt(a, tight: tight)
+        }
         while tight < Self.tightest, Self.tokens(system) + Self.tokens(briefing([])) + newestCost + minRecall > budget {
             tight += 1
             system = systemPrompt(a, tight: tight)
@@ -825,6 +832,8 @@ final class StoryEngine {
         // Small models slip the player's name into speech before anyone has heard it. Until the
         // player says it, it is taken out of the saved reply, so the slip never feeds later turns.
         if !nameTold(a), !a.cast.contains(where: \.known) { reply = Self.dropName(a.playerName, from: reply) }
+        // The narration never addresses the player by name ("You are alone, Simon, ..."), only characters do.
+        reply = Self.dropNameFromNarration(a.playerName, from: reply)
         guard !reply.isEmpty, !Task.isCancelled else {
             streaming = ""
             adventure = snapshot
@@ -914,7 +923,7 @@ final class StoryEngine {
     /// The longest plan the Game Master may write before a reply (without reasoning).
     static let planTokens = 260
     /// The plan's room in the reply's briefing, its heading included.
-    static let planRoom = 360
+    static let planRoom = 290
     /// Kept free in every prompt, because token counts here are estimates.
     static let safetyTokens = 96
     /// Recalled memories always get at least this much room in a reply's briefing.
@@ -922,7 +931,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10"
+    static let build = "build 2026-11-10b"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1201,7 +1210,7 @@ final class StoryEngine {
 
     /// A cautious token count (about 3.5 bytes a token), for planning a prompt before it is tokenised.
     /// LLMService checks the real count and trims if this ever guesses low.
-    static func tokens(_ s: String) -> Int { s.utf8.count * 2 / 7 + 1 }
+    static func tokens(_ s: String) -> Int { Int(Double(s.utf8.count) / LLMService.bytesPerToken) + 1 }
 
     /// Cuts a text to about `n` tokens (by the same cautious count), at a line break where it can.
     static func fitTokens(_ s: String, _ n: Int) -> String {
@@ -1605,6 +1614,20 @@ final class StoryEngine {
         return out
     }
 
+    /// The same, but only outside quotation marks: characters may say the name, the narration may not.
+    static func dropNameFromNarration(_ name: String, from s: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: "\"[^\"]*\"|“[^”]*”") else { return s }
+        let ns = s as NSString
+        var out = ""
+        var at = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += dropName(name, from: ns.substring(with: NSRange(location: at, length: m.range.location - at)))
+            out += ns.substring(with: m.range)
+            at = m.range.location + m.range.length
+        }
+        return out + dropName(name, from: ns.substring(from: at))
+    }
+
     /// Whether the player has told the story their name (or someone already knew them).
     private func nameTold(_ a: Adventure) -> Bool {
         let name = a.playerName.trimmingCharacters(in: .whitespaces)
@@ -1742,7 +1765,7 @@ final class StoryEngine {
             notes.append("TIME (minute \(Int(played)) of \(a.minutes)): about \(max(1, Int(secsLeft(a, live: false) / 60))) of \(a.minutes) minutes left (roughly \(left) more player replies after this one).")
         }
         if final {
-            notes.append("THIS IS THE FINAL REPLY. Bring it to a definitive storybook ending that lands the feeling (\(feeling)), paying off what the player actually cared about. Do not ask what they do next; end on a closing image.")
+            notes.append("THIS IS THE FINAL REPLY. Bring it to a definitive storybook ending that lands the feeling (\(feeling)), paying off what the player actually cared about. Do not ask what they do next; end on a closing image, in the place the player is now and with whoever is with them there.")
             notes.append("The ending uses only the people, places and things already in the story: no new objects, tickets or places, and the same city and region as the facts. Second person to the last line: \"you\", never \"they\" or the player's name.")
         } else if a.left == 1 {
             notes.append("One reply left after this: start bringing it home.")
