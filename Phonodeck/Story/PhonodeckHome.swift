@@ -198,12 +198,13 @@ struct PhonodeckHome: View {
     /// Bottom right of a card: minutes left for a story in progress, minutes played for a finished one.
     private func timeText(_ a: Adventure) -> String {
         let played = Int((a.elapsed / 60).rounded())
-        if a.ended { return "\(max(1, played)) min" }
+        // The date tells apart stories with the same title (a curated world played twice).
+        if a.ended { return a.created.formatted(.dateTime.month(.abbreviated).day()) + " · \(max(1, played)) min" }
         return "\(max(0, a.minutes - Int(a.elapsed / 60))) min left"
     }
 
     private func timeSpoken(_ a: Adventure) -> String {
-        a.ended ? "Played for \(timeText(a).replacingOccurrences(of: "min", with: "minutes"))"
+        a.ended ? "Played on " + a.created.formatted(.dateTime.month(.wide).day()) + " for \(max(1, Int((a.elapsed / 60).rounded()))) minutes"
             : timeText(a).replacingOccurrences(of: "min", with: "minutes")
     }
 

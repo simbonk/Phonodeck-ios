@@ -170,21 +170,81 @@ final class StoryEngine {
         e.beats = ""
         var player = PlayerDetails.saved
         if player.name.isEmpty { player.name = src.playerName }
-        // The memory pass and review of the final reply may still be running: wait for them, so the
-        // next part starts from how the story really ended, then read the story as it now stands.
-        let pending = memoryJob
-        Task {
-            await pending?.value
-            let latest = (adventure?.id == src.id ? adventure : nil) ?? library.adventures.first { $0.id == src.id } ?? src
-            create(e, player: player, source: latest, link: link)
+        // The final reply's memory pass and review may still be running. Continue reads the ending
+        // itself (see `readEnding`), so they are stopped rather than waited for: on a slow phone
+        // model they could hold the next part up for a minute.
+        memoryJob?.cancel()
+        let latest = (adventure?.id == src.id ? adventure : nil) ?? library.adventures.first { $0.id == src.id } ?? src
+        create(e, player: player, source: latest, link: link)
+    }
+
+    /// Where a finished story stands at its last line, read from the final scene.
+    struct Ending {
+        var place = ""
+        var time = ""
+        var withYou = ""
+        var people: [Whereabout] = []
+        var facts: [String] = []
+        var recap = ""
+    }
+
+    /// One short call that reads the end of a finished story: where the player is, the time, who is
+    /// where, what is true now, and a recap of the whole story. The earlier part's tracker can lag
+    /// behind its final scene, so the next part takes its starting state from this instead. With a
+    /// GGUF model the answer is held to `JSONGrammar.ending`; either way it is checked in code.
+    private func readEnding(_ src: Adventure) async -> Ending? {
+        guard let last = src.transcript.last(where: { $0.role == .gm }) else { return nil }
+        let player = src.playerName.isEmpty ? "you" : src.playerName
+        var prompt = Prompts.ending + "\n\nTHE PLAYER: " + player + " (\"you\")"
+        let cast = src.cast.prefix(8).map(\.name)
+        if !cast.isEmpty { prompt += "\nPEOPLE IN THE STORY: " + cast.joined(separator: ", ") }
+        prompt += "\nHOW IT BEGAN: " + clip(src.bible, 500)
+        var went: [String] = []
+        if !src.chapters.isEmpty { went = src.chapters.suffix(3).map { clip($0, 220) } }
+        else if !src.events.isEmpty { went = src.events.suffix(6).map { clip($0, 140) } }
+        else { went = src.timeline.suffix(5).map { clip($0, 140) } }
+        if !went.isEmpty { prompt += "\nHOW IT WENT:\n" + went.map { "- " + $0 }.joined(separator: "\n") }
+        let turns = Array(src.transcript.suffix(4))
+        if turns.count > 2 {
+            prompt += "\n\nJUST BEFORE THE LAST SCENE:\n" + turns.dropLast(2).map { ($0.role == .player ? "The player: " : "The story: ") + clip($0.text, 400) }.joined(separator: "\n")
         }
+        if let said = turns.dropLast().last(where: { $0.role == .player }) { prompt += "\n\nTHE LAST SCENE\nThe player: " + clip(said.text, 500) }
+        else { prompt += "\n\nTHE LAST SCENE" }
+        prompt += "\nThe story: " + clip(last.text, 1800) + "\n\nWhere things stand at the last line, as one JSON object:"
+        let reply = (try? await llm.complete(system: nil, prompt: prompt,
+                                             options: .init(maxTokens: 450, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.ending))) ?? ""
+        let m = JSONExtract.object(reply) ?? Self.salvageJSON(reply)
+        // Real content only: no copies of the instructions' own words, no empty placeholders.
+        func ok(_ v: String) -> Bool {
+            let probe = v.lowercased().prefix(28)
+            return v.count > 2 && !(probe.count >= 12 && Prompts.ending.lowercased().contains(probe)) && !Self.echoesPrompt(v)
+        }
+        func text(_ k: String, _ cap: Int) -> String {
+            let v = ((m[k] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return ok(v) ? clip(v, cap) : ""
+        }
+        var end = Ending()
+        end.place = text("place", 60)
+        end.time = text("time", 120)
+        end.withYou = text("with_you", 160)
+        end.recap = text("recap", 700)
+        for f in ((m["facts"] as? [Any]) ?? []).compactMap({ ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) })
+        where ok(f) && !end.facts.contains(where: { Self.similar($0, f) }) {
+            end.facts.append(clip(f, 200))
+            if end.facts.count >= 8 { break }
+        }
+        let names = src.cast.flatMap { p in [p.name, p.name.split(separator: " ").first.map(String.init) ?? p.name] }
+        end.people = Self.whereabouts(m["people"]).filter { w in
+            ok(w.at) && names.contains { $0.caseInsensitiveCompare(w.name) == .orderedSame }
+        }.prefix(6).map { $0 }
+        return end.place.isEmpty && end.people.isEmpty && end.recap.isEmpty ? nil : end
     }
 
     /// The earlier story, as the architect reads it for the next part, within `budget` tokens (the
     /// architect's call has a 4,096-token conversation with 1,500 kept for its answer, so an
     /// over-long message would be cut in the middle). The ending matters most, then the state the
     /// story was left in and how it went; the bible and the cast give way first.
-    private func sourceWorld(_ src: Adventure, budget: Int) -> String {
+    private func sourceWorld(_ src: Adventure, budget: Int, ending: Ending?) -> String {
         // Whether the review read the final reply (stories finished before it did may be stale).
         let reviewedEnd = src.transcript.last?.after?.contains("REVIEW:") == true
         func build(_ k: Double) -> String {
@@ -199,14 +259,24 @@ final class StoryEngine {
             else { went = src.timeline.suffix(6).map { clip($0, n(140)) } }
             if !went.isEmpty { s += "\nHOW IT WENT:\n" + went.map { "- " + $0 }.joined(separator: "\n") }
             var state: [String] = []
-            if !src.location.isEmpty { state.append("Place: " + src.location) }
-            if !src.storyTime.isEmpty { state.append("Time: " + clip(src.storyTime, 120)) }
-            if !src.scene.isEmpty { state.append("Scene: " + clip(src.scene, n(360))) }
-            state += src.whereabouts.prefix(5).map { "\($0.name): \($0.at)" + ($0.doing.isEmpty ? "" : ", " + $0.doing) }
-            state += src.facts.prefix(10).map { clip($0, n(140)) }
+            if let end = ending {
+                // Read from the final scene itself, so it is current.
+                if !end.place.isEmpty { state.append("Place: " + end.place) }
+                if !end.time.isEmpty { state.append("Time: " + end.time) }
+                if !end.withYou.isEmpty { state.append("With the player: " + end.withYou) }
+                state += end.people.map { "\($0.name): \($0.at)" + ($0.doing.isEmpty ? "" : ", " + $0.doing) }
+                state += end.facts.map { clip($0, n(140)) }
+            } else if reviewedEnd {
+                // The tracker read the final reply. A tracker that didn't is left out: it describes
+                // the scene before the ending, and a small model copies it.
+                if !src.location.isEmpty { state.append("Place: " + src.location) }
+                if !src.storyTime.isEmpty { state.append("Time: " + clip(src.storyTime, 120)) }
+                if !src.scene.isEmpty { state.append("Scene: " + clip(src.scene, n(360))) }
+                state += src.whereabouts.prefix(5).map { "\($0.name): \($0.at)" + ($0.doing.isEmpty ? "" : ", " + $0.doing) }
+                state += src.facts.prefix(10).map { clip($0, n(140)) }
+            }
             if !state.isEmpty {
-                s += (reviewedEnd ? "\nWHERE THINGS STOOD AT THE END:\n" : "\nWHERE THINGS STOOD BEFORE THE LAST SCENE (HOW IT ENDED wins wherever they differ):\n")
-                    + state.map { "- " + $0 }.joined(separator: "\n")
+                s += "\nWHERE THINGS STAND AT THE LAST LINE:\n" + state.map { "- " + $0 }.joined(separator: "\n")
             }
             if let last = src.transcript.last(where: { $0.role == .gm }) { s += "\nHOW IT ENDED (the last scene, word for word):\n" + clip(last.text, n(1100)) }
             return s
@@ -262,10 +332,15 @@ final class StoryEngine {
                 + "\nPLAY MODE: " + (e.simulator ? "experience (no plot)" : "story")
                 + "\nSESSION LENGTH: \(a.minutes) minutes (about \(max(3, a.minutes * 60 / 90)) player replies)."
                 + (a.isShort ? "\nThis is a SHORT story: a small cast, 2-3 places, 3 acts, one clear goal." : "")
+            var ending: Ending?
             if let src = source {
+                stage = "Reading how the last part ended"
+                ending = await readEnding(src)
+                guard !Task.isCancelled else { return }
+                stage = ""
                 // Room left in the architect's 4,096-token conversation once its answer and the rest are counted.
                 let room = LLMService.contextBudget - 1500 - Self.safetyTokens - Self.tokens(request + "\n\n" + prompt) - 40
-                prompt = sourceWorld(src, budget: max(300, room)) + "\n\nCONNECTION TO THE EARLIER STORY: " + link + "\n\n" + prompt
+                prompt = sourceWorld(src, budget: max(300, room), ending: ending) + "\n\nCONNECTION TO THE EARLIER STORY: " + link + "\n\n" + prompt
             }
             var plan: [String: Any]?
             // Streamed, so the build screen can follow the architect section by section.
@@ -300,6 +375,7 @@ final class StoryEngine {
                     }
                 }
                 carryOver(from: src, into: &a, link: link)
+                if let ending, !link.lowercased().contains("later") { startAtEnding(ending, into: &a) }
             }
             forge.reach(Forge.stages.count - 1)
             adventure = a
@@ -307,7 +383,8 @@ final class StoryEngine {
             refreshVocabulary()
             library.save(a)
 
-            let told = ((plan?["recap"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            var told = ending?.recap ?? ""
+            if told.count <= 40 { told = ((plan?["recap"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
             let opening = source.map { Prompts.continueOpening(link: link, recap: told.count > 40 ? clip(told, 700) : recap(of: $0),
                                                                ending: $0.transcript.last(where: { $0.role == .gm })?.text ?? "",
                                                                simulator: e.simulator, short: a.isShort) }
@@ -333,6 +410,42 @@ final class StoryEngine {
         if a.location.isEmpty, !src.location.isEmpty { a.location = src.location; a.visit(src.location, from: "") }
         if a.storyTime.isEmpty, let c = src.clock { a.clock = c; a.storyTime = src.storyTime }
         if a.whereabouts.isEmpty { a.whereabouts = src.whereabouts }
+    }
+
+    /// "Right where it left off": the new part opens where the final scene ended, set in code from
+    /// `readEnding` so it never depends on the architect (a small model tends to copy the old
+    /// bible's opening situation). The bible gets a first line saying where things stand now.
+    private func startAtEnding(_ end: Ending, into a: inout Adventure) {
+        if !end.place.isEmpty {
+            let place = Self.placeName(end.place, known: a.lore.filter { $0.kind == .place }.map(\.name))
+            if a.location.caseInsensitiveCompare(place) != .orderedSame { a.visit(place, from: a.location) }
+            a.location = place
+            if !a.lore.contains(where: { $0.name.caseInsensitiveCompare(place) == .orderedSame }) {
+                addLore(&a, LoreEntry(name: place, kind: .place, desc: ""))
+            }
+        }
+        if !end.time.isEmpty {
+            if let m = Continuity.minutes(in: end.time) {
+                a.clock = m
+                a.storyTime = Continuity.storyTime(clock: m, old: end.time)
+            } else {
+                a.clock = nil
+                a.storyTime = end.time
+            }
+        }
+        if !end.people.isEmpty { a.whereabouts = end.people }
+        if !end.facts.isEmpty {
+            var facts = end.facts
+            for f in a.facts where !facts.contains(where: { Self.similar($0, f) }) { facts.append(f) }
+            a.facts = Array(facts.prefix(14))
+        }
+        var now: [String] = []
+        if !a.location.isEmpty { now.append("you are at " + a.location) }
+        if !end.withYou.isEmpty, end.withYou.lowercased() != "nobody" { now.append("with " + end.withYou) }
+        if !a.storyTime.isEmpty { now.append(a.storyTime) }
+        if !now.isEmpty { a.bible = "RIGHT NOW, where the last part ended: " + now.joined(separator: ", ") + ".\n\n" + a.bible }
+        a.scene = ([a.location.isEmpty ? "" : "You are at " + a.location + "."]
+                   + end.people.map { "\($0.name) is \($0.at)." }).filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// What happened in the earlier part, for the "Last time" recap at the start of the next one.
@@ -470,7 +583,8 @@ final class StoryEngine {
         var out = ["# " + a.title, ""]
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
-        out.append("Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (deepThinking ? "on" : "off"))
+        out.append("Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning "
+                   + (reasons ? "on" : deepThinking ? "off (this storyteller can't reason first)" : "off") + " · " + Self.build)
         out += ["", "## Story bible", a.bible]
         let people = a.lore.filter { $0.kind == .person }.map { "- " + $0.name + ($0.isPlayer ? " (the player)" : $0.role.isEmpty ? "" : " (\($0.role))") + ": " + $0.desc }
         if !people.isEmpty { out += ["", "## People"] + people }
@@ -807,6 +921,8 @@ final class StoryEngine {
     static let minRecallTokens = 180
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
+    /// Shown in the story export, so a playthrough can be matched to the code that ran it.
+    static let build = "build 2026-11-10"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -823,8 +939,12 @@ final class StoryEngine {
     /// Runs a background or planning call, with the model's reasoning when deep thinking is on.
     /// A model without a thinking mode (or one that thinks past its room) gives back nothing, and
     /// then the call is made again without it.
-    private func think(_ prompt: String, quickTokens: Int, deepTokens: Int, temperature: Float, thoughts: ThoughtSink? = nil) async -> String {
-        if deepThinking {
+    /// Reasoning first, when it is on and the storyteller can do it (not GGUF models).
+    var reasons: Bool { deepThinking && llm.canReason }
+
+    private func think(_ prompt: String, quickTokens: Int, deepTokens: Int, temperature: Float, thoughts: ThoughtSink? = nil,
+                       grammar: String? = nil) async -> String {
+        if reasons {
             thinkBudget = deepTokens
             defer { thinkBudget = 0 }
             let out = (try? await llm.complete(system: nil, prompt: prompt,
@@ -832,7 +952,8 @@ final class StoryEngine {
                                                               thoughts: thoughts))) ?? ""
             if !out.isEmpty || Task.isCancelled { return out }
         }
-        return (try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: quickTokens, temperature: temperature))) ?? ""
+        return (try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: quickTokens, temperature: temperature,
+                                                                                   repetitionPenalty: 1.12, grammar: grammar))) ?? ""
     }
 
     /// The set-up's hard limits, for the Game Master and its reviews.
@@ -861,7 +982,7 @@ final class StoryEngine {
         let previous = a.transcript.dropLast().last(where: { $0.role == .player })?.text ?? ""
         // Built at full size, then squeezed until it fits beside the room to think and write (and the
         // few lines a second try adds).
-        let room = (deepThinking ? Self.deepPlanTokens : Self.planTokens) + Self.safetyTokens + 160
+        let room = (reasons ? Self.deepPlanTokens : Self.planTokens) + Self.safetyTokens + 160
         var prompt = ""
         for scale in [1.0, 0.75, 0.55, 0.4] {
             prompt = planPrompt(a, input: input, memories: memories, notes: notes, scale: scale)
@@ -874,7 +995,7 @@ final class StoryEngine {
         if Continuity.planIsStale(playerLine: said, input: input, previous: previous) {
             let first = planThoughts
             lines = await planLines(prompt + "\n\nCAREFUL: your first plan was about the earlier message (\"" + clip(previous, 160)
-                                    + "\"), which is already answered. Plan for the NEW MESSAGE: " + clip(input, 400) + "\n\nYour six lines:")
+                                    + "\"), which is already answered. Plan for the NEW MESSAGE: " + clip(input, 400) + "\n\nYour five lines:")
             planThoughts = first.isEmpty ? planThoughts : first + "\n\n(Planned again: the first plan was about the earlier message.)\n" + planThoughts
         }
         // The PLAYER line is the player's own words, so it can never drift from what they said.
@@ -890,7 +1011,7 @@ final class StoryEngine {
         let reply = await think(prompt, quickTokens: Self.planTokens, deepTokens: Self.deepPlanTokens, temperature: 0.4, thoughts: sink)
         planThoughts = sink.clean
         return reply.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.range(of: #"^[-*\s]*(PLAYER|ANSWER|BEAT|WHO|USE|AVOID)\**:"#, options: .regularExpression) != nil }
+            .filter { $0.range(of: #"^[-*\s]*(PLAYER|ANSWER|BEAT|WHO|USE)\**:"#, options: .regularExpression) != nil }
     }
 
     /// The planner's prompt. `scale` shrinks every long part together when it must fit a smaller room;
@@ -907,7 +1028,7 @@ final class StoryEngine {
         if let notes = a.notes, !notes.text.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + clip(notes.text, n(500)) }
         else if !a.secrets.isEmpty { prompt += "\n\nPRIVATE NOTES:\n" + a.secrets.prefix(4).map { "- " + clip($0, n(160)) }.joined(separator: "\n") }
         if let m = a.mood.feeling { prompt += "\n\nFEELING READING: \(m)/10" + (a.mood.enjoying.isEmpty ? "" : ", enjoying " + a.mood.enjoying) + (a.mood.leavingPlot ? ", leaving the plot" : "") }
-        prompt += "\n\nSTORY STATE:\n" + clip(briefingText(a, memories: memories, director: notes, withFacts: false, tight: scale < 0.7 ? 1 : 0), n(deepThinking ? 2200 : 3600))
+        prompt += "\n\nSTORY STATE:\n" + clip(briefingText(a, memories: memories, director: notes, withFacts: false, tight: scale < 0.7 ? 1 : 0), n(reasons ? 2200 : 3600))
         // The earlier exchange is labelled so it can't be mistaken for the new message.
         let last = a.transcript.dropLast().suffix(2)   // the player's new words are the last turn
         if !last.isEmpty {
@@ -916,7 +1037,7 @@ final class StoryEngine {
         }
         let continuity = continuityText(a, tight: scale < 0.7 ? 1 : 0)
         if !continuity.isEmpty { prompt += "\n\n" + clip(continuity, n(1400)) }
-        prompt += "\n\nTHE PLAYER'S NEW MESSAGE (plan for this one): " + clip(input, 800) + "\n\nYour six lines:"
+        prompt += "\n\nTHE PLAYER'S NEW MESSAGE (plan for this one): " + clip(input, 800) + "\n\nYour five lines:"
         return prompt
     }
 
@@ -926,14 +1047,15 @@ final class StoryEngine {
     /// budget like every other call.
     private func review() async {
         guard !Task.isCancelled, let start = adventure, start.transcript.last?.role == .gm else { return }
-        let room = (deepThinking ? Self.reviewDeepTokens : Self.reviewTokens) + Self.safetyTokens
+        let room = (reasons ? Self.reviewDeepTokens : Self.reviewTokens) + Self.safetyTokens
         var prompt = ""
         for scale in [1.0, 0.75, 0.55, 0.4] {
             prompt = reviewPrompt(start, scale: scale)
             if Self.tokens(prompt) + room <= LLMService.contextBudget { break }
         }
         let sink = ThoughtSink()
-        let reply = await think(prompt, quickTokens: Self.reviewTokens, deepTokens: Self.reviewDeepTokens, temperature: 0.3, thoughts: sink)
+        let reply = await think(prompt, quickTokens: Self.reviewTokens, deepTokens: Self.reviewDeepTokens, temperature: 0.3, thoughts: sink,
+                                grammar: JSONGrammar.review)
         guard !Task.isCancelled, var now = adventure, now.id == start.id else { return }
         // A review that loops or runs out of room never closes its JSON: keep what it finished. Then
         // the shape is checked: lists that came back as one string are split, and anything still
@@ -1427,6 +1549,9 @@ final class StoryEngine {
             }
         }
         if let pov = Continuity.povSlip(reply, playerName: a.playerName) { out.append(pov) }
+        if Continuity.speaksForPlayer(reply) {
+            out.append("The last reply put words in the player's mouth (\"...\", you say). Never write what the player says; only they decide that.")
+        }
         let s = a.setup
         var sources: [String] = [a.bible, a.scene, s.describe, s.world, s.who, s.traits, s.place, s.goal, s.hook, s.beats]
         sources += a.facts
@@ -1663,7 +1788,8 @@ final class StoryEngine {
             + "\nALREADY KNOWN: " + (known.isEmpty ? "(none)" : known)
             + "\nOPEN STORY STEPS: " + (steps.isEmpty ? "(none)" : steps)
             + "\n\nLATEST EXCHANGE\n" + exchange
-        guard let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 350, temperature: 0.3)),
+        guard let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 350, temperature: 0.3, repetitionPenalty: 1.12,
+                                                                                         grammar: JSONGrammar.memory)),
               let m = JSONExtract.object(reply), var a = adventure, a.id == start.id
         else { return }
 
