@@ -30,6 +30,9 @@ final class StoryEngine {
     private var planThoughts = ""
     var error: String?
 
+    /// Names learned this turn, for the world check.
+    private var namesThisTurn: [String] = []
+
     /// Read replies aloud as they are written.
     var narrate: Bool { didSet { UserDefaults.standard.set(narrate, forKey: "narrate") } }
     /// The Game Master writes a short private plan before each reply (a few seconds more per turn).
@@ -333,8 +336,10 @@ final class StoryEngine {
 
             var a = Adventure(setup: e, title: e.title.isEmpty ? "Untitled" : e.title, minutes: max(5, e.minutes))
             a.playerName = player.name
+            a.nameless = true
             var request = (e.simulator ? Prompts.architect + "\n" + Prompts.architectSimulator : Prompts.architect)
             if source != nil { request += "\n" + Prompts.continuation }
+            request += "\n" + Prompts.architectNameless(playerNamed: !player.name.isEmpty)
             var prompt = "PLAYER'S ANSWERS\n" + e.answers(player: player)
                 + "\n\nFEELING TO ACHIEVE: " + (e.feeling.isEmpty ? "surprise me" : e.feeling)
                 + "\nPLAY MODE: " + (e.simulator ? "experience (no plot)" : "story")
@@ -484,7 +489,16 @@ final class StoryEngine {
 
         // The player
         let p = plan["player"] as? [String: Any]
-        let playerName = !player.name.isEmpty ? player.name : !str("name", p).isEmpty ? str("name", p) : str("player_name")
+        let invented = !str("name", p).isEmpty ? str("name", p) : str("player_name")
+        // Nameless: the player has no name until they say one in the story, so a name the
+        // architect made up is taken back out of the bible.
+        let playerName = !player.name.isEmpty ? player.name : a.nameless ? "" : invented
+        if a.nameless, player.name.isEmpty, !invented.isEmpty {
+            var t = a
+            t.playerName = invented
+            t.lore = []
+            a.bible = Continuity.unnamed(a.bible, in: t, playerTold: false)
+        }
         a.playerName = playerName
         a.lore = [LoreEntry(name: playerName.isEmpty ? "You" : playerName, kind: .person,
                             desc: [str("desc", p), e.who, e.traits].filter { !$0.isEmpty }.joined(separator: ". "), isPlayer: true)]
@@ -512,7 +526,7 @@ final class StoryEngine {
             let pronouns = str("pronouns", item)
             if kind == .person, !pronouns.isEmpty { a.facts.append("\(name) uses \(pronouns).") }
             addLore(&a, LoreEntry(name: name, kind: kind, desc: str("desc", item), role: str("role", item),
-                                  known: kind != .person || (item["known"] as? Bool ?? false), wants: str("wants", item)))
+                                  known: kind != .person || (!a.nameless && (item["known"] as? Bool ?? false)), wants: str("wants", item)))
         }
 
         a.beats = ((plan["beats"] as? [Any]) ?? []).compactMap { b in
@@ -597,6 +611,27 @@ final class StoryEngine {
         refreshVocabulary()
     }
 
+    /// Your name in this story, set from the World panel (never kept for other stories). Empty
+    /// leaves you nameless until you say a name in the story.
+    func setPlayerName(_ name: String) {
+        guard var a = adventure else { return }
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard n != a.playerName else { return }
+        a.playerName = n
+        if let i = a.lore.firstIndex(where: \.isPlayer) { a.lore[i].name = n.isEmpty ? "You" : n }
+        adventure = a
+        library.save(a)
+        refreshVocabulary()
+    }
+
+    /// Hide names until they are said in the story (on), or let everyone go by name (off).
+    func setNameless(_ on: Bool) {
+        guard var a = adventure, a.nameless != on else { return }
+        a.nameless = on
+        adventure = a
+        library.save(a)
+    }
+
     func deleteLore(_ id: UUID) {
         guard var a = adventure else { return }
         a.lore.removeAll { $0.id == id && !$0.isPlayer }
@@ -615,7 +650,8 @@ final class StoryEngine {
         out.append("Game Master planning " + (gmPlans ? (grounded ? "on (grounded engine)" : "on") : "off") + ", reasoning "
                    + (reasons ? "on" : deepThinking ? "off (this storyteller can't reason first)" : "off") + " · " + Self.build)
         out += ["", "## Story bible", a.bible]
-        let people = a.lore.filter { $0.kind == .person }.map { "- " + $0.name + ($0.isPlayer ? " (the player)" : $0.role.isEmpty ? "" : " (\($0.role))") + ": " + $0.desc }
+        let people = a.lore.filter { $0.kind == .person }.map { "- " + ($0.isPlayer && a.playerName.isEmpty ? "You" : $0.name) + ($0.isPlayer ? " (the player)" : $0.role.isEmpty ? "" : " (\($0.role))")
+            + (a.nameless && !$0.isPlayer && !$0.known && !$0.byPlayer ? " [name not said yet]" : "") + ": " + $0.desc }
         if !people.isEmpty { out += ["", "## People"] + people }
         if !a.facts.isEmpty { out += ["", "## Facts now"] + a.facts.map { "- " + $0 } }
         if !a.storyTime.isEmpty { out += ["", "## Story time now", a.storyTime] }
@@ -624,6 +660,7 @@ final class StoryEngine {
         if !a.scene.isEmpty { out += ["", "## Scene now", a.scene] }
         if !a.carrying.isEmpty { out += ["", "## You have", a.carrying.joined(separator: "; ")] }
         if !a.things.isEmpty { out += ["", "## In this place", a.things.joined(separator: "; ")] }
+        if !a.checks.isEmpty { out += ["", "## Last world check"] + a.checks.map { "- " + $0 } }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
         for t in a.transcript {
@@ -738,6 +775,8 @@ final class StoryEngine {
         let maxOut = opening ? 520 : a.isShort ? 300 : 420
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
+        namesThisTurn = []
+        let introduced = hidden ? false : learnPlayerName(&a, input: input)
         var notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks, opening: opening)
         if !hidden, !playerNarrates, Continuity.moves(input) {
             notes.insert("THE PLAYER IS MOVING: show them going where they said, the way there, and what they find when they arrive. People are where the scene puts them: someone elsewhere is found there, never suddenly beside the player.", at: playerAsks ? 1 : 0)
@@ -834,7 +873,13 @@ final class StoryEngine {
             if grounded, let read = await readPlayer(a, input: input) {
                 guard !Task.isCancelled else { adventure = snapshot; return }
                 plan = settle(&a, read: read, input: input)
+                let told = revealName(&a, input: input, to: read.to, introduced: introduced)
+                if !told.isEmpty { plan = Self.withAnswer(plan, told) }
                 adventure = a
+            }
+            if plan.isEmpty, !hidden {
+                let told = revealName(&a, input: input, to: "", introduced: introduced)
+                if !told.isEmpty { notes.insert("NAME: " + told + " Say it in this reply.", at: 0); adventure = a }
             }
             if plan.isEmpty { plan = await makePlan(snapshot: a, input: input, memories: memories, notes: notes) }
             guard !Task.isCancelled else { adventure = snapshot; return }
@@ -856,6 +901,12 @@ final class StoryEngine {
         var history = kept.map { ChatTurn(role: $0.1.role == .player ? .user : .assistant, text: $0.1.text) }
         if history.first?.role == .assistant { history.insert(ChatTurn(role: .user, text: "(The story begins.)"), at: 0) }
         history.append(ChatTurn(role: .user, text: briefing(memories, plan: plan)))
+        if a.nameless {
+            // The storyteller never sees a name the story hasn't said: people go by their role.
+            let told = nameTold(a)
+            system = Continuity.unnamed(system, in: a, playerTold: told)
+            history = history.map { ChatTurn(role: $0.role, text: Continuity.unnamed($0.text, in: a, playerTold: told)) }
+        }
         stage = "The storyteller is writing"
         a.gmWait = Date().timeIntervalSince(ticked)
         if narrate { narrator.begin() }
@@ -1067,7 +1118,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10m"
+    static let build = "build 2026-11-10n"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1530,8 +1581,94 @@ final class StoryEngine {
             now.transcript[i].after = (now.transcript[i].after ?? "") + "\n\n(Card check in code: not in the story, so kept off the card: "
                 + refused.prefix(8).joined(separator: "; ") + ".)"
         }
+        now.checks = Self.worldChanges(from: start, to: now, refused: refused, named: namesThisTurn)
         adventure = now
         library.save(now)
+    }
+
+    /// What the world check after a reply changed, in plain lines for the World panel.
+    static func worldChanges(from s: Adventure, to n: Adventure, refused: [String], named: [String]) -> [String] {
+        var out: [String] = named.map { "Name learned: " + $0 }
+        if !n.location.isEmpty, n.location != s.location { out.append("Place: " + n.location) }
+        if !n.storyTime.isEmpty, n.storyTime != s.storyTime { out.append("Time: " + n.storyTime) }
+        func state(_ w: Whereabout) -> String { w.here == false ? "elsewhere" : w.engaged == true ? "with you" : w.here == true ? "in the room" : "" }
+        for w in n.whereabouts {
+            let old = s.whereabouts.first { $0.name == w.name }
+            if old == nil || old!.at != w.at || old!.doing != w.doing || state(old!) != state(w) {
+                out.append(w.name + ": " + [state(w), Continuity.placed(w.at), w.doing].filter { !$0.isEmpty }.joined(separator: ", "))
+            }
+        }
+        for f in n.facts where !s.facts.contains(f) { out.append("New fact: " + f) }
+        let gained = n.carrying.filter { !s.carrying.contains($0) }, lost = s.carrying.filter { !n.carrying.contains($0) }
+        if !gained.isEmpty { out.append("You now have: " + gained.joined(separator: "; ")) }
+        if !lost.isEmpty { out.append("No longer with you: " + lost.joined(separator: "; ")) }
+        for e in n.timeline where !s.timeline.contains(e) { out.append("Timeline: " + e) }
+        let key = n.location.lowercased()
+        let seen = (n.placeThings[key] ?? []).filter { !(s.placeThings[key] ?? []).contains($0) }
+        if !seen.isEmpty { out.append("Seen here: " + seen.joined(separator: "; ")) }
+        for r in refused.prefix(6) { out.append("Kept off, not in the story: " + r) }
+        return out.isEmpty ? ["Nothing changed."] : out
+    }
+
+    /// The player says their own name in the story ("I'm Ada"): from now on it is theirs in this
+    /// story, and the people they meet may use it.
+    private func learnPlayerName(_ a: inout Adventure, input: String) -> Bool {
+        guard a.nameless, let name = Continuity.selfIntroduction(input) else { return false }
+        if a.playerName.caseInsensitiveCompare(name) != .orderedSame {
+            a.playerName = name
+            if let i = a.lore.firstIndex(where: \.isPlayer) { a.lore[i].name = name }
+            namesThisTurn.append(name + " (you)")
+        }
+        return true
+    }
+
+    /// A name said in the story becomes known: when the player asks someone their name, or asks
+    /// about someone else's, or introduces themselves (and is told a name back). Returns what the
+    /// storyteller must say, or "".
+    private func revealName(_ a: inout Adventure, input: String, to: String, introduced: Bool) -> String {
+        guard a.nameless, let ask = Continuity.asksName(input) ?? (introduced ? "you" : nil) else { return "" }
+        let hidden = a.lore.indices.filter { a.lore[$0].kind == .person && !a.lore[$0].isPlayer && !a.lore[$0].known && !a.lore[$0].byPlayer }
+        guard !hidden.isEmpty else { return "" }
+        func lead(_ n: String) -> String { n.lowercased().split(separator: " ").first.map(String.init) ?? "" }
+        var addressee = to
+        if addressee.isEmpty { addressee = a.whereabouts.first { $0.engaged == true && $0.here != false }?.name ?? "" }
+        let text = input.lowercased()
+        var target: Int?
+        if ask == "you" {
+            target = hidden.first { lead(a.lore[$0].name) == lead(addressee) }
+            if target == nil, addressee.isEmpty {
+                let near = hidden.filter { i in a.whereabouts.contains { lead($0.name) == lead(a.lore[i].name) && $0.here != false } }
+                if near.count == 1 { target = near[0] }
+            }
+        } else {
+            let others = hidden.filter { lead(a.lore[$0].name) != lead(addressee) }
+            let he = text.range(of: #"\b(he|his|him)\b"#, options: .regularExpression) != nil
+            let she = text.range(of: #"\b(she|her)\b"#, options: .regularExpression) != nil
+            func uses(_ i: Int, _ p: String) -> Bool { a.facts.contains { $0.hasPrefix(a.lore[i].name + " uses " + p) } }
+            let byRole = others.first { i in
+                let core = Continuity.roleLabel(a.lore[i].role).replacingOccurrences(of: "the ", with: "")
+                return core.count >= 3 && text.contains(core)
+            }
+            target = byRole ?? others.first { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? (others.count == 1 ? others[0] : nil)
+        }
+        guard let i = target else { return "" }
+        a.lore[i].known = true
+        let name = a.lore[i].name
+        namesThisTurn.append(name)
+        if ask == "you" { return name + " tells you their name, plainly: \"" + name + ".\"" }
+        return (addressee.isEmpty ? "You learn that" : addressee + " tells you that") + " the person you asked about is " + name + "."
+    }
+
+    /// The plan with `answer` as its ANSWER line (kept ahead of any answer already there).
+    static func withAnswer(_ plan: String, _ answer: String) -> String {
+        var lines = plan.components(separatedBy: "\n")
+        if let i = lines.firstIndex(where: { $0.hasPrefix("ANSWER:") }) {
+            let old = lines[i].dropFirst(7).trimmingCharacters(in: .whitespaces)
+            lines[i] = "ANSWER: " + answer + (old.isEmpty || old == "none" ? "" : " " + old)
+        } else {
+            lines.insert("ANSWER: " + answer, at: min(1, lines.count))
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// The review's room to write (and to reason first, with deep thinking on).
@@ -1553,6 +1690,10 @@ final class StoryEngine {
         if !start.whereabouts.isEmpty { prompt += "\n\nWHERE PEOPLE WERE BEFORE THIS REPLY:\n" + start.whereabouts.map { "- " + $0.line }.joined(separator: "\n") }
         let people = start.cast.prefix(6).map { "- \($0.name)" + ($0.role.isEmpty ? "" : " (\($0.role))") + ": " + clip($0.desc, n(160)) }
         if !people.isEmpty { prompt += "\n\nPEOPLE:\n" + people.joined(separator: "\n") }
+        let unnamed = Continuity.hiddenNames(start)
+        if !unnamed.isEmpty {
+            prompt += "\n\nTHE STORY CALLS THESE PEOPLE BY THEIR ROLE (use the name in this form): " + unnamed.map { "\"\($0.role)\" is \($0.name)" }.joined(separator: "; ")
+        }
         let played = start.elapsed / 60
         if let act = start.roadmap.first(where: { played >= $0.from && played <= $0.to }) ?? start.roadmap.first(where: { played < $0.to }) {
             prompt += "\n\nROADMAP NOW (minute \(Int(played)) of \(start.minutes)): " + act.goal
@@ -1679,8 +1820,9 @@ final class StoryEngine {
         let chapterChars = [600, 300, 220, 180][min(tight, 3)]
         var s = Prompts.gmRules
         if a.isShort { s += "\n\n" + Prompts.shortRules }
-        s += "\n\n" + Prompts.castRules(minutes: a.minutes, names: a.cast.map(\.name))
-        if !a.playerName.isEmpty {
+        s += "\n\n" + Prompts.castRules(minutes: a.minutes, names: a.cast.filter { !a.nameless || $0.known || $0.byPlayer }.map(\.name))
+        if a.nameless { s += "\n" + Prompts.namelessRule }
+        if !a.playerName.isEmpty, !a.nameless || nameTold(a) {
             s += "\n\nTHE PLAYER CHARACTER is \(a.playerName), and that is \"you\". The name appears only in other characters' dialogue."
         }
         s += "\n\n" + Prompts.feelingRules(a.setup.feeling)
@@ -1939,11 +2081,18 @@ final class StoryEngine {
             let first = w.name.lowercased().split(separator: " ").first.map(String.init) ?? w.name.lowercased()
             if first == me || first == "you" || first.count < 3 { return nil }
             if said.contains(first) || planned.contains(first) { return nil }
+            // Nameless: the player and the plan call them by their role.
+            var role = ""
+            if a.nameless, let entry = a.lore.first(where: { $0.name == w.name && $0.kind == .person }), !entry.known, !entry.byPlayer {
+                role = Continuity.roleLabel(entry.role)
+            }
+            let core = role.replacingOccurrences(of: "the ", with: "")
+            if core.count >= 3, said.contains(core) || planned.contains(core) { return nil }
             if moving {
                 let place = Set(w.at.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
                 if !going.isDisjoint(with: place) { return nil }
             }
-            return .init(name: w.name, at: w.at)
+            return .init(name: w.name, at: w.at, also: role.isEmpty ? [] : [role])
         }
     }
 
@@ -2108,7 +2257,7 @@ final class StoryEngine {
         if !a.timeline.isEmpty {
             l.append("- Earlier (never change these): " + a.timeline.suffix(tight >= 2 ? 3 : 4).map { clip($0, tight >= 2 ? 110 : 140) }.joined(separator: " | "))
         }
-        if !a.playerName.isEmpty, !nameTold(a) {
+        if !a.playerName.isEmpty, !nameTold(a), !a.nameless {
             let knew = a.cast.filter(\.known).map(\.name)
             l.append("- Nobody here knows the player's name (\(a.playerName)) because the player has not said it"
                      + (knew.isEmpty ? "" : ", except " + knew.joined(separator: ", ") + ", who already knew them") + ". No one else says it.")

@@ -88,7 +88,8 @@ struct PlayerDetails {
     static var saved: PlayerDetails {
         let d = UserDefaults.standard
         return PlayerDetails(
-            name: d.string(forKey: "playerName") ?? "", age: 0,
+            // The player's name is never kept between stories: each story learns it in play.
+            name: "", age: 0,
             gender: d.string(forKey: "playerGender") ?? "", interest: d.string(forKey: "playerInterest") ?? "")
     }
 }
@@ -312,6 +313,12 @@ struct Adventure: Codable, Identifiable, Hashable {
     var clock: Int?
     /// Seconds the Game Master spent thinking before the last reply began (the clock doesn't count them).
     var gmWait: Double = 0
+    /// Nameless until introduced: nobody, the player included, has a name in the story until it is
+    /// said in the story. Until then people go by their role ("the bartender"), and the storyteller
+    /// is never shown the name. New stories start this way; older saves keep their names.
+    var nameless = false
+    /// What the last world check after a reply changed and refused, for the World panel.
+    var checks: [String] = []
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -326,7 +333,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
-             storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings
+             storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -357,6 +364,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         facts = v(.facts, []); fixes = v(.fixes, []); nextMove = v(.nextMove, ""); scene = v(.scene, "")
         storyTime = v(.storyTime, ""); timeline = v(.timeline, []); whereabouts = v(.whereabouts, []); carrying = v(.carrying, []); things = v(.things, []); placeThings = v(.placeThings, [:]); gmWait = v(.gmWait, 0)
         clock = try? c.decodeIfPresent(Int.self, forKey: .clock)
+        nameless = v(.nameless, false); checks = v(.checks, [])
     }
 
     func encode(to encoder: Encoder) throws {
@@ -376,6 +384,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(facts, forKey: .facts); try c.encode(fixes, forKey: .fixes); try c.encode(nextMove, forKey: .nextMove); try c.encode(scene, forKey: .scene)
         try c.encode(storyTime, forKey: .storyTime); try c.encode(timeline, forKey: .timeline); try c.encode(whereabouts, forKey: .whereabouts); try c.encode(carrying, forKey: .carrying); try c.encode(things, forKey: .things); try c.encode(placeThings, forKey: .placeThings); try c.encode(gmWait, forKey: .gmWait)
         try c.encodeIfPresent(clock, forKey: .clock)
+        try c.encode(nameless, forKey: .nameless); try c.encode(checks, forKey: .checks)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -388,6 +397,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         facts = o.facts; fixes = o.fixes; nextMove = o.nextMove; scene = o.scene
         storyTime = o.storyTime; timeline = o.timeline; whereabouts = o.whereabouts; clock = o.clock
         carrying = o.carrying; things = o.things; placeThings = o.placeThings
+        playerName = o.playerName; checks = o.checks
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
