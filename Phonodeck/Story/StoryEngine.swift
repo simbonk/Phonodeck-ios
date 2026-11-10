@@ -1064,7 +1064,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10k"
+    static let build = "build 2026-11-10l"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1245,9 +1245,14 @@ final class StoryEngine {
         if leaving { who += " You are going " + (read.going == "somewhere new" ? "somewhere new" : "to " + read.going) + "; anyone not named stays behind, out of sight." }
         lastRead = "to " + (read.to.isEmpty ? "nobody" : read.to) + "; " + (read.going.isEmpty ? "staying" : "going: " + read.going)
             + (!read.going.isEmpty && !leaving ? " (not acted on: the message does not read like leaving)" : "")
+        // An answer is only kept when the player asked something, and never when it is the player's
+        // own words handed back (an order or a request written as "I'll have...").
+        let low = read.answer.lowercased()
+        let own = ["i ", "i'll ", "i'd ", "i'm ", "yes, i", "my "].contains { low.hasPrefix($0) }
+        let answer = Self.asks(input) && !own ? read.answer : ""
         return [
             "PLAYER: " + clip(input.replacingOccurrences(of: "\n", with: " "), 300),
-            "ANSWER: " + (read.answer.isEmpty ? "none" : read.answer),
+            "ANSWER: " + (answer.isEmpty ? "none" : answer),
             "BEAT: " + (read.beat.isEmpty ? "follow the player's lead and deliver the feeling" : read.beat),
             "WHO: " + who,
         ].joined(separator: "\n")
@@ -1982,7 +1987,7 @@ final class StoryEngine {
     /// Two timeline entries about the same moment (the same words after the "when").
     static func sameEvent(_ a: String, _ b: String) -> Bool {
         func what(_ s: String) -> String { (s.split(separator: ":", maxSplits: 1).last.map(String.init) ?? s).lowercased().trimmingCharacters(in: .whitespaces) }
-        return what(a) == what(b)
+        return what(a) == what(b) || similar(what(a), what(b))
     }
 
     /// Takes a name used to address someone out of a reply: "You are safe now, Simon." becomes
@@ -2140,7 +2145,7 @@ final class StoryEngine {
             let me = a.lore.first(where: \.isPlayer)?.desc ?? ""
             return [
                 "THIS IS THE OPENING SCENE. The listener cannot see anything yet: your words are their eyes. First tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and what is around them, then paint it with sound, smell, light and texture.",
-                "Say plainly who is with the player right now, and exactly where anyone else is (never \"might be\"). The player has only what the set-up and facts say they have, nothing more.",
+                "Say plainly who is with the player right now, and exactly where anyone else is (never \"might be\"). Keep positions simple: whoever speaks to the player is in front of them, facing them. The player has only what the set-up and facts say they have, nothing more.",
                 me.isEmpty ? "Make clear who the player is here and why they are in this place." : "Make clear who the player is here (\(clip(me, 200))) and why they are in this place.",
                 "FEELING TO ACHIEVE: " + (a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling) + ". Set it up from the first lines.",
                 "Ignore the usual reply length: the opening may run to about 230 words.",
