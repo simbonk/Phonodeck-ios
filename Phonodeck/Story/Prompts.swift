@@ -156,22 +156,28 @@ enum Prompts {
     /// Continue: the next part of a finished story, with the same player, cast and world (the web
     /// app's SEQUEL_RULES, shortened for small models).
     static let continuation = """
-    This is the NEXT PART of an earlier story (EARLIER STORY below), with the same player, cast and world. Everything in the earlier story really happened and has consequences (changed relationships, debts, scars, reputations). Keep every returning character's name, personality, way of speaking and relationships, and keep the places and items; the bible introduces them as returning. Facts the player set by hand are kept exactly. Follow the connection: "right where it left off" starts in the same place and moment the earlier story ended, with the same people present; "some time later" moves time forward and the bible says how much. Grow a NEW central plot, secrets and roadmap from what the ending left open (loose threads, promises, unanswered questions, consequences); never repeat the earlier plot. "lore" lists the returning people (with "known": true and what they want now) plus any new ones; the returning cast is the heart of the story.
+    This is the NEXT PART of an earlier story (EARLIER STORY below), with the same player, cast and world. Everything in the earlier story really happened and has consequences (changed relationships, debts, scars, reputations). Keep every returning character's name, personality, way of speaking and relationships, and keep the places and items. Facts the player set by hand are kept exactly. HOW IT ENDED is the truth about where things stand: the earlier bible describes how the story BEGAN, so do not copy it. Follow the connection:
+    - "Right where it left off": the new part opens at the exact moment and place the last scene ended, with the same people present. "bible" describes that situation now (where the player is, who is with them, what just happened, what is still open). "location" is the place where the last scene ended. "time" is the time of day when it ended (a scene that ended at sunrise opens at sunrise). "people" puts each person where the last scene left them; anyone who left is elsewhere. "facts" are true at that moment: update anything the ending changed (where people are, what the player now has, the weather).
+    - "Some time later": time has moved on; "time" and the bible say how much, and "location" and "people" say where everyone is now.
+    "timeline" lists 2-4 key moments of the earlier story, each with when it happened relative to now. Grow a NEW central plot, secrets and roadmap from what the ending left open (loose threads, promises, unanswered questions, consequences); never repeat the earlier plot. "lore" lists the returning people (with "known": true and what they want now) plus any new ones; the returning cast is the heart of the story. After "roadmap", add one more key: "recap":"2-3 sentences, to the player as 'you', of what happened across the whole earlier story, ending with where it left off"
     """
 
     /// How a new part connects to the one before. The first is the default.
     static let continueLinks = ["Right where it left off", "Some time later"]
 
     /// The opening of a continued part: a short "last time" recap for the listener, then the scene.
-    static func continueOpening(link: String, recap: String, simulator: Bool, short: Bool) -> String {
+    /// `ending` is the earlier part's last scene, so the new one carries on from it instead of retelling it.
+    static func continueOpening(link: String, recap: String, ending: String, simulator: Bool, short: Bool) -> String {
         let words = short ? "100 to 150 words" : "150 to 230 words"
         let pickUp = link.lowercased().contains("later")
             ? "Then say plainly how much time has passed and where the player is now (name the place), and paint the scene with what they see, hear, smell and feel."
-            : "Then pick up exactly where it ended: the same place, the same moment, the same people present. Paint the scene with what the player sees, hears, smells and feels."
+            : "Then carry on from the last moment of LAST SCENE without retelling it: the same place, the same moment, the same people present, as the story bible describes. Paint it with what the player sees, hears, smells and feels."
         let end = simulator
             ? "Deliver the FEELING TO ACHIEVE. No threat, no hook, no mystery. Do not end with a list of options."
             : "Let a thread the ending left open pull the player into this part's new trouble, and end on an unresolved hook. Do not end with a list of options."
-        return "Begin the next part of the story. This is the opening scene: \(words). Start with a recap for the listener in two or three short sentences beginning \"Last time,\" that reminds them what happened (PREVIOUSLY below), in second person. " + pickUp + " " + end + "\n\nPREVIOUSLY: " + recap
+        let last = ending.count > 500 ? "…" + String(ending.suffix(500)) : ending
+        return "Begin the next part of the story. This is the opening scene: \(words). Start with a recap for the listener in two or three short sentences beginning \"Last time,\" that sums up the whole earlier story (PREVIOUSLY below), in second person; do not replay its last scene line by line. " + pickUp + " " + end
+            + "\n\nPREVIOUSLY: " + recap + (last.isEmpty ? "" : "\n\nLAST SCENE (how it ended): " + last)
     }
 
     // MARK: The look-ahead (while the reply is read aloud)
