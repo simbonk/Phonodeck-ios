@@ -567,7 +567,14 @@ final class StoryEngine {
         a.whereabouts = Self.whereabouts(plan["people"]).filter { w in
             w.name.caseInsensitiveCompare(playerName) != .orderedSame && w.name.caseInsensitiveCompare("you") != .orderedSame
         }
-        checkPronouns(&a, texts: [a.bible])
+        // The opening scene: the room, its props and who is in it, set before the first line so
+        // the globe and the storyteller start from the same place.
+        a.scene = clip(str("scene"), 280)
+        let props = ((plan["things"] as? [Any]) ?? []).compactMap { $0 as? String }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        a.things = Array(props.prefix(6)).map { clip($0, 60) }
+        if !a.location.isEmpty, !a.things.isEmpty { a.placeThings[a.location.lowercased()] = a.things }
+        checkPronouns(&a, texts: [a.bible, a.scene])
         a.secrets = (plan["secrets"] as? [String]) ?? []
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
@@ -1126,7 +1133,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10o"
+    static let build = "build 2026-11-10p"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1171,7 +1178,9 @@ final class StoryEngine {
 
     private func factsText(_ a: Adventure) -> String {
         var s = ""
-        if !a.facts.isEmpty { s += "FACTS (always true):\n" + a.facts.map { "- " + $0 }.joined(separator: "\n") }
+        // Facts tied to a place the player has left stay there, so its gramophone doesn't follow them.
+        let facts = a.facts.filter { !Continuity.elsewhereFact($0, in: a) }
+        if !facts.isEmpty { s += "FACTS (always true):\n" + facts.map { "- " + $0 }.joined(separator: "\n") }
         if !a.fixes.isEmpty { s += (s.isEmpty ? "" : "\n") + "SLIPS TO CORRECT FROM NOW ON (the true version):\n" + a.fixes.map { "- " + $0 }.joined(separator: "\n") }
         return s
     }
@@ -1311,6 +1320,13 @@ final class StoryEngine {
         if leaving, read.going != "somewhere new" {
             a.visit(read.going, from: from)
             a.location = read.going
+            a.things = a.placeThings[read.going.lowercased()] ?? []
+        } else if leaving {
+            // Somewhere not on the map yet: the old scene is cleared, and the update after the
+            // reply names the new place and what is there.
+            a.location = ""
+            a.things = []
+            a.scene = "On the way out of " + from + "."
         }
         let others = a.whereabouts.filter { w in
             let first = w.name.lowercased().split(separator: " ").first.map(String.init) ?? ""
@@ -1481,8 +1497,17 @@ final class StoryEngine {
             let exchange = (start.transcript.last(where: { $0.role == .player })?.text ?? "") + " " + lastReply
             if let raw = text("place") {
                 let loc = Self.placeName(raw, known: now.lore.filter { $0.kind == .place }.map(\.name) + now.places)
-                if now.location.isEmpty || loc.caseInsensitiveCompare(now.location) == .orderedSame || Continuity.names(place: loc, in: exchange) {
-                    now.visit(loc, from: now.location)
+                // A new place is taken when the exchange names it, or when the player went somewhere
+                // and the exchange mentions it by its telling word ("We enter the theatre").
+                let went = (m["left"] as? Bool) == true || Continuity.moves(exchange) || Continuity.leavesPlace(exchange)
+                if now.location.isEmpty || loc.caseInsensitiveCompare(now.location) == .orderedSame || Continuity.names(place: loc, in: exchange)
+                    || (went && Continuity.mentions(place: loc, in: exchange)) {
+                    let from = now.location.isEmpty ? placeBeforeTurn : now.location
+                    if loc.caseInsensitiveCompare(from) != .orderedSame {
+                        // A new place is a new scene: its own things (none until the story shows them).
+                        now.things = now.placeThings[loc.lowercased()] ?? []
+                    }
+                    now.visit(loc, from: from)
                     now.location = loc
                 }
             }

@@ -411,12 +411,39 @@ enum Continuity {
         return words.allSatisfy { w in have.contains(w) || have.contains(w + "s") || (w.hasSuffix("s") && have.contains(String(w.dropLast()))) }
     }
 
+    /// Whether a text mentions a new place by its telling word ("theatre" in "The Gilded Theatre,
+    /// Main Street"): any word of the place's name of five letters or more that isn't generic.
+    static func mentions(place: String, in text: String) -> Bool {
+        let generic: Set<String> = ["street", "place", "house", "room", "corner", "front", "inside", "outside", "north", "south", "little", "great", "grand", "small"]
+        let have = wordSet(text)
+        return place.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
+            .filter { $0.count >= 5 && !generic.contains($0) }
+            .contains { have.contains($0) || have.contains($0 + "s") || ($0.hasSuffix("re") && have.contains(String($0.dropLast(2)) + "er")) }
+    }
+
+    /// Facts tied to another place than the one the player is in: they share a telling word with
+    /// what the story showed there and nothing here ("The gramophone plays a jazz record" stays at
+    /// the speakeasy once the player is at the theatre).
+    static func elsewhereFact(_ fact: String, in a: Adventure) -> Bool {
+        let here = a.location.lowercased()
+        let generic: Set<String> = ["there", "their", "about", "which", "while", "every", "small", "little", "large", "light", "storm", "night",
+                                    "morning", "evening", "always", "never", "still", "inside", "outside", "years", "today"]
+        func words(_ s: String) -> Set<String> { Set(wordSet(s).filter { $0.count >= 5 && !generic.contains($0) }) }
+        let away = a.placeThings.filter { $0.key != here }.values.flatMap { $0 }.reduce(into: Set<String>()) { $0.formUnion(words($1)) }
+        guard !away.isEmpty else { return false }
+        let near = (a.placeThings[here] ?? []).reduce(into: words(a.scene + " " + a.location)) { $0.formUnion(words($1)) }
+        let mine = words(fact)
+        // Facts about people go wherever the people go.
+        if a.cast.contains(where: { p in (p.name.split(separator: " ").first.map(String.init)).map { fact.contains($0) } ?? false }) { return false }
+        return !mine.isDisjoint(with: away.subtracting(near)) && mine.isDisjoint(with: near)
+    }
+
     /// Whether an exchange reads like the player going from one place to another (out a door, down
     /// a street), as opposed to crossing a room. Used with the review's own "left" answer: both
     /// must agree before anyone is counted as left behind.
     static func leavesPlace(_ text: String) -> Bool {
         let t = text.lowercased().replacingOccurrences(of: "’", with: "'")
-        let exit = #"\b(outside|outdoors|out (into|onto|the door|we go|of the|of here)|steps? out|step(s|ped)? through|walk(s|ed|ing)? (out|to|toward|towards|down|along|away|home|into)|leav(e|es|ing)|left the|street|alley|alleyway|sidewalk|pavement|road|path|shore|beach|harbor|harbour|upstairs|downstairs|next door|another room|hallway|corridor|doorway|drive|drives|ride|rides|boards?|climbs?|follow(s|ed)? (him|her|them) (out|to|into|down|up))\b"#
+        let exit = #"\b(let'?s go|let us go|enter(s|ed|ing)?|go(es)? (in|inside|into|out|over to|down to|to the)|head(s|ed|ing)? (out|over|down|into|to)|outside|outdoors|out (into|onto|the door|we go|of the|of here)|steps? out|step(s|ped)? through|walk(s|ed|ing)? (out|to|toward|towards|down|along|away|home|into)|leav(e|es|ing)|left the|street|alley|alleyway|sidewalk|pavement|road|path|shore|beach|harbor|harbour|upstairs|downstairs|next door|another room|hallway|corridor|doorway|drive|drives|ride|rides|boards?|climbs?|follow(s|ed)? (him|her|them) (out|to|into|down|up))\b"#
         return t.range(of: exit, options: .regularExpression) != nil
     }
 
