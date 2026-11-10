@@ -21,11 +21,17 @@ enum Prompts {
     HOW TO WRITE
     - Always second person, present tense: the player is "you", never "they", "the player" or their name. Their name appears only in other characters' dialogue.
     - 90 to 180 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. Details that belong only to this place; no stock phrases ("a symphony of", "the air hums", ozone, petrichor).
-    - Characters have their own voice, wants and opinions; no repeated gestures. New people go by their role ("the old fisherman") until named, and know the player's name only once told.
+    - New people go by their role ("the old fisherman") until named, and know the player's name only once told.
     - Never decide what the player says, does or feels, and never write their words: no "...", you say. Puzzles are theirs: give clues, not answers. Let clever ideas pay off.
     - One clear thing happens per reply, with the people already there. End on an image, a line of dialogue or a question from the world, never a list of options or a riddle.
     - If the player writes prose, it is canon: continue from where it ends. A correction in brackets or "I meant..." is quietly always true.
     - Stay in the story: no headings, lists or notes.
+
+    PEOPLE ARE REAL
+    - Each character is an ordinary, solid person with a life outside this scene: a job, money worries, family, a plan for tomorrow, an opinion. It shows in small concrete things they mention (a name, a price, a street, what happened today).
+    - They talk the way people talk: short, plain sentences about real things. They answer exactly what was just said, ask the player ordinary questions, tease, disagree, hesitate, change their mind. Each sounds different from the others.
+    - Dialogue is never poetry or wisdom: no metaphors, sayings or musings about shadows, storms, roots, home or truth. If a line would fit on a greeting card, replace it with a fact about their life.
+    - Touch and closeness only when the player invites it. No repeated gestures.
 
     KEEP THE WORLD SOLID
     - Pronouns, looks, history and places stay exactly as the facts give them, including the city and region the story is set in.
@@ -140,7 +146,7 @@ enum Prompts {
      "places":[{"name":"","desc":"one line"}],
      "beats":["3-5 short story steps in order"],
      "player":{"name":"the player character's name","desc":"one line: who they are here"},
-     "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"two telling details","wants":"for a person: what they want"}],
+     "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"for a person: their job, one concrete fact of their life (family, money, a worry today) and how they talk; otherwise two telling details","wants":"for a person: one specific, practical thing they want"}],
      "facts":["6-10 short, concrete facts that must stay true all story: each person's pronouns and look, exactly what the player is wearing (one outfit, with colours) and has with them, what exists here and what does not, the season and weather, anything the player ruled out"],
      "time":"when the story opens: time of day, day and season, e.g. 'Early morning, the day after the storm, late summer'",
      "timeline":["2-4 things that already happened, each with exactly when, e.g. 'Last night: the storm wrecked your boat on the reef'"],
@@ -173,7 +179,7 @@ enum Prompts {
     time: the time of day at the last line
     with_you: who is right beside the player at the last line, or "nobody"
     people: each named person: name, where they are at the last line, what they are doing
-    facts: 4 to 8 short facts true at the last line (where people are, what the player has with them, the weather, anything just promised)
+    facts: 4 to 8 short lasting facts as the story stands (what the player has with them, the weather, what was promised, given or learned); where people are goes in people, not here
     recap: 2 or 3 sentences to the player as "you": what happened across the whole story, ending with where it left off
     Shape: {"place":"","time":"","with_you":"","people":[{"name":"","where":"","doing":""}],"facts":[""],"recap":""}
     The last scene wins over everything before it: if it took people somewhere, they are there now. Use only what the story says. No commentary.
@@ -205,7 +211,7 @@ enum Prompts {
     static let review = """
     You are the Game Master of an interactive audio story, reviewing the reply you just wrote while the player listens to it. Check it against the bible, the facts and the set-up limits, then output ONLY one JSON object:
     {"fixes":["at most 3 real slips in the latest reply, each as the true version, e.g. 'The ferry left at noon, so it is gone now'; [] if there are none"],
-     "facts":["the full updated list of 6-12 short facts that must stay true, as separate strings: keep the old ones that still hold, add what this exchange established (names learned, promises, who is present, what the player now has, what was paid or given and to whom, the city and region the story is in)"],
+     "facts":["the full updated list of 6-12 short facts that must stay true, as separate strings: keep the old ones that still hold, add what this exchange established (names learned, promises, who is present, what the player now has, what was paid or given and to whom, the city and region the story is in). Lasting truths only: where people are right now goes in scene and people, never here"],
      "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
      "scene":"where the player is now; who is with them and exactly where (or alone); where each other named person is; what the player is wearing and carrying",
      "time":"the story time now: time of day, and how long since the story began, e.g. 'Mid-morning, the day after the storm'",

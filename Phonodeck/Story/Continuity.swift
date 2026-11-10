@@ -159,6 +159,23 @@ enum Continuity {
         return nil
     }
 
+    // MARK: Facts that last
+
+    /// A fact worth keeping as "always true", or nil. A line that only says where a person is or
+    /// what posture they are in right now ("Dolores sits beside Simon now", "Simon is alone at the
+    /// bar") is not one: it goes stale the moment they move, and then pulls the story back. If such
+    /// a line also says what they wear or carry, that part is kept.
+    static func lastingFact(_ fact: String, people: [String]) -> String? {
+        let firsts = people.compactMap { $0.split(separator: " ").first.map(String.init) }.filter { $0.count > 1 } + ["You", "The player"]
+        let names = firsts.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|")
+        let position = "^(" + names + #")(\s+\w+)?\s+(is|are|sits|stands|leans|waits|remains|stays)\s+(now\s+|still\s+|currently\s+)?(sitting|seated|standing|leaning|waiting|alone|at|behind|beside|next to|near|in|inside|outside|on|by|with|here|there|up)"#
+        guard fact.range(of: position, options: [.regularExpression, .caseInsensitive]) != nil else { return fact }
+        guard let keep = fact.range(of: #"(wearing|wears|carrying|carries|holding a|has a)"#, options: [.regularExpression, .caseInsensitive]) else { return nil }
+        let who = fact.split(separator: " ").prefix(while: { !["is", "are", "sits", "stands", "leans", "waits", "remains", "stays"].contains($0.lowercased()) }).joined(separator: " ")
+        let rest = String(fact[keep.lowerBound...])
+        return who + (rest.lowercased().hasPrefix("we") || rest.lowercased().hasPrefix("ca") && rest.lowercased().hasPrefix("carries") || rest.lowercased().hasPrefix("has") ? " " : " is ") + rest
+    }
+
     /// The reply writes the player's own words: a quote tagged "you say", "you whisper" and the
     /// like, before or after it.
     static func speaksForPlayer(_ reply: String) -> Bool {
