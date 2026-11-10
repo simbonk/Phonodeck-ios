@@ -120,8 +120,10 @@ final class LlamaEngine: @unchecked Sendable {
 
     /// Writes a reply to `prompt`, passing text to `onText` as it comes. `onText` returns false
     /// to stop early. Returns the speed in tokens per second.
+    /// `grammar` (GBNF) limits the reply to text the grammar allows, e.g. one JSON object of a
+    /// fixed shape; a grammar llama.cpp can't parse is skipped rather than failing the call.
     func generate(prompt: [llama_token], maxTokens: Int, temperature: Float, topP: Float,
-                  repetitionPenalty: Float?, onText: (String) -> Bool) throws -> Double {
+                  repetitionPenalty: Float?, grammar: String? = nil, onText: (String) -> Bool) throws -> Double {
         // Each reply starts from a clean conversation memory.
         llama_memory_clear(llama_get_memory(ctx), true)
 
@@ -135,6 +137,8 @@ final class LlamaEngine: @unchecked Sendable {
 
         let chain = llama_sampler_chain_init(llama_sampler_chain_default_params())
         defer { llama_sampler_free(chain) }
+        // The grammar goes first, so every later step only sees tokens it allows.
+        if let grammar, let g = llama_sampler_init_grammar(vocab, grammar, "root") { llama_sampler_chain_add(chain, g) }
         if let p = repetitionPenalty, p != 1 { llama_sampler_chain_add(chain, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, p, 0, 0)) }
         if temperature <= 0 {
             llama_sampler_chain_add(chain, llama_sampler_init_greedy())

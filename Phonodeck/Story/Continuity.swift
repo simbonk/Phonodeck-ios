@@ -159,6 +159,16 @@ enum Continuity {
         return nil
     }
 
+    /// The reply writes the player's own words: a quote tagged "you say", "you whisper" and the
+    /// like, before or after it.
+    static func speaksForPlayer(_ reply: String) -> Bool {
+        let verbs = "say|said|whisper|whispered|murmur|murmured|admit|admitted|reply|replied|answer|answered|ask|asked|tell|echo|echoed|add|added|call|called|offer|offered|confess|confessed|laugh|laughed"
+        let after = #"["”]\s*,?\s*you\s+(softly\s+|quietly\s+|gently\s+)?("# + verbs + #")\b"#
+        let before = #"\byou\s+(softly\s+|quietly\s+|gently\s+)?("# + verbs + #")\b[^."“]{0,30}[,:]\s*["“]"#
+        return reply.range(of: after, options: [.regularExpression, .caseInsensitive]) != nil
+            || reply.range(of: before, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     // MARK: Things the player never had
 
     /// Ordinary words that can follow "your" without being an object the story must have given

@@ -55,6 +55,10 @@ final class LLMService {
 
     init(store: ModelStore) { self.store = store }
 
+    /// Whether the storyteller can reason before it answers (Qwen's thinking mode through MLX).
+    /// GGUF models run through llama.cpp, where Phonodeck always turns thinking off.
+    var canReason: Bool { !(store.language?.isGGUF ?? false) }
+
     /// Memory the loaded model holds, for the fit checks.
     var loadedGB: Double { loadedID == nil ? 0 : store.neededGB(loadedID) }
 
@@ -152,6 +156,9 @@ final class LLMService {
         var thinking = false
         /// Collects the hidden reasoning, for the story export.
         var thoughts: ThoughtSink? = nil
+        /// A GBNF grammar the reply must follow (see `JSONGrammar`). Only llama.cpp (GGUF models)
+        /// can enforce one; MLX models ignore it and their output is checked afterwards.
+        var grammar: String? = nil
     }
 
     /// Streams the reply a few characters at a time. Hidden <think> reasoning is removed.
@@ -218,7 +225,7 @@ final class LLMService {
                 var filter = ThinkFilter()
                 let speed = try engine.generate(
                     prompt: prompt, maxTokens: options.maxTokens, temperature: options.temperature,
-                    topP: options.topP, repetitionPenalty: options.repetitionPenalty
+                    topP: options.topP, repetitionPenalty: options.repetitionPenalty, grammar: options.grammar
                 ) { text in
                     let out = filter.feed(text)
                     if !out.isEmpty { continuation.yield(out) }

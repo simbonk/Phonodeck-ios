@@ -96,7 +96,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Game Master")
                 } footer: {
-                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen), which can take up to about a minute a turn.")
+                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen through MLX), which can take up to about a minute a turn. GGUF storytellers skip it: they always answer straight away.")
                 }
 
     }
