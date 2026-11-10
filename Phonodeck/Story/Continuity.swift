@@ -99,7 +99,7 @@ enum Continuity {
     /// Whom the player asks the name of: "you" (the person they are speaking to), "other" (someone
     /// else, "what's her name?"), or nil when they don't ask a name at all.
     static func asksName(_ input: String) -> String? {
-        let t = input.lowercased()
+        let t = input.lowercased().replacingOccurrences(of: "’", with: "'")
         if t.range(of: #"\b(what'?s|what is|whats|tell me|may i (have|ask)|can i (have|get|ask))\s+(your|ur)\s+name\b|\bwho are you\b|\byour name\b|\bintroduce yourself\b|\bwho might you be\b|\band you are\b"#, options: .regularExpression) != nil {
             return "you"
         }

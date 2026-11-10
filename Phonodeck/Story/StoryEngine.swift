@@ -605,6 +605,7 @@ final class StoryEngine {
         var e = e
         e.byPlayer = true
         if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
+        if e.isPlayer { a.playerName = e.name == "You" ? "" : e.name.trimmingCharacters(in: .whitespaces) }
         a.notesStale = a.notes != nil   // so the cast agendas stop describing the old version
         adventure = a
         library.save(a)
@@ -855,7 +856,9 @@ final class StoryEngine {
         if grounded {
             // The cards and the recent turns already carry the present. An older moment is fetched
             // only when the player's own words reach for it.
-            let asked = Continuity.wordSet(input).filter { $0.count >= 5 }
+            let plain: Set<String> = ["where", "there", "their", "about", "would", "could", "should", "which", "after", "before", "other", "these",
+                                      "those", "while", "every", "under", "really", "think", "going", "something", "anything", "right", "still", "again"]
+            let asked = Continuity.wordSet(input).filter { $0.count >= 5 && !plain.contains($0) }
             memories = Array(memories.filter { !asked.isDisjoint(with: Continuity.wordSet($0)) }.prefix(3))
         }
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
@@ -875,6 +878,11 @@ final class StoryEngine {
                 plan = settle(&a, read: read, input: input)
                 let told = revealName(&a, input: input, to: read.to, introduced: introduced)
                 if !told.isEmpty { plan = Self.withAnswer(plan, told) }
+                // An answer that gives away a name the story hasn't said would come out as nonsense
+                // once the name is put back to a role ("her name is the regular"), so it goes.
+                else if Self.answerNamesHidden(plan, a) {
+                    plan = plan.components(separatedBy: "\n").map { $0.hasPrefix("ANSWER:") ? "ANSWER: none" : $0 }.joined(separator: "\n")
+                }
                 adventure = a
             }
             if plan.isEmpty, !hidden {
@@ -1118,7 +1126,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10n"
+    static let build = "build 2026-11-10o"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1275,6 +1283,10 @@ final class StoryEngine {
         // Leaving takes two things agreeing: the reading, and words that read like going somewhere.
         let leaving = !read.going.isEmpty && Continuity.leavesPlace(input)
         let from = a.location
+        // Someone the player turns to who isn't placed yet is in the room with them.
+        if !read.to.isEmpty, !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(read.to) == .orderedSame }) {
+            a.whereabouts.append(Whereabout(name: read.to, at: "with you", here: true, engaged: true))
+        }
         for i in a.whereabouts.indices {
             let first = a.whereabouts[i].name.lowercased().split(separator: " ").first.map(String.init) ?? ""
             if first == me || first == "you" || first.isEmpty { continue }
@@ -1437,7 +1449,17 @@ final class StoryEngine {
                 return false
             }
         }
-        let fresh = checked((list("new_facts", cap: 6) + list("facts", cap: 30)).flatMap { $0.count > 180 ? Self.sentences($0) : [$0] }, share: 0.5)
+        // The update is told which role is which person; it sometimes writes the role in quotes
+        // ("the bartender" told you...). Facts are kept with the person's name, without the quotes.
+        let roles = Continuity.hiddenNames(start)
+        func named(_ f: String) -> String {
+            var f = f
+            for r in roles {
+                f = f.replacingOccurrences(of: "\"" + r.role + "\"", with: r.name, options: .caseInsensitive)
+            }
+            return f.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
+        }
+        let fresh = checked((list("new_facts", cap: 6) + list("facts", cap: 30)).map(named).flatMap { $0.count > 180 ? Self.sentences($0) : [$0] }, share: 0.5)
             .compactMap { Continuity.lastingFact($0, people: people) }
         var facts = now.facts
         for f in fresh {
@@ -1482,8 +1504,23 @@ final class StoryEngine {
         }
         // The model often answers [] while the player plainly holds something, so an empty list
         // changes nothing.
-        let held = checked(items("carrying", cap: 6))
-        if !held.isEmpty { now.carrying = held }
+        // What the player has is a ledger: new things are added, and a thing only leaves when the
+        // exchange shows it going (given, paid, eaten, put down). A small model's fresh list often
+        // just forgets the satchel when a ticket turns up.
+        let held = checked(items("carrying", cap: 6).flatMap { $0.components(separatedBy: ";") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count >= 3 })
+        if !held.isEmpty {
+            let said = ((start.transcript.last(where: { $0.role == .player })?.text ?? "") + " " + lastReply).lowercased()
+            let gone = #"\b(give|gives|gave|given|hand|hands|handed|pay|pays|paid|sell|sold|eat|eats|ate|eaten|drink|drank|finish|finished|drop|dropped|leave|left|put|puts|set|sets|place|places|placed|slide|slides|slid|lose|lost|toss|tossed|swap|swapped|trade|traded)\b"#
+            let parting = said.range(of: gone, options: .regularExpression) != nil
+            var ledger = held
+            for old in start.carrying where !held.contains(where: { Self.similar($0, old) }) {
+                let noun = old.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
+                if parting, noun.count >= 3, said.contains(noun) { continue }
+                ledger.append(old)
+            }
+            now.carrying = Array(ledger.prefix(8))
+        }
         let around = checked(items("things", cap: 8))
         if !around.isEmpty {
             now.things = around
@@ -1626,7 +1663,7 @@ final class StoryEngine {
     /// about someone else's, or introduces themselves (and is told a name back). Returns what the
     /// storyteller must say, or "".
     private func revealName(_ a: inout Adventure, input: String, to: String, introduced: Bool) -> String {
-        guard a.nameless, let ask = Continuity.asksName(input) ?? (introduced ? "you" : nil) else { return "" }
+        guard a.nameless, var ask = Continuity.asksName(input) ?? (introduced ? "you" : nil) else { return "" }
         let hidden = a.lore.indices.filter { a.lore[$0].kind == .person && !a.lore[$0].isPlayer && !a.lore[$0].known && !a.lore[$0].byPlayer }
         guard !hidden.isEmpty else { return "" }
         func lead(_ n: String) -> String { n.lowercased().split(separator: " ").first.map(String.init) ?? "" }
@@ -1650,6 +1687,8 @@ final class StoryEngine {
                 return core.count >= 3 && text.contains(core)
             }
             target = byRole ?? others.first { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? (others.count == 1 ? others[0] : nil)
+            // "I approach the lady and ask for her name": the person asked is the one they're with.
+            if target == nil, let own = hidden.first(where: { lead(a.lore[$0].name) == lead(addressee) }) { target = own; ask = "you" }
         }
         guard let i = target else { return "" }
         a.lore[i].known = true
@@ -1657,6 +1696,16 @@ final class StoryEngine {
         namesThisTurn.append(name)
         if ask == "you" { return name + " tells you their name, plainly: \"" + name + ".\"" }
         return (addressee.isEmpty ? "You learn that" : addressee + " tells you that") + " the person you asked about is " + name + "."
+    }
+
+    /// Whether the plan's ANSWER line says a name the story hasn't said yet.
+    static func answerNamesHidden(_ plan: String, _ a: Adventure) -> Bool {
+        guard let line = plan.components(separatedBy: "\n").first(where: { $0.hasPrefix("ANSWER:") }) else { return false }
+        for h in Continuity.hiddenNames(a) {
+            let first = h.name.split(separator: " ").first.map(String.init) ?? h.name
+            if line.contains(first) { return true }
+        }
+        return false
     }
 
     /// The plan with `answer` as its ANSWER line (kept ahead of any answer already there).
