@@ -298,11 +298,21 @@ enum Continuity {
         return (claimsShe ? c.he : c.she) == 0
     }
 
+    /// Whether a text names a place: every real word of the place's name appears in it
+    /// ("Back Alley" needs both "back" and "alley").
+    static func names(place: String, in text: String) -> Bool {
+        let skip: Set<String> = ["the", "a", "an", "of", "and", "at", "in", "on"]
+        let words = place.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { !skip.contains($0) }
+        guard !words.isEmpty else { return false }
+        let have = Set(text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+        return words.allSatisfy { w in have.contains(w) || have.contains(w + "s") || (w.hasSuffix("s") && have.contains(String(w.dropLast()))) }
+    }
+
     // MARK: The review's shape
 
     /// The keys a review must have to be any use, in the order the prompt asks for them.
-    static let reviewKeys = ["fixes", "facts", "unanswered", "scene", "time", "timeline", "people", "next"]
-    static let requiredReviewKeys = ["facts", "scene", "people", "next"]
+    static let reviewKeys = ["scene", "here", "people", "carrying", "things", "time", "timeline", "new_facts", "fixes", "unanswered", "next"]
+    static let requiredReviewKeys = ["scene", "people", "next"]
 
     /// Puts a review's JSON into the shape the engine reads: lists that came back as one string are
     /// split, strings that came back as lists are joined, and people given as {"name": "where"} or
@@ -313,13 +323,19 @@ enum Continuity {
             s.replacingOccurrences(of: #"([.!?;])\s+(?=[A-Z])"#, with: "$1\n", options: .regularExpression)
                 .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count > 3 }
         }
-        for k in ["facts", "fixes", "timeline"] {
+        // "here" as one string ("Walter, Dolores") becomes a list of names.
+        if let h = r["here"] as? String {
+            let t = h.trimmingCharacters(in: .whitespacesAndNewlines)
+            r["here"] = ["", "none", "[]", "n/a", "nobody", "no one", "alone"].contains(t.lowercased()) ? [String]()
+                : t.components(separatedBy: CharacterSet(charactersIn: ",;")).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        }
+        for k in ["facts", "new_facts", "fixes", "timeline", "carrying", "things"] {
             if let s = r[k] as? String {
                 let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
                 r[k] = ["", "none", "[]", "n/a"].contains(t.lowercased()) ? [] : sentences(t)
             } else if let list = r[k] as? [Any] {
                 r[k] = list.flatMap { item -> [String] in
-                    if let s = item as? String { return k == "facts" && s.count > 180 ? sentences(s) : [s] }
+                    if let s = item as? String { return k.hasSuffix("facts") && s.count > 180 ? sentences(s) : [s] }
                     if let d = item as? [String: Any] { return [d.values.compactMap { $0 as? String }.joined(separator: ": ")] }
                     return []
                 }
@@ -371,23 +387,27 @@ enum Continuity {
     }
 }
 
-/// Keeps people who are somewhere else out of the reply while it is being written.
+/// Reads the reply sentence by sentence as it streams and leaves out what should not be there,
+/// before it is shown or read aloud. It is plain string work with no model call, so it adds no wait.
 ///
-/// The tracker knows who is with the player and who is not. A small model still lets an absent
-/// person lean over the bar, answer a question or watch from a doorway. This reads the reply
-/// sentence by sentence as it streams (plain string work, no model call, so it costs no wait) and,
-/// when the narration has an absent person acting in the scene, leaves out the rest of that
-/// paragraph before it is shown or read aloud. Names inside dialogue are fine (people talk about
-/// each other), so are possessives ("Walter's bar"), memories ("the key Walter gave you") and a
-/// sentence that shows the person arriving.
+/// Two things are left out:
+/// - People who are somewhere else. The tracker knows who is in the room with the player. A small
+///   model still cuts away to someone left behind ("Dolores watches from her table inside") or
+///   lets them answer. When the narration has an absent person acting, the rest of that paragraph
+///   goes. Names inside dialogue are fine (people talk about each other), so are possessives
+///   ("Walter's bar"), memories ("the key Walter gave you") and a sentence that shows the person
+///   arriving.
+/// - Sentences copied word for word from the last few replies (small models sometimes start a
+///   reply by repeating the previous one).
 struct PresenceFilter {
     struct Absent { let name: String; let at: String }
 
     let absent: [Absent]
-    private let acts: NSRegularExpression
+    private let acts: NSRegularExpression?
+    private let said: Set<String>
     private static let boundary = try! NSRegularExpression(pattern: #"[.!?…]["”’]?\s+(?=\S)"#)
     private static let arrival = try! NSRegularExpression(
-        pattern: #"\b(arrives?|enters?|appears?|joins?|returns?|approach(es)?|(walks?|comes?|steps?|hurries|runs?|strides?|slips?|wanders?|climbs?|pushes) (in|into|up|over|out|through|back|down|toward|towards)|calls? (out|over|from)|voice (carries|comes|calls|drifts)|on the (phone|radio|line))\b"#,
+        pattern: #"\b(arrives?|enters?|joins?|returns?|approach(es)?|catch(es)? up|(walks?|comes?|steps?|hurries|runs?|strides?|slips?|wanders?|climbs?|pushes) (in|into|up|over|out|through|back|down|toward|towards)|calls? (out|over|from)|voice (carries|comes|calls|drifts)|on the (phone|radio|line))\b"#,
         options: [.caseInsensitive])
 
     private var pending = ""
@@ -400,27 +420,43 @@ struct PresenceFilter {
     private(set) var dropped: [String] = []
     /// Who was caught acting in a scene they are not in.
     private(set) var caught: [Absent] = []
+    /// How many sentences were left out as copies of earlier replies.
+    private(set) var echoes = 0
     /// True when so little was left that the reply was let through whole after all.
     private(set) var restored = false
 
-    /// Nil when nobody is known to be elsewhere (then there is nothing to check).
-    init?(absent: [Absent]) {
+    /// `absent`: the people known to be somewhere else. `earlier`: the last few replies, whose
+    /// sentences must not come back word for word.
+    init(absent: [Absent], earlier: [String] = []) {
         var names: [String] = []
         for p in absent {
             names.append(p.name)
             if let first = p.name.split(separator: " ").first.map(String.init), first.count >= 3, first != p.name { names.append(first) }
         }
         names = names.filter { $0.count >= 3 && $0.first?.isUppercase == true }.sorted { $0.count > $1.count }
-        guard !names.isEmpty else { return nil }
-        let n = "(?:" + names.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|") + ")"
-        // The person does something now ("Walter leans", "Walter quietly watches", "Walter is"), or
-        // someone in the scene deals with them directly ("you hand it to Walter").
-        let pattern = #"\b"# + n + #"\b(?!['’]s)\s+(?:[a-z]+ly\s+)?(?:[a-z]+s|is|has)\b"#
-            + #"|\b(?:to|at|with|beside|toward|towards)\s+"# + n + #"\b(?!['’]s)"#
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
-        self.absent = absent
-        self.acts = re
+        var re: NSRegularExpression?
+        if !names.isEmpty {
+            let n = "(?:" + names.map { NSRegularExpression.escapedPattern(for: $0) }.joined(separator: "|") + ")"
+            // The person does something now ("Walter leans", "Walter quietly watches", "Walter is"), or
+            // someone in the scene deals with them directly ("you hand it to Walter").
+            let pattern = #"\b"# + n + #"\b(?!['’]s)\s+(?:[a-z]+ly\s+)?(?:[a-z]+s|is|has)\b"#
+                + #"|\b(?:to|at|with|beside|toward|towards)\s+"# + n + #"\b(?!['’]s)"#
+            re = try? NSRegularExpression(pattern: pattern)
+        }
+        acts = re
+        self.absent = re == nil ? [] : absent
+        var seen = Set<String>()
+        for text in earlier {
+            for s in Self.sentences(text) {
+                let k = Self.key(s)
+                if k.count >= 40 { seen.insert(k) }
+            }
+        }
+        said = seen
     }
+
+    /// Nothing to check: nobody is elsewhere and there are no earlier replies.
+    var idle: Bool { acts == nil && said.isEmpty }
 
     /// What to show while the reply streams: the accepted text plus the sentence being written,
     /// unless that sentence is already on its way out.
@@ -445,13 +481,13 @@ struct PresenceFilter {
     }
 
     /// The end of the stream: judges the last sentence. If almost nothing survived, the tracker
-    /// was probably wrong about who is here, so the left-out text is let through after all.
+    /// was probably wrong, so the left-out text is let through after all.
     mutating func finish() -> String {
         var out = pending.isEmpty ? "" : judge(pending)
         pending = ""
         if !dropped.isEmpty, accepted.split(whereSeparator: \.isWhitespace).count < 30 {
             let rest = dropped.joined()
-            out += (out.hasSuffix("\n") || accepted.hasSuffix("\n") ? "" : " ") + rest
+            out += (out.hasSuffix("\n") || accepted.hasSuffix("\n") || accepted.isEmpty ? "" : " ") + rest
             accepted = raw
             restored = true
             caught = []
@@ -473,10 +509,13 @@ struct PresenceFilter {
         var keep = true
         if dropping {
             keep = false
-        } else if caught.count < 2, let who = hit(narrated) {
+        } else if said.contains(Self.key(unit)) {
+            keep = false
+            echoes += 1
+        } else if caught.count < 3, let who = hit(narrated) {
             dropping = true
             keep = false
-            caught.append(who)
+            if !caught.contains(where: { $0.name == who.name }) { caught.append(who) }
         }
         if endsParagraph { dropping = false; inQuote = false }
         if keep {
@@ -509,11 +548,31 @@ struct PresenceFilter {
 
     /// The absent person this narration has acting in the scene, unless it shows them arriving.
     private func hit(_ narrated: String) -> Absent? {
+        guard let acts else { return nil }
         let range = NSRange(location: 0, length: (narrated as NSString).length)
         guard let m = acts.firstMatch(in: narrated, range: range) else { return nil }
         if Self.arrival.firstMatch(in: narrated, range: range) != nil { return nil }
         let found = (narrated as NSString).substring(with: m.range)
         return absent.first { found.contains($0.name) }
             ?? absent.first { p in p.name.split(separator: " ").first.map { found.contains($0) } ?? false }
+    }
+
+    /// A text cut into sentences, the way the stream is.
+    static func sentences(_ text: String) -> [String] {
+        let ns = text as NSString
+        var out: [String] = []
+        var start = 0
+        for m in boundary.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let end = m.range.location + m.range.length
+            out.append(ns.substring(with: NSRange(location: start, length: end - start)))
+            start = end
+        }
+        if start < ns.length { out.append(ns.substring(from: start)) }
+        return out
+    }
+
+    /// A sentence reduced to its letters and digits, for comparing word for word.
+    static func key(_ s: String) -> String {
+        String(s.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
     }
 }

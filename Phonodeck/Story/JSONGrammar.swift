@@ -24,26 +24,47 @@ enum JSONGrammar {
     /// `"key":` with optional space, for the rules below.
     private static func key(_ k: String) -> String { #""\"\#(k)\":" ws"# }
 
-    /// The Game Master's review of the reply just written (see `Prompts.review`).
-    static let review = [
-        "root ::= \"{\" ws " + [
-            key("fixes") + " list3",
-            key("facts") + " list12",
-            key("unanswered") + " str",
-            key("scene") + " str",
-            key("time") + " str",
-            key("timeline") + " list3",
-            key("people") + " people",
-            key("next") + " str",
-        ].joined(separator: " \",\" ws ") + " ws \"}\"",
-        list("list3", 3),
-        list("list12", 12),
-        #"people ::= "[" ws ( person ( "," ws person ){0,5} )? ws "]""#,
-        "person ::= \"{\" ws " + [key("name") + " str", key("where") + " str", key("with_player") + " bool", key("doing") + " str", key("heading") + " str"]
-            .joined(separator: " \",\" ws ") + " ws \"}\"",
-        #"bool ::= "true" | "false""#,
-        common,
-    ].joined(separator: "\n")
+    /// A JSON string of at most `n` characters, so one value can't swallow the whole reply (a
+    /// small model otherwise argues with itself inside a string until the room runs out).
+    private static func capped(_ name: String, _ n: Int) -> String { #"\#(name) ::= "\"" chr{0,\#(n)} "\"""# }
+
+    /// The Game Master's review of the reply just written (see `Prompts.review`). `cast` is the
+    /// named people of this story: "here" (who is in the room with the player) may only hold
+    /// those names, so presence is always about real people, spelled the way the code knows them.
+    static func review(cast: [String]) -> String {
+        let names = cast.filter { n in
+            !n.isEmpty && n.count <= 40 && n.unicodeScalars.allSatisfy { CharacterSet.letters.contains($0) || " -.'".unicodeScalars.contains($0) }
+        }
+        let who = names.isEmpty ? "who ::= s40" : "who ::= " + names.map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
+        // How many more names may follow the first.
+        let more = names.isEmpty ? 5 : names.count - 1
+        return [
+            "root ::= \"{\" ws " + [
+                key("scene") + " s240",
+                key("here") + " here",
+                key("people") + " people",
+                key("carrying") + " items",
+                key("things") + " items",
+                key("time") + " s120",
+                key("timeline") + " timeline",
+                key("new_facts") + " newfacts",
+                key("fixes") + " fixes",
+                key("unanswered") + " s240",
+                key("next") + " s400",
+            ].joined(separator: " \",\" ws ") + " ws \"}\"",
+            more > 0 ? #"here ::= "[" ws ( who ( "," ws who ){0,\#(more)} )? ws "]""# : #"here ::= "[" ws ( who )? ws "]""#,
+            who,
+            #"people ::= "[" ws ( person ( "," ws person ){0,5} )? ws "]""#,
+            "person ::= \"{\" ws " + [key("name") + " s40", key("where") + " s160", key("doing") + " s160", key("heading") + " s120"]
+                .joined(separator: " \",\" ws ") + " ws \"}\"",
+            #"items ::= "[" ws ( s60 ( "," ws s60 ){0,5} )? ws "]""#,
+            #"timeline ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
+            #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
+            #"fixes ::= "[" ws ( s240 )? ws "]""#,
+            capped("s40", 40), capped("s60", 60), capped("s120", 120), capped("s160", 160), capped("s240", 240), capped("s400", 400),
+            common,
+        ].joined(separator: "\n")
+    }
 
     /// The memory pass (see `Prompts.memory`).
     static let memory = [

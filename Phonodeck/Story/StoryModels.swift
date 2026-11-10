@@ -298,6 +298,10 @@ struct Adventure: Codable, Identifiable, Hashable {
     var storyTime = ""
     var timeline: [String] = []
     var whereabouts: [Whereabout] = []
+    /// The scene card's lists, kept in code and updated by the review after each reply: what the
+    /// player has with them, and the notable things in the place they are in.
+    var carrying: [String] = []
+    var things: [String] = []
     /// The story clock, kept in code: minutes from midnight on the day the story opens (nil until a
     /// time of day is known). It moves forward with play and never runs backwards; `storyTime` is
     /// written from it.
@@ -318,7 +322,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
-             storyTime, timeline, whereabouts, gmWait, clock
+             storyTime, timeline, whereabouts, gmWait, clock, carrying, things
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -347,7 +351,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         places = v(.places, []); links = v(.links, [])
         sequelOf = try? c.decodeIfPresent(UUID.self, forKey: .sequelOf); link = v(.link, "")
         facts = v(.facts, []); fixes = v(.fixes, []); nextMove = v(.nextMove, ""); scene = v(.scene, "")
-        storyTime = v(.storyTime, ""); timeline = v(.timeline, []); whereabouts = v(.whereabouts, []); gmWait = v(.gmWait, 0)
+        storyTime = v(.storyTime, ""); timeline = v(.timeline, []); whereabouts = v(.whereabouts, []); carrying = v(.carrying, []); things = v(.things, []); gmWait = v(.gmWait, 0)
         clock = try? c.decodeIfPresent(Int.self, forKey: .clock)
     }
 
@@ -366,7 +370,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(notesStale, forKey: .notesStale); try c.encode(bibleTurn, forKey: .bibleTurn)
         try c.encodeIfPresent(sequelOf, forKey: .sequelOf); try c.encode(link, forKey: .link)
         try c.encode(facts, forKey: .facts); try c.encode(fixes, forKey: .fixes); try c.encode(nextMove, forKey: .nextMove); try c.encode(scene, forKey: .scene)
-        try c.encode(storyTime, forKey: .storyTime); try c.encode(timeline, forKey: .timeline); try c.encode(whereabouts, forKey: .whereabouts); try c.encode(gmWait, forKey: .gmWait)
+        try c.encode(storyTime, forKey: .storyTime); try c.encode(timeline, forKey: .timeline); try c.encode(whereabouts, forKey: .whereabouts); try c.encode(carrying, forKey: .carrying); try c.encode(things, forKey: .things); try c.encode(gmWait, forKey: .gmWait)
         try c.encodeIfPresent(clock, forKey: .clock)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
@@ -379,6 +383,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         places = o.places; links = o.links
         facts = o.facts; fixes = o.fixes; nextMove = o.nextMove; scene = o.scene
         storyTime = o.storyTime; timeline = o.timeline; whereabouts = o.whereabouts; clock = o.clock
+        carrying = o.carrying; things = o.things
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
