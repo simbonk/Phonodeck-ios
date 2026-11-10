@@ -215,7 +215,7 @@ struct WorldView: View {
     private func world(_ a: Adventure) -> some View {
         attributes(a)
         HStack {
-            Text("\(a.lore.count) entries, collected as you play. Edit any of them; your words always win.")
+            Text("Places and things, collected as you play. Tap any card to edit it; your words always win.")
                 .font(.footnote).foregroundStyle(Theme.dim)
             Spacer()
             Button {
@@ -225,7 +225,8 @@ struct WorldView: View {
             }
             .buttonStyle(.bordered)
         }
-        let order: [LoreEntry.Kind] = [.person, .place, .item, .faction, .other]
+        // People are shown once, above, with everything the game holds about them.
+        let order: [LoreEntry.Kind] = [.place, .item, .faction, .other]
         ForEach(order, id: \.self) { kind in
             let list = a.lore.filter { $0.kind == kind }.sorted { ($0.isPlayer ? 0 : 1, shown($0, a)) < ($1.isPlayer ? 0 : 1, shown($1, a)) }
             if !list.isEmpty {
@@ -287,6 +288,18 @@ struct WorldView: View {
                     .font(.subheadline)
                     .tint(Theme.accent)
                 if !a.carrying.isEmpty { attr("You have", a.carrying.joined(separator: "; ")) }
+                if let me = a.lore.first(where: \.isPlayer) {
+                    Button { editing = me } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("Who you are").font(.caption.bold()).foregroundStyle(Theme.dim).frame(width: 92, alignment: .leading)
+                            Text(me.desc.isEmpty ? "Add a line about yourself" : Continuity.unnamed(me.desc, in: a))
+                                .font(.callout).foregroundStyle(Theme.fg).multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Image(systemName: "pencil").font(.caption).foregroundStyle(Theme.dim)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         Caps(text: "Right now").padding(.top, 8)
@@ -301,7 +314,9 @@ struct WorldView: View {
         }
         if !a.cast.isEmpty {
             Caps(text: "People").padding(.top, 8)
-            ForEach(a.cast) { p in card { person(p, a) } }
+            ForEach(a.cast) { p in
+                Button { editing = p } label: { card { person(p, a) } }.buttonStyle(.plain)
+            }
         }
         if !a.facts.isEmpty {
             Caps(text: "Facts").padding(.top, 8)
@@ -337,7 +352,11 @@ struct WorldView: View {
                 Text(shown(p, a)).font(.headline).foregroundStyle(Theme.accent)
                 Text([hidden(p, a) ? "name not said yet" : "name known", pronouns, state].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption).foregroundStyle(Theme.dim)
+                Spacer()
+                Image(systemName: "pencil").font(.caption).foregroundStyle(Theme.dim)
             }
+            if !p.desc.isEmpty { Text(Continuity.unnamed(p.desc, in: a)).font(.callout).foregroundStyle(Theme.fg).multilineTextAlignment(.leading) }
+            if p.byPlayer { Text("✎ your edit").font(.caption).foregroundStyle(Theme.dim) }
             if let w, !w.at.isEmpty { attr("Where", w.at) }
             if let w, !w.doing.isEmpty { attr("Doing", Continuity.unnamed(w.doing, in: a)) }
             if let w, !w.heading.isEmpty { attr("Heading to", w.heading) }
