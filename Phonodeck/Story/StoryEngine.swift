@@ -567,7 +567,14 @@ final class StoryEngine {
         a.whereabouts = Self.whereabouts(plan["people"]).filter { w in
             w.name.caseInsensitiveCompare(playerName) != .orderedSame && w.name.caseInsensitiveCompare("you") != .orderedSame
         }
-        checkPronouns(&a, texts: [a.bible])
+        // The opening scene: the room, its props and who is in it, set before the first line so
+        // the globe and the storyteller start from the same place.
+        a.scene = clip(str("scene"), 280)
+        let props = ((plan["things"] as? [Any]) ?? []).compactMap { $0 as? String }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        a.things = Array(props.prefix(6)).map { clip($0, 60) }
+        if !a.location.isEmpty, !a.things.isEmpty { a.placeThings[a.location.lowercased()] = a.things }
+        checkPronouns(&a, texts: [a.bible, a.scene])
         a.secrets = (plan["secrets"] as? [String]) ?? []
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
