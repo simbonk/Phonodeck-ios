@@ -506,7 +506,8 @@ final class StoryEngine {
                             desc: [str("desc", p), e.who, e.traits].filter { !$0.isEmpty }.joined(separator: ". "), isPlayer: true)]
 
         // Places, people and things
-        for place in (plan["places"] as? [Any]) ?? [] {
+        // An experience lives in the one place it opens in; places are added when the player goes somewhere.
+        for place in e.simulator ? [] : (plan["places"] as? [Any]) ?? [] {
             let d = place as? [String: Any]
             let name = (place as? String) ?? str("name", d)
             if !name.isEmpty { addLore(&a, LoreEntry(name: name, kind: .place, desc: str("desc", d))) }
@@ -546,17 +547,10 @@ final class StoryEngine {
                 Act(from: m * 0.8, to: m, goal: "Land a satisfying storybook ending that delivers the feeling."),
             ]
         }
+        // An experience has no acts: what the player does decides what happens next.
         if e.simulator {
             a.beats = []
-            if a.roadmap.isEmpty {
-                let m = Double(a.minutes)
-                let goal = e.goal.isEmpty ? "what the player came for" : e.goal
-                a.roadmap = [
-                    Act(from: 0, to: m * 0.3, goal: "Settle in: a first meeting and a small shared moment, toward " + goal + "."),
-                    Act(from: m * 0.3, to: m * 0.75, goal: "Deepen it: do something together, trade stories, discover a small delight."),
-                    Act(from: m * 0.75, to: m, goal: "A warm closing moment that seals " + goal + " and lands the feeling."),
-                ]
-            }
+            a.roadmap = []
         }
         a.facts += ((plan["facts"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(10)
         a.facts = Array(a.facts.prefix(14))
@@ -1141,7 +1135,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10r"
+    static let build = "build 2026-11-10t"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1253,7 +1247,7 @@ final class StoryEngine {
         if !places.isEmpty { prompt += "\nOTHER PLACES: " + places.joined(separator: "; ") }
         prompt += "\nPEOPLE: " + (cast.isEmpty ? "(none)" : a.cast.map { $0.name + ($0.role.isEmpty ? "" : " (\($0.role))") + state($0.name) }.joined(separator: "; "))
         let played = a.elapsed / 60
-        if let act = a.roadmap.first(where: { played >= $0.from && played <= $0.to }) ?? a.roadmap.first(where: { played < $0.to }) {
+        if !a.setup.simulator, let act = a.roadmap.first(where: { played >= $0.from && played <= $0.to }) ?? a.roadmap.first(where: { played < $0.to }) {
             prompt += "\nTHE STORY IS HEADING TOWARD (only if the player goes along): " + clip(act.goal, 220)
         }
         let known = a.facts.suffix(8).map { clip($0, 140) } + a.timeline.suffix(4).map { clip($0, 140) }
@@ -1562,7 +1556,17 @@ final class StoryEngine {
             }
             now.carrying = Array(ledger.prefix(8))
         }
-        let around = checked(items("things", cap: 8))
+        var around = checked(items("things", cap: 8))
+        // On the turn the player arrives somewhere, the props must come from this reply: the update
+        // tends to list the room they just left ("a single lamp; wet floorboards" in the hotel).
+        if now.location.caseInsensitiveCompare(start.location) != .orderedSame {
+            let fresh = Continuity.wordSet(lastReply)
+            around = around.filter { e in
+                if Continuity.grounded(e, in: fresh) { return true }
+                refused.append(e)
+                return false
+            }
+        }
         if !around.isEmpty {
             now.things = around
             // Each place keeps its own things: the newest first, the older ones it already had after.
@@ -1930,7 +1934,9 @@ final class StoryEngine {
                 + pinned.map { "- \($0.name) (\($0.label.lowercased())): " + clip($0.desc, tight >= 3 ? 160 : 600) }.joined(separator: "\n")
         }
         if !a.chapters.isEmpty { s += "\n\n## STORY SO FAR\n" + a.chapters.suffix(chapterCount).map { "- " + clip($0, chapterChars) }.joined(separator: "\n") }
-        if let notes = a.notes, !notes.text.isEmpty {
+        if a.setup.simulator, !a.secrets.isEmpty {
+            s += "\n\n## BACKSTORIES (private: a person shares theirs only when the player asks about their life, a little at a time, in their own words; never volunteered)\n" + clip(a.secrets.map { "- " + $0 }.joined(separator: "\n"), notesChars)
+        } else if let notes = a.notes, !notes.text.isEmpty {
             s += "\n\n## PRIVATE GM NOTES (do not blurt these out; seed clues. If the player asks directly, characters still answer what they honestly know)\n" + clip(notes.text, notesChars)
         } else if !a.secrets.isEmpty {
             s += "\n\n## PRIVATE NOTES (do not blurt these out; seed clues. If the player asks directly, characters still answer what they honestly know)\n" + clip(a.secrets.map { "- " + $0 }.joined(separator: "\n"), notesChars)
@@ -2474,14 +2480,8 @@ final class StoryEngine {
             }
         }
 
-        if a.setup.simulator, !a.roadmap.isEmpty {
-            let act = a.roadmap.first { played >= $0.from && played <= $0.to } ?? a.roadmap.first { played < $0.to } ?? a.roadmap.last!
-            // The arc was planned for the place the experience opened in. Once the player has left it,
-            // the arc would drag them back, so only its feeling is kept.
-            notes.append(movedOn(a)
-                ? "The player has left where this began (they are at \(a.location) now). Do not bring them back or have anyone call them back: deliver the feeling right where they are, with whoever came along."
-                : "GENTLE ARC (minute \(Int(played)) of \(a.minutes)): take one small step toward this, at the player's pace, offered through the people and the place (never decide what the player does, says or feels): " + act.goal)
-        } else if !a.roadmap.isEmpty {
+        // An experience has no arc (one saved with an arc ignores it); a story steers by its roadmap.
+        if !a.setup.simulator, !a.roadmap.isEmpty {
             let act = a.roadmap.first { played >= $0.from && played <= $0.to } ?? a.roadmap.first { played < $0.to } ?? a.roadmap.last!
             notes.append(calm
                 ? "SECRET ROADMAP (on hold while the player is happy where they are; offer it again only if they reach for it): " + act.goal

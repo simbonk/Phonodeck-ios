@@ -309,6 +309,14 @@ struct WorldView: View {
                 Button { editing = p } label: { card { person(p, a) } }.buttonStyle(.plain)
             }
         }
+        // Every place the player has been keeps its own card: what is there and who was left there.
+        let visited = a.places.filter { !$0.isEmpty }
+        if !visited.isEmpty {
+            Caps(text: "Places").padding(.top, 8)
+            ForEach(visited, id: \.self) { place in
+                card { placeCard(place, a) }
+            }
+        }
         let facts = a.facts.filter { !Continuity.elsewhereFact($0, in: a) }
         if !facts.isEmpty {
             Caps(text: "Facts").padding(.top, 8)
@@ -329,6 +337,26 @@ struct WorldView: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func placeCard(_ place: String, _ a: Adventure) -> some View {
+        let key = place.lowercased()
+        let current = a.location.caseInsensitiveCompare(place) == .orderedSame
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(place).font(.headline).foregroundStyle(Theme.accent)
+                if current { Text("you are here").font(.caption).foregroundStyle(Theme.dim) }
+            }
+            let desc = a.lore.first { $0.kind == .place && $0.name.lowercased() == key }?.desc ?? ""
+            if !desc.isEmpty { Text(desc).font(.callout).foregroundStyle(Theme.fg) }
+            let props = a.placeThings[key] ?? (current ? a.things : [])
+            if !props.isEmpty { attr("Props", props.joined(separator: "; ")) }
+            let there = a.whereabouts.filter { w in
+                current ? w.here != false : (w.leftAt?.lowercased() == key)
+            }.map { display($0.name, a) }
+            if !there.isEmpty { attr("People", there.joined(separator: ", ")) }
         }
     }
 

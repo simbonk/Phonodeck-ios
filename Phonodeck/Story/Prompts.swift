@@ -61,7 +61,8 @@ enum Prompts {
             - No villain, mystery, ticking clock or twist unless the player asks for one.
             - Paint the world richly: sights, sounds, food, weather, the people and their small lives.
             - Help the player toward their own goal at their pace. Obstacles are small and fun.
-            - A gentle arc is timed to the session. Each reply moves one small step along it, so the time feels like it is going somewhere.
+            - Nothing is scripted: what the player says and does decides what happens next.
+            - Each person has a private backstory. They share it only when the player asks about their life, a little at a time, in their own words.
             """
             : """
             ## PLAY MODE: STORY
@@ -157,7 +158,7 @@ enum Prompts {
     """
 
     static let architectSimulator = """
-    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist. "beats" is []. "roadmap" is a GENTLE ARC of 3-4 warm steps toward the player's goal and the feeling (for example: a first meeting, sharing a task or a meal, a story told by the fire, a small outing together, a moment that seals the bond), timed across the session. Each step says what the people and the place offer, never what the player does, says or feels. "secrets" are small delights to discover. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
+    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist, and nothing scripted. These rules override the ones above: "places" lists only the opening place. "beats" is [] and "roadmap" is []. "secrets" holds one private backstory for each person, written "Name: ..." (where they come from, what shaped them, what they hope for, in 1-2 sentences), which they share only when the player asks about their life. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
 
     /// Continue: the next part of a finished story, with the same player, cast and world (the web
