@@ -1153,7 +1153,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11h"
+    static let build = "build 2026-11-11i"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1670,6 +1670,33 @@ final class StoryEngine {
                 step(l.text.prefix(1).uppercased() + String(l.text.dropFirst()) + "? → " + clip(ans.text.isEmpty ? "nothing" : ans.text, 160))
             }
             if !looks.isEmpty { lap("lookups") }
+        }
+        // Is the player bringing someone new in? Asked only when the message reads like an arrival
+        // or a meeting; the newcomer gets a card before the reply, so nobody else is swapped in.
+        let arrival = #"(?i)\b(in walks?|walks? in|comes? (in|over|up|through)|enters?|arrives?|shows? up|appears?|meet (him|her|them|your|his|the)|introduces? (me|us)|joins? us)\b"#
+        if !hidden, !playerNarrates, gmPlans, input.range(of: arrival, options: .regularExpression) != nil {
+            stage = "Is someone new coming in?"
+            lapFrom = Date()
+            let raw = (try? await llm.complete(system: nil, prompt: context + "\n\n" + Prompts.newcomer + "\nThe form:",
+                                               options: .init(maxTokens: 70, temperature: 0.2, repetitionPenalty: 1.1,
+                                                              grammar: JSONGrammar.yesNo("new", then: "name", 30, and: "role", 60)))) ?? ""
+            guard !Task.isCancelled else { adventure = snapshot; return }
+            lap("someone new")
+            let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+            var came: String? = nil
+            if (m["new"] as? String) == "yes" {
+                let recent: String = a.transcript.suffix(6).map(\.text).joined(separator: " ")
+                came = addNewcomer(&a, name: (m["name"] as? String) ?? "", role: (m["role"] as? String) ?? "", about: input + " " + recent, engaged: true)
+            }
+            if let came {
+                let others: String = a.cast.filter { $0.name != came }.map(\.name).joined(separator: " or ")
+                extra.append("A NEW PERSON COMES IN: " + came + ". They are their own person" + (others.isEmpty ? "" : ", not " + others)
+                             + ": show them arriving, and let them speak for themselves.")
+                lastRead += "; new person: " + came
+                step("Is someone new coming in? → " + came)
+            } else {
+                step("Is someone new coming in? → no")
+            }
         }
         // Could the player do that? Asked only when the action leans on a thing they must have.
         let needs = #"(?i)\b(pull out|take out|draw my|unlock|shoot|fire my|light (a|my|the)|use my|with my|from my (pocket|bag|coat))\b"#
@@ -2221,7 +2248,7 @@ final class StoryEngine {
                     let shown = Cards.mentions(c, in: reply)
                     guard shown else { continue }
                     if let i = now.whereabouts.firstIndex(where: { Cards.card(for: $0, in: now)?.id == c.id }) {
-                        if isListed, now.whereabouts[i].here == false {
+                        if isListed, now.whereabouts[i].here == false, Self.showsArriving(c, in: reply) {
                             now.whereabouts[i].here = true
                             now.whereabouts[i].engaged = false
                             now.whereabouts[i].leftAt = nil
@@ -2237,6 +2264,36 @@ final class StoryEngine {
                         now.whereabouts.append(Whereabout(name: c.name, at: now.location.isEmpty ? "here" : now.location, here: true, engaged: false))
                         filed.append("Came into view: " + c.name)
                     }
+                }
+            }
+        }
+
+        // Anyone new? Someone the story shows or names who has no card yet gets one.
+        var knownWords: Set<String> = Continuity.wordSet(start.playerName + " " + start.lore.map(\.name).joined(separator: " "))
+        knownWords.formUnion(["mr", "mrs", "miss", "the", "los", "angeles", "god", "broadway", "hollywood", "paris", "london", "new", "york"])
+        var strangerHint = reply.range(of: #"\b(Mr|Mrs|Ms|Miss|Dr)\.? [A-Z]"#, options: .regularExpression) != nil
+            || reply.range(of: #"(?i)\b(a|an|another) (man|woman|stranger|boy|girl|waiter|waitress|guard|clerk|doorman|driver|officer|policeman|musician|singer|pianist)\b"#, options: .regularExpression) != nil
+        if !strangerHint {
+            for sentence in PresenceFilter.sentences(reply) {
+                let words = sentence.split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "’" }).map(String.init)
+                for w in words.dropFirst() where w.count > 2 && w.first?.isUppercase == true && !knownWords.contains(w.lowercased()) {
+                    strangerHint = true
+                }
+            }
+        }
+        if strangerHint {
+            let nm = await ask("Is anyone new here?", Prompts.rebuildNewPerson, JSONGrammar.yesNo("new", then: "name", 30, and: "role", 60), 70)
+            guard nm != nil else { return }
+            let isNew = ((nm?["new"] as? String) ?? "") == "yes"
+            let nameSaid: String = (nm?["name"] as? String) ?? ""
+            let roleSaid: String = (nm?["role"] as? String) ?? ""
+            asked.append("Is anyone new here? → " + (isNew && nameSaid.count > 2 ? nameSaid : "no"))
+            commit { now in
+                guard isNew else { return }
+                if let added = addNewcomer(&now, name: nameSaid, role: roleSaid, about: reply, engaged: false) {
+                    filed.append("New person card: " + added + (roleSaid.isEmpty ? "" : " (" + roleSaid + ")"))
+                } else {
+                    refused.append(nameSaid + " (not a new person the story shows)")
                 }
             }
         }
@@ -2455,7 +2512,7 @@ final class StoryEngine {
             let howSaid: String = ((gm?["how"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
             var how: String = ""
             if closer, howSaid.count > 8, !Self.echoesPrompt(howSaid), !start.progress.contains(where: { Self.similar($0, howSaid) }) {
-                how = checked([howSaid], share: 0.5).first ?? ""
+                how = checked([howSaid], share: 0.6).first ?? ""
             }
             asked.append("Is the goal closer? → " + (how.isEmpty ? "not this turn" : "yes: " + how))
             commit { now in
@@ -2522,7 +2579,9 @@ final class StoryEngine {
             if !c.desc.isEmpty { onFile.append(c.name + ": " + clip(c.desc, 140)) }
         }
         var seenLines: [String] = []
-        for l in onFile where !seenLines.contains(where: { Self.similar($0, l) }) { seenLines.append(l) }
+        // The clock is kept in code, so a line about the time of day or the weather is not checked here.
+        let timey = #"(?i)\b(night|morning|evening|afternoon|noon|midnight|dawn|dusk|storm|stormy|rain)\b"#
+        for l in onFile where !seenLines.contains(where: { Self.similar($0, l) }) && l.range(of: timey, options: .regularExpression) == nil { seenLines.append(l) }
         onFile = seenLines
         if !onFile.isEmpty {
             let cq: String = "ON FILE:\n" + onFile.map { "- " + clip($0, 160) }.joined(separator: "\n") + "\n" + Prompts.rebuildContradiction
@@ -2600,6 +2659,36 @@ final class StoryEngine {
     }
 
     /// "my hotel room" as a place name: "Your hotel room".
+    /// A person the story brings in who has no card yet gets one, and is placed in the scene.
+    /// Returns the card's name, or nil when the name is no good or already someone's.
+    private func addNewcomer(_ a: inout Adventure, name raw: String, role rawRole: String, about text: String, engaged: Bool) -> String? {
+        let trim = CharacterSet(charactersIn: " .,\n\"'")
+        var name = raw.trimmingCharacters(in: trim)
+        let role = rawRole.trimmingCharacters(in: trim)
+        for art in ["the ", "a ", "an ", "her ", "his ", "their ", "your ", "my "] where name.lowercased().hasPrefix(art) && name.count > art.count + 2 {
+            name = "The " + name.dropFirst(art.count)
+            break
+        }
+        guard name.count > 2, name.count <= 40, !Self.echoesPrompt(name), a.cast.count < 10 else { return nil }
+        let titles: Set<String> = ["mr", "mrs", "ms", "miss", "dr", "the", "sir", "madam"]
+        let words = Continuity.wordSet(name).filter { !titles.contains($0) && $0.count > 2 }
+        guard !words.isEmpty, words.allSatisfy({ Continuity.wordSet(text).contains($0) }) else { return nil }
+        // Not the player, and not someone who already has a card (by name or by role).
+        if !words.isDisjoint(with: Continuity.wordSet(a.playerName)) { return nil }
+        for c in a.cast {
+            let theirs = Continuity.wordSet(c.name + " " + c.role).filter { !titles.contains($0) && $0.count > 2 }
+            if !words.isDisjoint(with: theirs) { return nil }
+        }
+        let line: String = PresenceFilter.sentences(text).first(where: { s in words.contains { s.lowercased().contains($0) } }) ?? ""
+        var e = LoreEntry(name: name, kind: .person, desc: clip(line.trimmingCharacters(in: .whitespacesAndNewlines), 200), role: clip(role, 60), known: true)
+        e.updatedTurn = a.playerTurns
+        _ = addLore(&a, e)
+        if !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            a.whereabouts.append(Whereabout(name: name, at: a.location.isEmpty ? "here" : a.location, here: true, engaged: engaged))
+        }
+        return name
+    }
+
     /// The storyteller sometimes invents a name for the person the player is with ("Sarah," she
     /// replies) instead of the one on their card. When the reply has that person give a name that
     /// belongs to nobody in the story, it is swapped for their real one, and the name counts as said.
@@ -2633,6 +2722,18 @@ final class StoryEngine {
             return (fixed, "the storyteller called " + c.name + " \"" + said + "\"; put right in code", c.name)
         }
         return nil
+    }
+
+    /// Whether a reply shows someone actually there (arriving, speaking, doing something), not
+    /// only waited for or talked about.
+    static func showsArriving(_ c: LoreEntry, in reply: String) -> Bool {
+        let acts = #"(?i)\b(arrives?|enters?|walks? (in|over|up)|comes? (in|through|over|up)|steps? (in|inside|through|up)|appears?|returns?|joins?|says|asks|replies|nods|looks|smiles|sets|stands|sits|pours|turns)\b"#
+        let waits = #"(?i)\b(wait(s|ing|ed)? for|until|elsewhere|not here|talk(s|ing|ed)? about|think(s|ing)? of|mention(s|ed)?)\b"#
+        for s in PresenceFilter.sentences(reply) where Cards.mentions(c, in: s) {
+            if s.range(of: waits, options: .regularExpression) != nil { continue }
+            if s.range(of: acts, options: .regularExpression) != nil { return true }
+        }
+        return false
     }
 
     /// Whether the message goes to a place by name: a going word, then the place's last word
@@ -3566,11 +3667,20 @@ final class StoryEngine {
     /// match; one that paints an earlier hour is a slip (`continuitySlips`) and moves nothing.
     private func settleClock(_ a: inout Adventure, reply: String, opening: Bool) {
         if a.clock == nil, let m = Continuity.minutes(in: a.storyTime) { a.clock = m }
+        // A time of day the premise gives ("a stormy night") stands over what the opening painted.
+        var seededClock = false
+        if opening {
+            let told = Continuity.dayParts(in: a.storyTime + " " + a.facts.prefix(8).joined(separator: " ") + " " + clip(a.bible, 600))
+            if let lo = told.min(), let hi = told.max(), hi - lo <= 1 {
+                if a.clock == nil || !told.contains(Continuity.part(of: a.clock!)) { a.clock = Continuity.partStarts[hi] }
+                seededClock = true
+            }
+        }
         let cues = Continuity.dayParts(in: reply)
         if let lo = cues.min(), let hi = cues.max(), hi - lo <= 1 {
             if let c = a.clock {
                 let now = Continuity.part(of: c)
-                if opening, !cues.contains(now) {
+                if opening, !cues.contains(now), !seededClock {
                     a.clock = Continuity.partStarts[lo]
                 } else if !opening, lo > now {
                     a.clock = max(c, c - ((c % 1440) + 1440) % 1440 + Continuity.partStarts[lo])

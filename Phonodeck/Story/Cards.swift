@@ -228,10 +228,10 @@ enum Cards {
         if !want.isEmpty { l.append("- What they want right now, and why (what they say and do comes from it): " + want.joined(separator: "; ")) }
         for c in facingCards {
             guard let k = a.knows[c.name.lowercased()], !k.isEmpty else { continue }
-            l.append("- What " + c.name + " knows about you (they remember it; nothing more): " + k.suffix(4).joined(separator: "; "))
+            l.append("- What " + c.name + " knows about you (they remember it; nothing more): " + k.suffix(3).map { clip($0, 80) }.joined(separator: "; "))
         }
         if !a.body.isEmpty { l.append("- How you are: " + a.body) }
-        if !a.progress.isEmpty { l.append("- Toward what the player came for, so far: " + a.progress.suffix(3).joined(separator: " ")) }
+        if !a.progress.isEmpty { l.append("- Toward what the player came for, so far: " + a.progress.suffix(2).map { clip($0, 110) }.joined(separator: " ")) }
         if !p.background.isEmpty { l.append("- Also in the room (quiet; they don't join in): " + p.background.joined(separator: ", ")) }
         l += p.away.map { "- " + $0 }
         let held: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.prefix(6).joined(separator: "; ")
@@ -242,6 +242,11 @@ enum Cards {
         if !looked.isEmpty { l += ["", "LOOKED UP (from the app; the reply agrees with every line)"] + looked.map { "- " + $0 } }
         if !extra.isEmpty { l += [""] + extra.map { "- " + $0 } }
         if !notes.isEmpty { l += ["", "NOTES"] + notes.map { "- " + $0 } }
+        // The scene card has a budget (about 800 tokens): the newest kinds of line go first when it is over.
+        for drop in ["- Toward what the player came for", "- How you are:", "- The background", "- What they want right now", "- Around you", "- How they feel about you"] {
+            if l.reduce(0, { $0 + $1.count }) <= 3200 { break }
+            l.removeAll { $0.hasPrefix(drop) }
+        }
         if !moment.isEmpty { l += ["", "THIS MOMENT (write exactly this)", moment] }
         return l.joined(separator: "\n")
     }

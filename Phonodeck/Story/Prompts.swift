@@ -199,11 +199,18 @@ enum Prompts {
     static func rebuildWants(_ who: String) -> String {
         "What does " + who + " want right now, and why (the reason behind what they say and do, true to who they are)? And what did " + who + " learn about the player in this moment, only from what the player said or showed? {\"wants\":\"what they want, because of what, e.g. 'to show you her sketches, because nobody has asked to see them'\",\"learned\":\"one short line, e.g. 'you are new in town', or empty\"}"
     }
+    static let rebuildNewPerson = """
+    Does the story in this moment show or name a person who is not in PEOPLE IN THE STORY and is not the player? {"new":"yes or no","name":"their name as the story gives it, or what the story calls them, e.g. 'Mr. Elias' or 'the doorman'; empty if no","role":"who they are in a few words, e.g. 'the boss at the sewing studio'; empty if no"}
+    """
+    /// Asked before the reply, only when the player's message reads like someone arriving or being met.
+    static let newcomer = """
+    QUESTION: Does the new message bring in, or have the player meet, a person who is not in PEOPLE? {"new":"yes or no","name":"what to call them, from the message, e.g. 'Mr. Elias' or 'her boss'; empty if no","role":"who they are in a few words; empty if no"}
+    """
     static let rebuildBody = """
     How is the player, physically, at the end of the moment (wet or dry, warm or cold, tired, hurt, how much they have drunk)? Only what the story shows. {"body":"a few words, e.g. 'soaked and cold, one drink in'"}
     """
     static let rebuildGoal = """
-    Did this moment bring the player closer to THE GOAL with something new, not already in REACHED SO FAR? {"closer":"yes or no","how":"if yes: one short sentence saying what was reached; otherwise empty"}
+    Did this moment reach a real part of THE GOAL that is not already in REACHED SO FAR (for example, someone actually shared what the goal asks to hear)? Being served, greeted, seated or kept company is not progress. {"closer":"yes or no","how":"if yes: one short sentence saying what was reached; otherwise empty"}
     """
     static let rebuildAnswered = """
     The player asked a question. Did the story answer it in this moment? {"answered":"yes or no"}
@@ -235,7 +242,7 @@ enum Prompts {
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
     static var groundedInstructions: [String] {
-        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildBody, rebuildGoal, rebuildAnswered, rebuildName, rebuildContradiction, canDo, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildBody, rebuildNewPerson, newcomer, rebuildGoal, rebuildAnswered, rebuildName, rebuildContradiction, canDo, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
     }
 
     // MARK: Building the world

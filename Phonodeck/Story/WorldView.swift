@@ -16,6 +16,8 @@ struct WorldView: View {
     @State private var expandAll = false
     /// The world card's rows shown in full (otherwise clipped to a line or two, to fit one screen).
     @State private var wide = false
+    /// Which of the cards under the world card are open.
+    @State private var openCards: Set<String> = []
     /// The name as the panel last showed it, to tell the player's own edit apart.
     @State private var shownName = ""
 
@@ -26,7 +28,7 @@ struct WorldView: View {
                     VStack(spacing: 0) {
                         // The world, as it is this turn (the Mission and Story tabs are gone).
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 world(a)
                             }
                             .padding()
@@ -73,7 +75,7 @@ struct WorldView: View {
     @ViewBuilder
     private func world(_ a: Adventure) -> some View {
         if !a.frames.isEmpty { turnGuide(a) }
-        attributes(a)
+        VStack(alignment: .leading, spacing: 6) { attributes(a) }
         Button {
             editing = LoreEntry(name: "", kind: .person)
         } label: {
@@ -262,66 +264,119 @@ struct WorldView: View {
         .background(Theme.panel, in: RoundedRectangle(cornerRadius: 6))
     }
 
-    // MARK: Attributes
+    // MARK: Cards
 
-    /// Everything the game holds about the world right now, as the world check after each reply
-    /// leaves it. It updates while you play.
+    /// Everything the game holds, as cards under the world card: you, the people here, this place,
+    /// the facts in view, and what is elsewhere. Each is one line until tapped open, and lights
+    /// up with a line saying what changed when a question changes it.
     @ViewBuilder
     private func attributes(_ a: Adventure) -> some View {
-        Caps(text: "You")
-        card {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Name").font(.caption.bold()).foregroundStyle(Theme.dim).frame(width: 92, alignment: .leading)
-                    TextField("None yet: say it in the story, or type it", text: $myName)
-                        .textFieldStyle(.roundedBorder)
-                        .submitLabel(.done)
-                        .onSubmit { app.engine.setPlayerName(myName) }
-                }
-                Text("Only for this story. Characters learn it when you say it to them.").font(.caption).foregroundStyle(Theme.dim)
-                Toggle("Hide names until they're said", isOn: Binding(get: { app.engine.adventure?.nameless ?? false },
-                                                                     set: { app.engine.setNameless($0) }))
-                    .font(.subheadline)
-                    .tint(Theme.accent)
-                if !a.carrying.isEmpty { attr("You have", a.carrying.joined(separator: "; ")) }
-                if let me = a.lore.first(where: \.isPlayer) {
-                    Button { editing = me } label: {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("Who you are").font(.caption.bold()).foregroundStyle(Theme.dim).frame(width: 92, alignment: .leading)
-                            Text(me.desc.isEmpty ? "Add a line about yourself" : Continuity.unnamed(me.desc, in: a))
-                                .font(.callout).foregroundStyle(Theme.fg).multilineTextAlignment(.leading)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Image(systemName: "pencil").font(.caption).foregroundStyle(Theme.dim)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        // Only what is in view this turn: people and places out of view drop away here, and stay in
-        // the earlier turns of the turn guide (and in the store, where a lookup still finds them).
+        let last = a.frames.count - 1
+        let k = a.frames.isEmpty ? -1 : min(max(0, frameAt ?? last), last)
+        let changes: [String] = k < 0 ? [] : ((a.frames[k].steps ?? []).flatMap { $0 } + a.frames[k].changed)
         let inView = a.cast.filter { p in a.whereabouts.contains { $0.name == p.name && $0.here != false } }
-        if !inView.isEmpty {
-            Caps(text: "People here").padding(.top, 8)
-            ForEach(inView) { p in
-                Button { editing = p } label: { card { person(p, a) } }.buttonStyle(.plain)
+        let away = a.cast.filter { p in !inView.contains { $0.id == p.id } }
+
+        let mine = latest(changes, a) { $0.hasPrefix("You ") || $0.hasPrefix("Gone from your hands") }
+        FoldCard(title: a.playerName.isEmpty ? "You" : a.playerName, tag: "you" + (a.body.isEmpty ? "" : " · " + a.body), marquee: mine,
+                 open: openCards.contains("you")) { toggle("you") } content: { youCard(a) }
+
+        ForEach(inView) { p in
+            let w = a.whereabouts.first { $0.name == p.name }
+            let state: String = w?.engaged == true ? "with you" : "in the room"
+            let feels: String = a.feelings[p.name.lowercased()] ?? ""
+            let first = Cards.first(p.name)
+            FoldCard(title: shown(p, a), tag: [state, feels].filter { !$0.isEmpty }.joined(separator: " · "),
+                     marquee: latest(changes, a) { $0.contains(first) }, open: openCards.contains(p.id.uuidString)) { toggle(p.id.uuidString) } content: {
+                VStack(alignment: .leading, spacing: 4) {
+                    person(p, a)
+                    if let want = a.wants[p.name.lowercased()] { attr("Wants", Continuity.unnamed(want, in: a)) }
+                    if let knows = a.knows[p.name.lowercased()], !knows.isEmpty { attr("Knows", knows.joined(separator: "; ")) }
+                    Button("Edit") { editing = p }.font(.caption.bold()).padding(.top, 2)
+                }
             }
         }
-        // Every place the player has been keeps its own card: what is there and who was left there.
+
         if !a.location.isEmpty {
-            Caps(text: "This place").padding(.top, 8)
-            card { placeCard(a.location, a) }
+            let key = a.location.lowercased()
+            FoldCard(title: a.location, tag: "this place", marquee: latest(changes, a) { $0.hasPrefix("Props here") || $0.hasPrefix("Background") || $0.hasPrefix("Place") || $0.hasPrefix("New place") || $0.hasPrefix("Moved") || $0.hasPrefix("Arrived") },
+                     open: openCards.contains("place")) { toggle("place") } content: {
+                VStack(alignment: .leading, spacing: 4) {
+                    placeCard(a.location, a)
+                    if let sound = a.ambience[key], !sound.isEmpty { attr("Background", sound) }
+                }
+            }
         }
-        let away = a.cast.filter { p in !inView.contains { $0.id == p.id } }
+
         let facts = a.facts.filter { f in !Continuity.elsewhereFact(f, in: a) && !away.contains { Cards.mentions($0, in: f) } }
         if !facts.isEmpty {
-            Caps(text: "Facts in view").padding(.top, 8)
-            card {
+            FoldCard(title: "Facts in view", tag: "\(facts.count)", marquee: latest(changes, a) { $0.hasPrefix("Fact") || $0.hasPrefix("Learned") },
+                     open: openCards.contains("facts")) { toggle("facts") } content: {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(facts.enumerated()), id: \.offset) { _, f in
-                        Text("• " + Continuity.unnamed(f, in: a)).font(.callout).foregroundStyle(Theme.fg)
+                        Text("• " + Continuity.unnamed(f, in: a)).font(.caption).foregroundStyle(Theme.fg)
                     }
                 }
+            }
+        }
+
+        // Out of view: people left elsewhere and the other places, kept in one folded card.
+        let otherPlaces = a.lore.filter { $0.kind == .place && $0.name.caseInsensitiveCompare(a.location) != .orderedSame }
+        if !away.isEmpty || !otherPlaces.isEmpty {
+            let names: [String] = away.map { shown($0, a) } + otherPlaces.map(\.name)
+            FoldCard(title: "Elsewhere", tag: names.joined(separator: ", "), marquee: latest(changes, a) { $0.hasPrefix("Out of view") },
+                     open: openCards.contains("away")) { toggle("away") } content: {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(away) { p in
+                        Button { editing = p } label: { person(p, a) }.buttonStyle(.plain)
+                    }
+                    ForEach(otherPlaces) { p in placeCard(p.name, a) }
+                }
+            }
+        }
+    }
+
+    /// The newest change this turn that a card's test picks out, as the panel shows it.
+    private func latest(_ changes: [String], _ a: Adventure, _ match: (String) -> Bool) -> String {
+        Continuity.unnamed(changes.last(where: match) ?? "", in: a)
+    }
+
+    private func toggle(_ key: String) {
+        withAnimation(.snappy) {
+            if openCards.contains(key) { openCards.remove(key) } else { openCards.insert(key) }
+        }
+    }
+
+    /// The player's own card: the name, what they have, and who they are.
+    @ViewBuilder
+    private func youCard(_ a: Adventure) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Name").font(.caption.bold()).foregroundStyle(Theme.dim).frame(width: 92, alignment: .leading)
+                TextField("None yet: say it in the story, or type it", text: $myName)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.done)
+                    .onSubmit { app.engine.setPlayerName(myName) }
+            }
+            Text("Only for this story. Characters learn it when you say it to them.").font(.caption).foregroundStyle(Theme.dim)
+            Toggle("Hide names until they're said", isOn: Binding(get: { app.engine.adventure?.nameless ?? false },
+                                                                 set: { app.engine.setNameless($0) }))
+                .font(.subheadline)
+                .tint(Theme.accent)
+            if !a.carrying.isEmpty { attr("You have", a.carrying.joined(separator: "; ")) }
+            if !a.spot.isEmpty { attr("You are", a.spot) }
+            if !a.progress.isEmpty { attr("Goal so far", a.progress.joined(separator: " ")) }
+            if let me = a.lore.first(where: \.isPlayer) {
+                Button { editing = me } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Who you are").font(.caption.bold()).foregroundStyle(Theme.dim).frame(width: 92, alignment: .leading)
+                        Text(me.desc.isEmpty ? "Add a line about yourself" : Continuity.unnamed(me.desc, in: a))
+                            .font(.callout).foregroundStyle(Theme.fg).multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "pencil").font(.caption).foregroundStyle(Theme.dim)
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -502,6 +557,59 @@ private struct FlashRow: View {
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(1.6))
                 // A newer change keeps the row lit for its own full beat.
+                if mine == beat { withAnimation(.easeInOut(duration: 0.9)) { lit = false } }
+            }
+        }
+    }
+}
+
+/// A card that is one line until tapped open. When something about it changes, it lights up and
+/// shows a line saying what changed.
+private struct FoldCard<Content: View>: View {
+    let title: String
+    let tag: String
+    /// The latest change to this card this turn ("" for none).
+    let marquee: String
+    let open: Bool
+    let toggle: () -> Void
+    @ViewBuilder var content: () -> Content
+    @State private var lit = false
+    @State private var beat = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button(action: toggle) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.caption2.bold()).foregroundStyle(Theme.dim)
+                    Text(title).font(.subheadline.bold()).foregroundStyle(Theme.accent).lineLimit(1).layoutPriority(1)
+                    Text(tag).font(.caption).foregroundStyle(Theme.dim).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if !marquee.isEmpty {
+                Label(marquee, systemImage: "sparkle")
+                    .font(.caption2).foregroundStyle(lit ? Theme.accent : Theme.dim).lineLimit(open ? nil : 1)
+                    .transition(.opacity.combined(with: .move(edge: .leading)))
+            }
+            if open { content().padding(.top, 4).transition(.opacity.combined(with: .move(edge: .top))) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Theme.accent.opacity(lit ? 0.14 : 0))
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(lit ? Theme.accent : Theme.line, lineWidth: lit ? 1.5 : 1))
+        .animation(.easeOut(duration: 0.25), value: marquee)
+        .onChange(of: marquee) { _, new in
+            guard !new.isEmpty else { return }
+            beat += 1
+            let mine = beat
+            withAnimation(.easeOut(duration: 0.15)) { lit = true }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2.2))
                 if mine == beat { withAnimation(.easeInOut(duration: 0.9)) { lit = false } }
             }
         }
