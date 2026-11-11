@@ -563,6 +563,13 @@ final class StoryEngine {
         a.timeline = ((plan["timeline"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(5).map { clip($0, 200) }
         a.whereabouts = Self.whereabouts(plan["people"]).filter { w in
             w.name.caseInsensitiveCompare(playerName) != .orderedSame && w.name.caseInsensitiveCompare("you") != .orderedSame
+        }.map { w in
+            // Everyone the architect places is in the opening place (the regular in the corner booth
+            // is in the room, not elsewhere); "with the player" only says who the player is dealing with.
+            var w = w
+            w.engaged = w.here
+            w.here = true
+            return w
         }
         // The opening scene: the room, its props and who is in it, set before the first line so
         // the globe and the storyteller start from the same place.
@@ -1134,7 +1141,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11a"
+    static let build = "build 2026-11-11b"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1314,7 +1321,14 @@ final class StoryEngine {
             if first == me || first == "you" || first.isEmpty { continue }
             let named = first == addressed || said.contains(first)
             if leaving {
-                if named {
+                // Only someone the player's own words bring along comes ("with Walter", "take the
+                // bartender"); the person they were just talking to stays where they are.
+                let role = Cards.card(for: a.whereabouts[i], in: a).map { Continuity.roleLabel($0.role).lowercased() } ?? ""
+                let low = input.lowercased()
+                let comes = [first, role].filter { $0.count >= 3 && $0 != "the stranger" }.contains { r in
+                    ["with ", "bring ", "take ", "follow ", "join "].contains { low.contains($0 + r) } || low.contains(r + " and i") || low.contains(r + " comes")
+                }
+                if comes {
                     a.whereabouts[i].here = true; a.whereabouts[i].engaged = true; a.whereabouts[i].leftAt = nil
                 } else if a.whereabouts[i].here != false {
                     a.whereabouts[i].here = false; a.whereabouts[i].engaged = false; a.whereabouts[i].leftAt = from
@@ -1486,7 +1500,9 @@ final class StoryEngine {
         }
 
         // 3. Paint.
-        let notes = groundedNotes(a, input: input, opening: opening, playerNarrates: playerNarrates, playerAsks: playerAsks)
+        // Moving, by the read (or, with no read, by the words alone).
+        let going = read.map { !$0.going.isEmpty } ?? Continuity.moves(input)
+        let notes = groundedNotes(a, input: input, going: going, opening: opening, playerNarrates: playerNarrates, playerAsks: playerAsks)
         var system = groundedSystem(a)
         let card = Cards.briefing(a, pick: pick, memories: memories, extra: extra, notes: notes, moment: moment)
         let lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
@@ -1624,9 +1640,9 @@ final class StoryEngine {
                 before.append("READ: " + (gmPlans ? "nothing usable came back; code settled the scene alone" : "off (planning is off)"))
             } else if let r = read {
                 let to: String = r.to.isEmpty ? "nobody" : r.to
-                let going: String = r.going.isEmpty ? "staying" : "going: " + r.going
+                let motion: String = r.going.isEmpty ? "staying" : "going: " + r.going
                 let about: String = r.about.isEmpty ? "nothing in particular" : r.about.joined(separator: ", ")
-                var l = "READ: to \(to) · \(going) · about: \(about)"
+                var l = "READ: to \(to) · \(motion) · about: \(about)"
                 if !r.does.isEmpty { l += "\n  does: " + r.does }
                 if !r.answer.isEmpty { l += "\n  answer: " + r.answer }
                 if !r.beat.isEmpty { l += "\n  next: " + r.beat }
@@ -1701,7 +1717,7 @@ final class StoryEngine {
 
     /// At most a few notes for this reply, only where they apply: the opening, a question, the
     /// player moving, narrating, the end of the session, and phrases that keep coming back.
-    private func groundedNotes(_ a: Adventure, input: String, opening: Bool, playerNarrates: Bool, playerAsks: Bool) -> [String] {
+    private func groundedNotes(_ a: Adventure, input: String, going: Bool, opening: Bool, playerNarrates: Bool, playerAsks: Bool) -> [String] {
         if opening {
             let me = a.lore.first(where: \.isPlayer)?.desc ?? ""
             return [
@@ -1713,7 +1729,7 @@ final class StoryEngine {
         var notes: [String] = []
         if playerNarrates {
             notes.append("THE PLAYER IS NARRATING: their passage is canon. Do not retell it; continue where it ends, in their voice. Keep it short.")
-        } else if Continuity.moves(input) {
+        } else if going {
             notes.append("THE PLAYER IS MOVING: show them going where they said and what they find when they arrive. Nobody left behind comes along.")
         }
         if playerAsks { notes.append("THE PLAYER ASKED A QUESTION: answer it in the opening lines, plainly and concretely.") }
@@ -1745,7 +1761,11 @@ final class StoryEngine {
         let present = start.cast.filter { c in hereNames.contains { Cards.first($0).caseInsensitiveCompare(Cards.first(c.name)) == .orderedSame } }
         var prompt = Prompts.fileTurn
         prompt += "\n\nPLACE: " + (start.location.isEmpty ? "(not named yet: the player just went somewhere new)" : start.location)
-        prompt += "\nPEOPLE HERE: " + (hereNames.isEmpty ? "(nobody)" : hereNames.joined(separator: "; "))
+        let hereLines: [String] = hereNames.map { n in
+            let role: String = present.first(where: { Cards.first($0.name).caseInsensitiveCompare(Cards.first(n)) == .orderedSame })?.role ?? ""
+            return role.isEmpty ? n : n + " (the story may call them \"" + Continuity.roleLabel(role) + "\")"
+        }
+        prompt += "\nPEOPLE HERE: " + (hereLines.isEmpty ? "(nobody)" : hereLines.joined(separator: "; "))
         prompt += "\nYOU HAVE: " + (start.carrying.isEmpty ? "(nothing listed)" : start.carrying.joined(separator: "; "))
         let known = present.flatMap { Cards.facts(about: $0, in: start).suffix(3) } + start.facts.suffix(3)
         if !known.isEmpty { prompt += "\n\nALREADY KNOWN (do not repeat):\n" + Array(Set(known)).prefix(8).map { "- " + clip($0, 140) }.joined(separator: "\n") }
@@ -1788,7 +1808,14 @@ final class StoryEngine {
             return f.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
         }
         let people = start.cast.map(\.name) + [start.playerName]
-        let fresh = checked(list("new_facts", cap: 2).map(named), share: 0.5).compactMap { Continuity.lastingFact($0, people: people) }
+        // A fact is something still true tomorrow. What the player just did is on the timeline
+        // already, and what someone is doing this minute is on their card, so neither is a fact.
+        let passing = #"^you\s+(\w+ed|left|went|took|sat|saw|shook|gave|told|said|got|made|came|ordered|asked|walked|stepped|entered)\b|\b(is|are)\s+(now\s+)?(watching|looking|smiling|standing|sitting|pouring|wiping|waiting|leaning|talking|staring|glancing|nodding)\b|\b(watches|smiles|stares|glances|nods|pours|wipes)\b"#
+        let fresh = checked(list("new_facts", cap: 2).map(named), share: 0.5).compactMap { Continuity.lastingFact($0, people: people) }.filter { f in
+            if f.range(of: passing, options: [.regularExpression, .caseInsensitive]) == nil { return true }
+            refused.append(f + " (a passing moment, not a lasting fact)")
+            return false
+        }
         var facts = now.facts
         for f in fresh where !facts.contains(where: { Self.similar($0, f) }) {
             if let i = facts.firstIndex(where: { Self.sameOpening($0, f) }) { facts[i] = clip(f, 200) } else { facts.append(clip(f, 200)) }
@@ -1830,8 +1857,20 @@ final class StoryEngine {
                 }
             }
         }
+        if let i = now.lore.firstIndex(where: { $0.kind == .place && !now.location.isEmpty && $0.name.caseInsensitiveCompare(now.location) == .orderedSame }),
+           now.lore[i].desc.isEmpty, !now.lore[i].byPlayer {
+            let look = PresenceFilter.sentences(last.text).filter { !$0.contains("\"") && !$0.contains("“") }.prefix(2).joined(separator: " ")
+            let desc = look.trimmingCharacters(in: .whitespacesAndNewlines)
+            if desc.count > 20 { now.lore[i].desc = clip(desc, 240); filed.append("Place card described: " + now.location) }
+        }
         // What the player has: new things are added; a thing leaves only when the moment shows it going.
-        let held = checked(list("carrying", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) })
+        // Only what this reply shows counts (ordering a drink is not having it).
+        let inReply = Continuity.wordSet(last.text)
+        let held = checked(list("carrying", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { h in
+            if start.carrying.contains(where: { Self.similar($0, h) }) || Continuity.grounded(h, in: inReply) { return true }
+            refused.append(h + " (not in this reply)")
+            return false
+        }
         if !held.isEmpty {
             let said = (playerSaid + " " + last.text).lowercased()
             let gone = #"\b(give|gives|gave|given|hand|hands|handed|pay|pays|paid|sell|sold|eat|eats|ate|eaten|drink|drank|finish|finished|drop|dropped|leave|left|put|puts|set|sets|place|places|placed|slide|slides|slid|lose|lost|toss|tossed|swap|swapped|trade|traded)\b"#
@@ -1865,7 +1904,8 @@ final class StoryEngine {
         for d in ((m["people"] as? [[String: Any]]) ?? []) {
             guard let name = (d["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty,
                   let doing = (d["doing"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), doing.count > 3, !Self.echoesPrompt(doing),
-                  let i = now.whereabouts.firstIndex(where: { Cards.first($0.name).caseInsensitiveCompare(Cards.first(name)) == .orderedSame }) else { continue }
+                  let i = now.whereabouts.firstIndex(where: { Cards.first($0.name).caseInsensitiveCompare(Cards.first(name)) == .orderedSame }),
+                  now.whereabouts[i].here != false else { continue }
             now.whereabouts[i].doing = clip(doing, 100)
             filed.append(now.whereabouts[i].name + " is " + clip(doing, 60))
         }
@@ -2718,6 +2758,7 @@ final class StoryEngine {
         let s = a.setup
         var sources: [String] = [a.bible, a.scene, s.describe, s.world, s.who, s.traits, s.place, s.goal, s.hook, s.beats]
         sources += a.facts
+        sources += a.carrying
         sources += a.lore.map { $0.name + " " + $0.desc }
         sources += a.transcript.map(\.text)
         let known = sources.joined(separator: "\n")
