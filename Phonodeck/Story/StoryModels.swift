@@ -498,4 +498,6 @@ struct WorldFrame: Codable, Hashable, Identifiable {
     var sound: String?
     var pending: [String]?
     var feelings: [String]?
+    /// What each rebuild question changed, in the order of `asked`.
+    var steps: [[String]]?
 }

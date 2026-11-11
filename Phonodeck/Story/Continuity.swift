@@ -215,6 +215,28 @@ enum Continuity {
         return gap(am) <= gap(pm) ? am : pm
     }
 
+    /// Time the player skips ahead by ("15 hours later", "a few minutes later", "the next
+    /// morning"), in minutes; nil when the message skips no time.
+    static func laterBy(_ input: String, clock: Int?) -> Int? {
+        let l = input.lowercased()
+        if l.range(of: #"\b(the )?next (morning|day)\b"#, options: .regularExpression) != nil, let c = clock {
+            let day = ((c % 1440) + 1440) % 1440
+            return 1440 - day + 8 * 60
+        }
+        let nums: [String: Int] = ["a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+                                   "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30,
+                                   "forty": 40, "a few": 3, "a couple": 2, "a couple of": 2, "several": 4, "half an": 0, "half a": 0]
+        let pattern = #"\b(\d{1,3}|a couple of|a couple|a few|several|half an|half a|an|a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty)\s+(minutes?|hours?|days?)\s+(later|pass|passes|passed|go by|goes by|went by)\b"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: l, range: NSRange(location: 0, length: (l as NSString).length)) else { return nil }
+        let n = (l as NSString).substring(with: m.range(at: 1))
+        let unit = (l as NSString).substring(with: m.range(at: 2))
+        let count = Int(n) ?? nums[n] ?? 1
+        if unit.hasPrefix("hour") { return count == 0 ? 30 : count * 60 }
+        if unit.hasPrefix("day") { return max(1, count) * 1440 }
+        return max(1, count)
+    }
+
     /// "9:40 PM".
     static func clockText(_ minutes: Int) -> String {
         let m = ((minutes % 1440) + 1440) % 1440

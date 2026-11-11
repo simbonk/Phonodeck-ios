@@ -194,7 +194,7 @@ enum Prompts {
     What is the background of this place like at the end of the moment: its sounds and light, in one short line? Only what the story shows; empty if it shows nothing. {"background":"one short line, e.g. 'the band playing low, rain on the windows', or empty"}
     """
     static let rebuildPending = """
-    What is still hanging at the end of the moment: something ordered that has not come, a question not yet answered, something someone said they would do? Keep anything in STILL HANGING that the moment did not settle; leave out what it settled. {"open":["0 to 3 short lines"]}
+    What is still hanging at the end of the moment: something ordered that has not come, a question not yet answered, something someone said they would do? Each is a short plain sentence about what hasn't happened yet, e.g. 'Your drink has not come yet', 'She asked where you are from', 'He said he would find the key'. Never a thing, a look, a sound or a mood. Keep anything in STILL HANGING that the moment did not settle; leave out what it settled. [] if nothing is open. {"open":["0 to 3 short sentences"]}
     """
     static let rebuildFacts = """
     What did this moment establish that will still be true tomorrow: what someone said about their life, work, family or plans, a promise, something given or paid and to whom? Each a full sentence that starts with the person's name or 'You'. Not what someone is doing right now, and nothing in ALREADY KNOWN. {"facts":["0 to 2 sentences"]}
