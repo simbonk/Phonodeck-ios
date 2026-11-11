@@ -179,6 +179,18 @@ enum PlayScripts {
     Where am I, and who is here?
     I order a drink for both of us.
 
+    # A8 Sitting back down
+    I sit at the bar and order a coffee.
+    I go out to the street to look at the rain.
+    I walk back to the speakeasy.
+    I sit back down on my stool.
+    Where am I?
+    I go down to the cellar with the bartender.
+    I carry a crate back up to the bar.
+    I sit back down on my stool.
+    Where am I, and who is with me?
+    I ask the bartender what time it is.
+
     # 04 The hat I left behind
     I take off my hat and my wet coat and hang the coat on the hook by the door.
     I put my hat down on the bar next to me and order a whiskey.
