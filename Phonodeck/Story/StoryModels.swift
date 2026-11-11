@@ -500,4 +500,6 @@ struct WorldFrame: Codable, Hashable, Identifiable {
     var feelings: [String]?
     /// What each rebuild question changed, in the order of `asked`.
     var steps: [[String]]?
+    /// "step → result", for what was worked out after the player spoke and before the reply.
+    var pre: [String]?
 }
