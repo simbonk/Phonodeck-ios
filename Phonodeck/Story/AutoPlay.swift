@@ -85,6 +85,30 @@ enum PlayScripts {
     static let starters: [PlayScript] = parse(starterText)
 
     static let starterText = """
+    # A6 Someone walks in
+    I sit at the bar and order a coffee.
+    I tell them my name is Sam.
+    I look to the door as a young man with a violin case comes in.
+    I ask the young man his name.
+    I invite him to sit with us.
+    Who is in this room right now?
+    A woman in a red coat walks in, shaking out her umbrella.
+    I ask the woman in the red coat if she is waiting for someone.
+    I ask the bartender if he knows either of them.
+    Who is in this room now?
+
+    # A7 Out and about
+    I sit at the bar and tell the woman next to me my name is Sam.
+    I ask her if she would like to take a walk with me.
+    We leave together through the flower shop.
+    We walk down the street in the rain.
+    We stop under a streetlamp and talk for a while.
+    Where are we, and who is with me?
+    We walk back to the speakeasy together.
+    I sit back down on my stool.
+    Where am I, and who is here?
+    I order a drink for both of us.
+
     # A1 Back to the bar
     I sit at the bar and order a coffee.
     I tell them my name is Sam and I am a salesman from Chicago.
