@@ -780,9 +780,14 @@ final class StoryEngine {
             a.clock = c + max(1, Int((played / 60).rounded()))
             a.storyTime = Continuity.storyTime(clock: a.clock!, old: a.storyTime)
         }
+        // The player says what time it is ("it's about half past 10"): that is the time now.
+        if !hidden, let said = Continuity.statedTime(input, near: a.clock) {
+            a.clock = said
+            a.storyTime = Continuity.storyTime(clock: said, old: a.storyTime)
+        }
         let opening = hidden && a.transcript.isEmpty
         // The opening scene paints the place, so it gets more room than an ordinary reply.
-        let maxOut = opening ? 520 : a.isShort ? 300 : 420
+        let maxOut = opening ? 520 : a.isShort || grounded ? 300 : 420
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
         namesThisTurn = []
@@ -1065,6 +1070,7 @@ final class StoryEngine {
         if let f = presence, !f.dropped.isEmpty {
             var why: [String] = f.caught.map { "\($0.name) is \(Continuity.placed($0.at)), not with the player" }
             if f.echoes > 0 { why.append("\(f.echoes) sentence\(f.echoes == 1 ? "" : "s") copied word for word from earlier replies") }
+            if f.spokeForPlayer > 0 { why.append("the reply put words in the player's mouth") }
             let cut = f.dropped.joined().trimmingCharacters(in: .whitespacesAndNewlines)
             var check = "REPLY CHECK (in code, as the reply was written): "
             if redrawn {
@@ -1135,7 +1141,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10q"
+    static let build = "build 2026-11-10r"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1228,6 +1234,8 @@ final class StoryEngine {
         var going = ""       // "" for staying, a known place, or "somewhere new"
         var answer = ""
         var beat = ""
+        var does = ""        // the player's own action, restated: what the reply turns on
+        var dropped = ""     // why the reader's next beat was not used, for the export
     }
 
     /// Reads the player's new message into fixed choices with one short call. Nil when the model
@@ -1271,6 +1279,8 @@ final class StoryEngine {
         else if let p = places.first(where: { $0.lowercased() == going }) { read.going = p }
         read.answer = Self.echoesPrompt(s("answer")) ? "" : clip(s("answer"), 260)
         read.beat = Self.echoesPrompt(s("beat")) ? "" : clip(s("beat"), 260)
+        read.does = Self.echoesPrompt(s("does")) ? "" : clip(s("does"), 200)
+        if read.beat.isEmpty { read.dropped = "empty" }
         // A beat lifted from the reply before would make the storyteller say it twice.
         if let last = a.transcript.dropLast().last(where: { $0.role == .gm }), read.beat.count > 20 {
             let b = PresenceFilter.key(read.beat)
@@ -1279,9 +1289,9 @@ final class StoryEngine {
                 let k = PresenceFilter.key(sentence)
                 if k == b || (k.count > 30 && (k.contains(b) || b.contains(k))) || Self.similar(sentence, read.beat) { lifted = true; break }
             }
-            if lifted { read.beat = "" }
+            if lifted { read.beat = ""; read.dropped = "copied from the last reply" }
         }
-        return read.beat.isEmpty && read.to.isEmpty && read.going.isEmpty ? nil : read
+        return read.beat.isEmpty && read.to.isEmpty && read.going.isEmpty && read.does.isEmpty ? nil : read
     }
 
     /// Settles the scene in code from the reading, before the reply is written: who the player is
@@ -1349,15 +1359,18 @@ final class StoryEngine {
            back.contains(where: { $0.lowercased().split(separator: " ").first.map(String.init) == lead }), !said.contains(lead) {
             beat = ""
         }
+        let why = !beat.isEmpty ? "" : read.dropped.isEmpty ? "it opened on someone in the background" : read.dropped
+        if !why.isEmpty { lastRead += "; next beat not used (" + why + (read.beat.isEmpty ? "" : ": " + clip(read.beat, 120)) + ")" }
         let low = read.answer.lowercased()
         let own = ["i ", "i'll ", "i'd ", "i'm ", "yes, i", "my "].contains { low.hasPrefix($0) }
         let answer = Self.asks(input) && !own ? read.answer : ""
-        return [
-            "PLAYER: " + clip(input.replacingOccurrences(of: "\n", with: " "), 300),
-            "ANSWER: " + (answer.isEmpty ? "none" : answer),
-            "BEAT: " + (beat.isEmpty ? "follow the player's lead and deliver the feeling" : read.beat),
-            "WHO: " + who,
-        ].joined(separator: "\n")
+        var lines: [String] = ["PLAYER: " + clip(input.replacingOccurrences(of: "\n", with: " "), 300)]
+        if !read.does.isEmpty { lines.append("THE PLAYER DOES: " + read.does) }
+        lines.append("ANSWER: " + (answer.isEmpty ? "none" : answer))
+        let then = beat.isEmpty ? "the person the player is with responds right away to exactly what the player said and did" : beat
+        lines.append("THEN: " + then)
+        lines.append("WHO: " + who)
+        return lines.joined(separator: "\n")
     }
 
     /// One planning call; keeps only the plan lines, in case the model wanders into the story itself.
@@ -1445,7 +1458,8 @@ final class StoryEngine {
         func list(_ k: String, cap: Int) -> [String] {
             var out: [String] = []
             for item in ((m[k] as? [Any]) ?? []) {
-                guard let v = (item as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), v.count > 3, !Self.echoesPrompt(v) else { continue }
+                guard let v = (item as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), v.count > 3, !Self.echoesPrompt(v),
+                      !Self.brokenEntry(v) else { continue }
                 if !out.contains(where: { Self.similar($0, v) }) { out.append(v) }
                 if out.count >= cap { break }
             }
@@ -1481,7 +1495,7 @@ final class StoryEngine {
             .compactMap { Continuity.lastingFact($0, people: people) }
         var facts = now.facts
         for f in fresh {
-            if let i = facts.firstIndex(where: { Self.similar($0, f) }) { facts[i] = clip(f, 200) } else { facts.append(clip(f, 200)) }
+            if let i = facts.firstIndex(where: { Self.similar($0, f) || Self.sameOpening($0, f) }) { facts[i] = clip(f, 200) } else { facts.append(clip(f, 200)) }
         }
         // The first facts are the story's foundation (pronouns, the city); the newest are what just happened.
         if facts.count > 15 { facts = Array(facts.prefix(6) + facts.suffix(9)) }
@@ -1692,7 +1706,8 @@ final class StoryEngine {
     private func revealName(_ a: inout Adventure, input: String, to: String, introduced: Bool) -> String {
         guard a.nameless, var ask = Continuity.asksName(input) ?? (introduced ? "you" : nil) else { return "" }
         let hidden = a.lore.indices.filter { a.lore[$0].kind == .person && !a.lore[$0].isPlayer && !a.lore[$0].known && !a.lore[$0].byPlayer }
-        guard !hidden.isEmpty else { return "" }
+        let heard = introduced && !a.playerName.isEmpty && Continuity.asksName(input) == nil
+        guard !hidden.isEmpty else { return heard ? "They heard your name and use it: \"" + a.playerName + ".\"" : "" }
         func lead(_ n: String) -> String { n.lowercased().split(separator: " ").first.map(String.init) ?? "" }
         var addressee = to
         if addressee.isEmpty { addressee = a.whereabouts.first { $0.engaged == true && $0.here != false }?.name ?? "" }
@@ -1721,6 +1736,7 @@ final class StoryEngine {
         a.lore[i].known = true
         let name = a.lore[i].name
         namesThisTurn.append(name)
+        if heard { return name + " hears your name, " + a.playerName + ", says it back and gives theirs: \"" + name + ".\"" }
         if ask == "you" { return name + " tells you their name, plainly: \"" + name + ".\"" }
         return (addressee.isEmpty ? "You learn that" : addressee + " tells you that") + " the person you asked about is " + name + "."
     }
@@ -1987,6 +2003,21 @@ final class StoryEngine {
     }
 
     /// Two lines that say nearly the same thing (most of their words shared).
+    /// An entry the model wrote with the JSON around it spilled in ("things':['a long mahogany
+    /// bar', 'cr") or that ran into stray characters from another script.
+    static func brokenEntry(_ v: String) -> Bool {
+        v.contains { "[]{}\"".contains($0) } || v.contains("':") || v.contains("',")
+            || v.unicodeScalars.contains { $0.value >= 0x2E80 && $0.value < 0xFE00 }
+    }
+
+    /// Two facts that open the same way ("Dolores Vega is twenty-eight ...") say the same thing;
+    /// the newer one replaces the older.
+    static func sameOpening(_ a: String, _ b: String) -> Bool {
+        func lead(_ s: String) -> [Substring] { Array(s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" }).prefix(4)) }
+        let x = lead(a)
+        return x.count == 4 && x == lead(b)
+    }
+
     static func similar(_ a: String, _ b: String) -> Bool {
         func words(_ s: String) -> Set<Substring> { Set(s.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })) }
         let x = words(a), y = words(b)
@@ -2329,7 +2360,7 @@ final class StoryEngine {
         // A place the story has described shows its own things; things never follow the player from
         // the last place into the next.
         let around = a.location.isEmpty ? a.things : (a.placeThings[a.location.lowercased()] ?? (a.placeThings.isEmpty ? a.things : []))
-        if !around.isEmpty { l.append("- In this place: " + around.prefix(tight >= 2 ? 6 : 8).joined(separator: "; ")) }
+        if !around.isEmpty { l.append("- In this place (mention one only when the player looks at it or uses it): " + around.prefix(tight >= 2 ? 6 : 8).joined(separator: "; ")) }
         if !a.timeline.isEmpty {
             l.append("- Earlier (never change these): " + a.timeline.suffix(tight >= 2 ? 3 : 4).map { clip($0, tight >= 2 ? 110 : 140) }.joined(separator: " | "))
         }
@@ -2405,17 +2436,24 @@ final class StoryEngine {
         let roaming = !a.setup.simulator && a.mood.leavingPlot
         let calm = a.setup.simulator || happy || roaming
         var notes: [String] = []
+        // Focused: in the grounded engine, an ordinary reply is about what the player just said and
+        // did, and nothing else. The flourishes (a moment of awe, a payoff, a hook, someone's
+        // agenda) pull a small model away from the player, so they are left out.
+        let focus = grounded && !playerNarrates && !final
+        if focus {
+            notes.append("FOCUS ON THE PLAYER: the whole reply is about the player's message below. In this order: what the player does lands (the plan's THE PLAYER DOES), the person they are with responds to exactly that (the plan's ANSWER and THEN), and at most one short sentence of the room around that moment. Bring up no new topic, news or backstory. The player's message is everything the player says and does: never write more words or actions for the player.")
+        }
         if playerAsks {
             notes.append("THE PLAYER ASKED A QUESTION. Answer it first, in the opening lines, plainly and concretely: the person they are speaking to tells them, or they see it for themselves. No riddles or vague hints.")
         }
         notes += ["FEELING TO ACHIEVE: \(feeling). Make this reply deliver it."
             + ((a.mood.feeling ?? 10) < 5 ? " Last reading was \(a.mood.feeling ?? 0)/10, so lean into it harder." : "")]
-        if happy { notes.append("The player is enjoying this" + (a.mood.enjoying.isEmpty ? "" : " (\(a.mood.enjoying))") + ". No new complications or interruptions; deepen what is working.") }
+        if happy, !focus { notes.append("The player is enjoying this" + (a.mood.enjoying.isEmpty ? "" : " (\(a.mood.enjoying))") + ". No new complications or interruptions; deepen what is working.") }
         if roaming { notes.append("The player is leaving the plot behind. Let it go; make wherever they are worth being in.") }
 
         let played = a.elapsed / 60
         let phase = calm ? "savour" : played / Double(max(1, a.minutes)) < 0.5 ? "rising" : played / Double(max(1, a.minutes)) < 0.85 ? "peak" : "release"
-        if !(happy && phase == "savour") { notes.append("PACING: " + [
+        if !focus, !(happy && phase == "savour") { notes.append("PACING: " + [
             "rising": "momentum is building; keep things moving and curious.",
             "peak": "a high-intensity beat; force a decisive moment.",
             "release": "aftermath and breathing room; let consequences land.",
@@ -2424,7 +2462,7 @@ final class StoryEngine {
 
         if playerNarrates {
             notes.append("THE PLAYER IS NARRATING: their passage is canon. Do not retell it; continue where it ends, in their voice. Keep it short.")
-        } else if !final {
+        } else if !final, !focus {
             var pool = Prompts.director.keys.filter { k in
                 !((calm || wrap || playerAsks) && Prompts.disruptive.contains(k)) && !((playerAsks || a.setup.simulator || wrap) && k == "seed")
                     && turn - (a.lastDirector[k] ?? -99) >= 3
@@ -2460,12 +2498,14 @@ final class StoryEngine {
         } else if wrap {
             notes.append("WRAP-UP: the session is nearly over. Steer toward a payoff and an ending. No new threads.")
         }
-        if !final && !playerNarrates {
+        if focus {
+            notes.append("End on the person the player is with, turned to the player and leaving room for them to answer. No menu of options.")
+        } else if !final && !playerNarrates {
             // A calm scene is not broken into by a new arrival.
             notes.append(Prompts.endings.filter { !((calm || wrap) && $0 == Prompts.interruptingEnding) }.randomElement()!)
         }
         // The showrunner's agendas, acted out: someone pursues what they want, on screen.
-        if !a.isShort, !calm, !wrap, !playerNarrates, !playerAsks, let cast = a.notes?.cast, let c = cast.randomElement(), Double.random(in: 0..<1) < 0.6 {
+        if !focus, !a.isShort, !calm, !wrap, !playerNarrates, !playerAsks, let cast = a.notes?.cast, let c = cast.randomElement(), Double.random(in: 0..<1) < 0.6 {
             notes.append("Motive in action: \(c.name) wants \(c.wants)" + (c.fears.isEmpty ? "" : " and fears \(c.fears)")
                 + ". Show them pursuing it visibly in this reply (a choice, a lie, a favour, a closed door), even where it cuts against what the player wants.")
         }

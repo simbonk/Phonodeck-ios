@@ -93,12 +93,14 @@ enum JSONGrammar {
             "root ::= \"{\" ws " + [
                 key("to") + " who",
                 key("going") + " where",
+                key("does") + " s200",
                 key("answer") + " s240",
                 key("beat") + " s240",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("who", cast + ["nobody"]),
             choice("where", ["staying"] + places + ["somewhere new"]),
             capped("s240", 240),
+            capped("s200", 200),
             common,
         ].joined(separator: "\n")
     }
