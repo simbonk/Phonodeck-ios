@@ -140,7 +140,7 @@ enum Prompts {
     static let planQuestion = """
     QUESTION 2 OF 2. Plan the next moment from the message and WHAT YOU LOOKED UP. Output ONLY one JSON object:
     {"does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell the bartender it is half past ten and order a coffee')",
-     "answer":"only if the player asked a question: the plain, sensible answer the person they asked gives, from WHAT YOU LOOKED UP where it covers it, otherwise something ordinary that fits the place and time (e.g. 'gin, beer and coffee'; 'since 1921'); never the player's own words; empty if they asked nothing",
+     "answer":"only if the player asked a question: the plain, sensible answer the person they asked gives, from WHAT YOU LOOKED UP where it covers it, otherwise something ordinary that fits the place and time (a short list, a year, a name); never the player's own words; empty if they asked nothing",
      "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), true to what that person wants and why, in a way that delivers the FEELING"}
     Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
