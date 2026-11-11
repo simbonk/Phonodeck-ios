@@ -3747,7 +3747,7 @@ final class StoryEngine {
     static func premiseDayParts(_ a: Adventure) -> Set<Int> {
         let own = Continuity.dayParts(in: a.setup.describe + " " + a.setup.place)
         if !own.isEmpty { return own }
-        return Continuity.dayParts(in: a.storyTime + " " + a.facts.prefix(8).joined(separator: " ") + " " + clip(a.bible, 600))
+        return Continuity.dayParts(in: a.storyTime + " " + a.facts.prefix(8).joined(separator: " ") + " " + String(a.bible.prefix(600)))
     }
 
     private func settleClock(_ a: inout Adventure, reply: String, opening: Bool) {
