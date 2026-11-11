@@ -1498,6 +1498,18 @@ final class StoryEngine {
         placeBeforeTurn = a.location
         lastRead = ""
         planThoughts = ""
+        catchUpNotes = []
+        // The opening place is built like any place the player arrives in, when the architect gave
+        // it only a line.
+        if hidden, a.transcript.isEmpty, let card = Cards.placeCard(a), card.desc.count < 120, !card.byPlayer {
+            stage = "Building " + a.location
+            if let i = a.lore.firstIndex(where: { $0.id == card.id }) { a.lore[i].desc = "" }
+            let hint: String = [card.desc, a.scene].filter { !$0.isEmpty }.joined(separator: " ")
+            let built = await buildPlace(&a, hint: hint)
+            guard !Task.isCancelled else { return }
+            if built.isEmpty, let i = a.lore.firstIndex(where: { $0.id == card.id }) { a.lore[i].desc = card.desc }
+            if !built.isEmpty { catchUpNotes.append("Built: " + built) }
+        }
         let played = clockTick(&a, hidden: hidden, paused: Date().timeIntervalSince(turnBegan) + a.gmWait)
         let ticked = Date()
         // No time limit: the story runs until the player finishes it ("Finish the experience now").
@@ -1542,7 +1554,6 @@ final class StoryEngine {
         var moment = ""
         var extra: [String] = []
         var looked: [Looks.Answer] = []
-        catchUpNotes = []
         if !hidden, !playerNarrates {
             settle(&a, read: read ?? PlayerRead(), input: input)
             if read == nil { lastRead = (gmPlans ? "no usable reading; " : "reading off; ") + lastRead }
@@ -1888,7 +1899,9 @@ final class StoryEngine {
     private func groundedNotes(_ a: Adventure, input: String, going: Bool, opening: Bool, playerNarrates: Bool, playerAsks: Bool) -> [String] {
         if opening {
             let me = a.lore.first(where: \.isPlayer)?.desc ?? ""
-            return [
+            var lines: [String] = []
+            if !a.scene.isEmpty { lines.append("WHERE YOU ARE AS IT OPENS: " + clip(a.scene, 280)) }
+            return lines + [
                 "THIS IS THE OPENING SCENE, and it may run to about 200 words. The listener cannot see anything yet: first tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and who is there, then paint it with sound, smell, light and texture.",
                 me.isEmpty ? "Make clear who the player is and why they are here." : "Make clear who the player is (\(clip(me, 160))) and why they are here.",
                 "Set up the feeling (" + (a.setup.feeling.isEmpty ? "the one the player came for" : a.setup.feeling) + ") from the first lines, and end on someone turned to the player.",
@@ -2205,7 +2218,7 @@ final class StoryEngine {
 
     /// Builds a place the player arrives in: one short call writes its description and a few
     /// things in it, true to the premise. Returns a short summary for the turn guide.
-    private func buildPlace(_ a: inout Adventure) async -> String {
+    private func buildPlace(_ a: inout Adventure, hint: String = "") async -> String {
         guard let i = a.lore.firstIndex(where: { $0.kind == .place && $0.name.caseInsensitiveCompare(a.location) == .orderedSame }) else { return "" }
         var prompt = "You build places for an audio story."
         let premise = Cards.premise(a)
@@ -2215,6 +2228,7 @@ final class StoryEngine {
         if !ground.isEmpty { prompt += "\nTHE WORLD: " + ground.joined(separator: " ") }
         if !placeBeforeTurn.isEmpty { prompt += "\nCOMING FROM: " + placeBeforeTurn }
         prompt += "\nTHE PLACE: " + a.location
+        if !hint.isEmpty { prompt += "\nKNOWN ABOUT IT (keep to this): " + clip(hint, 400) }
         prompt += "\n\n" + Prompts.buildPlace
         let raw = (try? await llm.complete(system: nil, prompt: prompt,
                                            options: .init(maxTokens: 200, temperature: 0.6, repetitionPenalty: 1.1, grammar: JSONGrammar.place))) ?? ""
@@ -2225,8 +2239,11 @@ final class StoryEngine {
         guard desc.count > 20, !Self.echoesPrompt(desc) else { return "" }
         a.lore[i].desc = clip(desc, 300)
         if !things.isEmpty {
-            a.placeThings[a.location.lowercased()] = Array(things.prefix(5))
-            a.things = Array(things.prefix(5))
+            // Things the story already put here stay; the built ones join them.
+            let had = a.placeThings[a.location.lowercased()] ?? []
+            let merged = Array((had + things.filter { t in !had.contains { Self.similar($0, t) } }).prefix(8))
+            a.placeThings[a.location.lowercased()] = merged
+            a.things = merged
         }
         return a.location + (things.isEmpty ? "" : " (" + things.prefix(5).joined(separator: "; ") + ")")
     }
