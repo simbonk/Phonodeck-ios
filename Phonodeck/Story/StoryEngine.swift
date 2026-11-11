@@ -1482,6 +1482,14 @@ final class StoryEngine {
     private func runGroundedTurn(input: String, hidden: Bool, forceFinal: Bool) async {
         guard var a = adventure else { return }
         let turnBegan = Date()
+        // How long each step took, for the story export.
+        var times: [String] = []
+        var lapFrom = Date()
+        func lap(_ label: String) {
+            let now = Date()
+            times.append(label + " " + String(format: "%.1fs", now.timeIntervalSince(lapFrom)))
+            lapFrom = now
+        }
         ComputerSounds.shared.startHum()
         housekeepingJob?.cancel()
         if let job = memoryJob {
@@ -1498,6 +1506,7 @@ final class StoryEngine {
             memoryJob = nil
             guard !Task.isCancelled else { return }
             a = adventure ?? a
+            lap("waiting on the last rebuild")
         }
         let snapshot = a
         placeBeforeTurn = a.location
@@ -1514,6 +1523,7 @@ final class StoryEngine {
             guard !Task.isCancelled else { return }
             if built.isEmpty, let i = a.lore.firstIndex(where: { $0.id == card.id }) { a.lore[i].desc = card.desc }
             if !built.isEmpty { catchUpNotes.append("Built: " + built) }
+            lap("building the opening place")
         }
         let played = clockTick(&a, hidden: hidden, paused: Date().timeIntervalSince(turnBegan) + a.gmWait)
         let ticked = Date()
@@ -1549,8 +1559,10 @@ final class StoryEngine {
         let context = readContext(a, input: input)
         if !hidden, !playerNarrates, gmPlans {
             stage = "Looking around"
+            lapFrom = Date()
             read = await lookPlayer(a, input: input, context: context)
             guard !Task.isCancelled else { adventure = snapshot; return }
+            lap("look")
         }
 
         // 2. Settle and look up. Code settles who the player is with and where, then answers each
@@ -1567,8 +1579,10 @@ final class StoryEngine {
             let arrived = !a.location.isEmpty && a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
             if arrived, let card = Cards.placeCard(a), card.desc.isEmpty, !card.byPlayer {
                 stage = "Building " + a.location
+                lapFrom = Date()
                 let built = await buildPlace(&a)
                 guard !Task.isCancelled else { adventure = snapshot; return }
+                lap("building " + a.location)
                 if !built.isEmpty {
                     catchUpNotes.append("Built: " + built)
                     lastRead += "; built " + a.location
@@ -1579,8 +1593,10 @@ final class StoryEngine {
             if back, let seen = a.placeSeen[a.location.lowercased()], a.playerTurns - seen >= Self.catchUpTurns {
                 let gap = a.playerTurns - seen
                 stage = "Catching up on " + a.location
+                lapFrom = Date()
                 let changes = await catchUp(&a, turns: gap)
                 guard !Task.isCancelled else { adventure = snapshot; return }
+                lap("catching up")
                 if !changes.isEmpty {
                     extra.append("SINCE YOU WERE LAST HERE: " + changes.joined(separator: " "))
                     catchUpNotes += changes.map { "While you were away: " + $0 }
@@ -1592,6 +1608,7 @@ final class StoryEngine {
             let asked = read?.looks ?? []
             let looks = asked + Looks.auto(a, input: input, to: read?.to ?? "", asked: asked)
             stage = looks.isEmpty ? "Gathering the world" : "Looking things up"
+            lapFrom = Date()
             for l in looks {
                 var ans = Looks.answer(l, in: a)
                 if l.kind == .remember {
@@ -1607,12 +1624,15 @@ final class StoryEngine {
                 }
                 looked.append(ans)
             }
+            if !looks.isEmpty { lap("lookups") }
         }
         // Read, question 2: the moment, planned from what was looked up.
         if read != nil {
             stage = "Planning the moment"
+            lapFrom = Date()
             await planPlayer(a, input: input, context: context, looked: looked, into: &read!)
             guard !Task.isCancelled else { adventure = snapshot; return }
+            lap("plan")
         }
         if !hidden, !playerNarrates {
             moment = momentText(a, read: read ?? PlayerRead(), input: input)
@@ -1701,6 +1721,8 @@ final class StoryEngine {
         }
         stage = "The storyteller is writing"
         a.gmWait = Date().timeIntervalSince(ticked)
+        lapFrom = Date()
+        var firstWord = true
         if narrate { narrator.begin() }
         var reply = ""
         var interrupted = false
@@ -1713,6 +1735,10 @@ final class StoryEngine {
         }
         do {
             for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
+                if firstWord {
+                    firstWord = false
+                    lap("first word of the reply")
+                }
                 if stage != "" {
                     stage = ""; thinkingSince = nil; forge?.close()
                     if !narrate { ComputerSounds.shared.stopHum() }
@@ -1805,6 +1831,7 @@ final class StoryEngine {
         }
         a.scene = Cards.sceneLine(a)
 
+        lap(redrawn ? "rest of the reply (written twice)" : "rest of the reply")
         // Behind the scenes, for the story export: short, and every step shown.
         var before: [String] = []
         if !hidden {
@@ -1848,6 +1875,8 @@ final class StoryEngine {
             before.append("REPLY CHECK: " + (redrawn ? "too little was left, so the reply was written again. Left out first: " + cut
                                                 : why.joined(separator: "; ") + ". Left out: " + cut))
         }
+        let took = String(format: "%.1fs", Date().timeIntervalSince(turnBegan))
+        before.append("TIMES: " + times.joined(separator: " · ") + " · total " + took + " before the rebuild")
         a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.joined(separator: "\n")))
         streaming = ""
         if a.left == 0 && !hidden { a.ended = true }
@@ -1947,6 +1976,8 @@ final class StoryEngine {
         var filed: [String] = []
         var refused: [String] = []
         var asked: [String] = []
+        var times: [String] = []
+        let began = Date()
         // Notes the turn already made (a catch-up on a place) stay with the snapshot.
         let open: WorldFrame? = start.frames.last.flatMap { $0.turn == start.playerTurns ? $0 : nil }
         var notes: [String] = open?.notes ?? []
@@ -1963,8 +1994,11 @@ final class StoryEngine {
         func ask(_ label: String, _ question: String, _ grammar: String, _ tokens: Int) async -> [String: Any]? {
             guard !Task.isCancelled else { return nil }
             rebuildStep = label
+            let t0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: base + question,
                                                options: .init(maxTokens: tokens, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+            let took: String = String(format: "%.1fs", Date().timeIntervalSince(t0))
+            times.append(label + " " + took)
             guard !Task.isCancelled else { return nil }
             return JSONExtract.object(raw) ?? Self.salvageJSON(raw)
         }
@@ -1995,6 +2029,10 @@ final class StoryEngine {
                 var note = "REBUILT:" + (asked.isEmpty ? " nothing asked yet" : "\n" + asked.map { "  - " + $0 }.joined(separator: "\n"))
                 if !filed.isEmpty { note += "\nFILED:\n" + filed.map { "  - " + $0 }.joined(separator: "\n") }
                 if !refused.isEmpty { note += "\nREFUSED (not in the story's words): " + refused.prefix(6).joined(separator: "; ") }
+                if !times.isEmpty {
+                    let sofar: String = String(format: "%.1fs", Date().timeIntervalSince(began))
+                    note += "\nTIMES: " + times.joined(separator: " · ") + " · " + sofar + " so far"
+                }
                 now.transcript[i].after = note
             }
             Self.updateFrame(&now, asked: asked, notes: notes)
