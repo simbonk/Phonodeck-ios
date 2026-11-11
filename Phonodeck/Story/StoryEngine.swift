@@ -1325,8 +1325,17 @@ final class StoryEngine {
                 // bartender"); the person they were just talking to stays where they are.
                 let role = Cards.card(for: a.whereabouts[i], in: a).map { Continuity.roleLabel($0.role).lowercased() } ?? ""
                 let low = input.lowercased()
-                let comes = [first, role].filter { $0.count >= 3 && $0 != "the stranger" }.contains { r in
-                    ["with ", "bring ", "take ", "follow ", "join "].contains { low.contains($0 + r) } || low.contains(r + " and i") || low.contains(r + " comes")
+                let verbs: [String] = ["with ", "bring ", "take ", "follow ", "join "]
+                var comes = false
+                for r in [first, role] where r.count >= 3 && r != "the stranger" {
+                    let andI: String = r + " and i"
+                    let rComes: String = r + " comes"
+                    var hit = low.contains(andI) || low.contains(rComes)
+                    for v in verbs where !hit {
+                        let phrase: String = v + r
+                        if low.contains(phrase) { hit = true }
+                    }
+                    if hit { comes = true; break }
                 }
                 if comes {
                     a.whereabouts[i].here = true; a.whereabouts[i].engaged = true; a.whereabouts[i].leftAt = nil
