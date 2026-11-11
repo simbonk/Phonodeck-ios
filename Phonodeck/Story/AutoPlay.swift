@@ -85,30 +85,6 @@ enum PlayScripts {
     static let starters: [PlayScript] = parse(starterText)
 
     static let starterText = """
-    # A6 Someone walks in
-    I sit at the bar and order a coffee.
-    I tell them my name is Sam.
-    I look to the door as a young man with a violin case comes in.
-    I ask the young man his name.
-    I invite him to sit with us.
-    Who is in this room right now?
-    A woman in a red coat walks in, shaking out her umbrella.
-    I ask the woman in the red coat if she is waiting for someone.
-    I ask the bartender if he knows either of them.
-    Who is in this room now?
-
-    # A7 Out and about
-    I sit at the bar and tell the woman next to me my name is Sam.
-    I ask her if she would like to take a walk with me.
-    We leave together through the flower shop.
-    We walk down the street in the rain.
-    We stop under a streetlamp and talk for a while.
-    Where are we, and who is with me?
-    We walk back to the speakeasy together.
-    I sit back down on my stool.
-    Where am I, and who is here?
-    I order a drink for both of us.
-
     # A1 Back to the bar
     I sit at the bar and order a coffee.
     I tell them my name is Sam and I am a salesman from Chicago.
@@ -179,71 +155,29 @@ enum PlayScripts {
     I ask the young man his name.
     Who is in this room now?
 
-    # 01 Names all round
-    I shake the rain off my coat and take a stool at the bar.
-    Evening. Could I get something warm to drink?
-    I introduce myself. My name is Sam. What should I call you?
-    I turn to the woman down the bar. And you are?
-    I ask her what she does for work.
-    I ask the bartender how long he has worked here.
-    I tell them I just got into town this morning on the train from Chicago.
-    I ask the bartender if he remembers my name.
-    I ask the woman what she would do if her big break came tomorrow.
-    I ask the bartender the same thing. What is he saving for?
-    I tell them my own dream is to open a little bookshop one day.
-    I ask the woman if she remembers where I said I came from.
-    I order another drink and ask what they recommend.
-    I ask them how they know each other.
-    I ask the bartender what the woman's name is again, I have forgotten.
-    I raise my glass to both of them, by name.
-    I ask what they think of my bookshop idea.
-    I ask if either of them has family in the city.
-    I tell them it is getting late for me and ask what time it is.
-    I thank them both and say I hope to see them again.
+    # A6 Someone walks in
+    I sit at the bar and order a coffee.
+    I tell them my name is Sam.
+    I look to the door as a young man with a violin case comes in.
+    I ask the young man his name.
+    I invite him to sit with us.
+    Who is in this room right now?
+    A woman in a red coat walks in, shaking out her umbrella.
+    I ask the woman in the red coat if she is waiting for someone.
+    I ask the bartender if he knows either of them.
+    Who is in this room now?
 
-    # 02 A stranger in a grey hat
-    I come in from the rain and sit at the bar.
-    I order a coffee and warm my hands on the cup.
-    I ask the bartender if it is always this quiet.
-    I look to the door as a tall man in a grey hat comes in and shakes out his umbrella.
-    I watch where the man in the hat sits.
-    I nod to him. Rough night out there.
-    I ask the man in the hat what his name is.
-    I ask him what brings him out on a night like this.
-    I ask the bartender, quietly, if he has seen that man before.
-    I invite the man to come and sit closer to us.
-    I ask the woman at the bar if she knows him.
-    I tell the man my name is Sam and offer to buy him a drink.
-    I ask the man what line of work he is in.
-    I ask the bartender to pour the man whatever he wants.
-    I ask the man if he has ever been here before.
-    I ask everyone what they are hoping for this year.
-    I ask the man in the hat the same question again, he did not answer.
-    The man in the hat gets up to leave. I say goodbye to him.
-    I ask the others what they made of him.
-    Who is still here in the room with me?
-
-    # 03 Out to the flowers and back
-    I sit down at the bar and order a coffee.
-    I ask the bartender what he is saving up for.
-    I listen to the record for a while and say nothing.
-    I tell them I need some air and step out into the flower shop at the front.
-    I look around the flower shop. What is in here?
-    I smell the roses and look for someone working here.
-    I pick out a single white carnation and take it with me.
-    I go out to the street and stand under the awning, watching the rain.
-    I look up and down the street. What can I see?
-    I walk around the block.
-    I come back to the flower shop door about two hours later.
-    I go back inside to the bar and take my old stool.
-    I ask the bartender what I missed while I was out.
-    I give the carnation to the woman at the bar.
-    I ask her if she likes it.
-    I ask what time it is now.
-    I ask the bartender if anyone came or went while I was away.
-    What am I carrying now?
-    I ask the woman what she will do with the flower.
-    I order one last drink and settle in.
+    # A7 Out and about
+    I sit at the bar and tell the woman next to me my name is Sam.
+    I ask her if she would like to take a walk with me.
+    We leave together through the flower shop.
+    We walk down the street in the rain.
+    We stop under a streetlamp and talk for a while.
+    Where are we, and who is with me?
+    We walk back to the speakeasy together.
+    I sit back down on my stool.
+    Where am I, and who is here?
+    I order a drink for both of us.
 
     # 04 The hat I left behind
     I take off my hat and my wet coat and hang the coat on the hook by the door.
@@ -289,28 +223,6 @@ enum PlayScripts {
     I ask what day it is now.
     I pay and say good morning.
 
-    # 06 Asking twice
-    I sit at the bar. Quiet night?
-    I ask the bartender how long this place has been open.
-    I ask him where he grew up.
-    I ask the woman at the bar what she is working on this week.
-    I ask her which studio she sews for.
-    I tell her my name is Sam and I am only in town until Friday.
-    I ask the bartender what the woman's name is, quietly.
-    I ask him to play a different record. What does he have?
-    I ask her again which studio it was, I have forgotten already.
-    I ask the bartender how long he said this place has been open.
-    I ask them both how long they think I am in town for.
-    I ask the bartender where he said he grew up.
-    I ask the woman what she said she was working on.
-    I ask what record is playing now.
-    I ask the bartender what my name is.
-    I ask the woman what day I am leaving town.
-    I ask the bartender what he told me about his dream.
-    I tell them they both have good memories.
-    I ask if I have told them where I am from. I have not.
-    I thank them and ask what they will each do when the rain stops.
-
     # 07 Paying my way
     I sit at the bar and check my wallet. How much do I have?
     I ask what a drink costs here.
@@ -355,72 +267,6 @@ enum PlayScripts {
     I ask him to dance with her while I watch the bar.
     I go behind the bar and stand where he usually stands.
 
-    # 09 The telephone at the back
-    I sit at the bar and ask if there is a telephone I can use.
-    I ask the bartender where it is.
-    I walk to the back hallway to find the telephone.
-    I look around the hallway. What is back here?
-    I pick up the telephone and ask the operator for my sister in Chicago.
-    I tell my sister I arrived safely and that it is raining.
-    I ask her how mother is.
-    I hang up and stand in the hallway a moment.
-    I notice a door at the end of the hallway. Where does it go?
-    I try the door.
-    I go back to the bar.
-    I tell the bartender I called home.
-    I ask him if he has family he calls.
-    I ask the woman at the bar who she would call if she could.
-    I ask if anyone else has used the telephone tonight.
-    I go back to the hallway to make one more call.
-    I call the hotel and ask them to hold my room.
-    I go back to my stool.
-    Where have I been tonight, in order?
-    I ask the bartender what I owe him for the calls.
-
-    # 10 Walking her home
-    I sit at the bar and say hello to the woman next to me.
-    I ask her name and tell her mine is Sam.
-    I ask how far she lives from here.
-    I ask the bartender if the rain is letting up.
-    I ask her if she would like company walking home.
-    I ask the bartender to lend us an umbrella.
-    We leave together through the flower shop.
-    We walk down the street together under the umbrella.
-    I ask her about the street we are on.
-    We stop under a streetlamp. I ask her what she is thinking.
-    We walk on to her building.
-    I say goodnight to her at her door.
-    I walk back to the speakeasy alone.
-    I go in through the flower shop and back to the bar.
-    I give the bartender his umbrella back.
-    I ask him where she is now.
-    I ask him what he thinks of her.
-    I ask him what time it is.
-    I ask him if she comes here every night.
-    Who is here with me now?
-
-    # 11 Lending a hand
-    I sit at the bar and watch the bartender work.
-    I ask him if he ever gets a night off.
-    I offer to help him with anything.
-    I ask what needs doing.
-    I go behind the bar with him.
-    I dry the glasses with a cloth.
-    I ask where the clean glasses go.
-    I ask him what is down in the cellar.
-    I follow him down to the cellar.
-    I look around the cellar. What is down here?
-    I pick up a crate of bottles and carry it upstairs.
-    I put the crate down behind the bar.
-    I ask what else he needs brought up.
-    I go back down to the cellar alone to get a bag of ice.
-    I bring the ice up to the bar.
-    I wash my hands and sit back down on my stool.
-    I ask the woman at the bar if she saw me working.
-    I ask the bartender if I have earned a drink.
-    What is behind the bar now that was not there before?
-    I ask him how he manages it all alone every night.
-
     # 12 A person of few words
     I sit.
     Coffee.
@@ -442,28 +288,6 @@ enum PlayScripts {
     What time is it?
     I stand up.
     Goodnight.
-
-    # 13 The story that changes
-    I sit at the bar and tell them my name is Sam.
-    I tell them I am a salesman from Chicago.
-    I ask what they do.
-    I tell them I have a wife back home.
-    I ask the bartender for a whiskey.
-    Actually, I tell them, my name is not Sam. It is Jack.
-    I ask the bartender what he thinks my name is.
-    I tell them I am not really a salesman. I am a writer.
-    I ask the woman what she thinks I do for a living.
-    I tell them I have never been married.
-    I ask the bartender if he believes me.
-    I tell them I am from New York, not Chicago.
-    I ask the woman where I am from.
-    I laugh and tell them the truth. I am Sam, a salesman from Chicago, and I was only fooling.
-    I ask the bartender what my name is now.
-    I ask if they are cross with me.
-    I ask the woman if she has ever lied about who she is.
-    I ask the bartender the same.
-    I promise to tell only the truth from now on.
-    I ask them what they know about me for certain.
 
     # 14 A hand of cards
     I sit at the bar and ask if anyone plays cards.
