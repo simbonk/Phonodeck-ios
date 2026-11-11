@@ -121,16 +121,44 @@ enum Prompts {
     Each line at most 30 words. Plain words, no prose for the player.
     """
 
-    /// The grounded engine's first step: read the player's new message into fixed choices, so code
-    /// can settle who is in the scene and where it is before any prose is written.
+    /// The grounded engine's first step (Read): one short call reads the player's new message into
+    /// fixed choices, so code can settle the scene and fetch the right cards before any prose is written.
     static let readPlayer = """
     You read the player's NEW MESSAGE in an interactive audio story and fill in a short form. Output ONLY one JSON object:
     {"to":"the one person the player is speaking to or doing something with in the new message, or \"nobody\"",
      "going":"\"staying\" if the player stays in the place they are in; the name of a place if they go there; \"somewhere new\" if they leave for a place that is not listed",
+     "about":["up to 3 names from CARDS that the new message is about, asks about or reaches for; [] if none"],
      "does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell Walter it is half past ten and say your name is Simon')",
-     "answer":"only if the player asked a question: the plain facts the person they asked tells them (names, places, what happened), taken from KNOWN SO FAR or THE STORY JUST SAID where they cover it, never the player's own words; otherwise empty",
-     "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they introduce her, they give their name back), in a way that delivers the FEELING"}
+     "answer":"only if the player asked a question: the plain facts the person they asked tells them, taken from KNOWN where it covers it, never the player's own words; otherwise empty",
+     "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), in a way that delivers the FEELING"}
     Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going. Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
+    """
+
+    /// The grounded engine's storyteller rules (Paint). Short on purpose: the briefing carries the
+    /// scene and the moment to write, and a small model follows a few clear lines best.
+    static let groundedRules = """
+    You are the storyteller of an audio story the player hears read aloud: their vacation from reality. Write the next moment.
+
+    - Second person, present tense: the player is "you", never "they" or their name. 80 to 150 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. No headings, lists or notes.
+    - Your briefing gives THE SCENE and THIS MOMENT. Write that moment: what the player does lands, then the person they are with responds to exactly that. Nothing else happens, and no new topic comes up.
+    - Only people under "With you" speak or act. People in the background stay quiet. Nobody else appears unless THIS MOMENT says so. The player has only what "You have" lists; nothing appears in anyone's hands from nowhere.
+    - Never write the player's words, choices or feelings, and never add to what they did. If they leave or change the subject, go with them.
+    - If the player asks something, the person answers plainly in the first lines, from the facts given; if the facts don't say, they give a plain answer that fits.
+    - People are ordinary and solid. They speak in short plain sentences about real things, each in their own way. No sayings, metaphors or wisdom.
+    - Use at most one detail of the place. Do not reuse lines or images from earlier replies.
+    - End on the person turned to the player, leaving room for them to answer. Never a list of options.
+    """
+
+    /// The grounded engine's last step (File): after the reply, one small call notes only what the
+    /// moment added. Code keeps the place, who is where and the clock itself, and checks every entry.
+    static let fileTurn = """
+    You keep the books for an audio story. Read the latest moment and note only what it added. Output ONLY one JSON object:
+    {"place":"the short name of the building or area the player is in at the end, 1-4 words",
+     "new_facts":["0 to 2 things this moment established that will still be true tomorrow, each a full sentence that starts with the person's name or 'You': what someone said about their life, work, family or plans, a promise, something given or paid and to whom; nothing in ALREADY KNOWN"],
+     "things":["up to 6 notable things the story showed in the place the player is in, 2-6 words each, e.g. 'a cast-iron stove'"],
+     "carrying":["each thing the player has on them at the end, 2-5 words each; leave out anything they gave away, paid, ate, drank or put down"],
+     "people":[{"name":"a person in this moment","doing":"what they are doing at the end, a few words"}]}
+    Only what the story actually says, never guesses. Write real content about this story; never copy these descriptions. No commentary.
     """
 
     // MARK: Building the world
@@ -225,28 +253,6 @@ enum Prompts {
      "next":"2 sentences: what the next reply should do if the player goes along (the next small step on the roadmap toward the feeling, with the people who are here), and one concrete detail to use"}
     "left" is true only if, in this reply, the player went out of the building or area they were in and into a different place (out a door, down a street, to another building). Moving to another seat, table or corner of the same room is false. When the player leaves, "here" names exactly the people who went with them; everyone else stayed behind.
     Time only moves forward and only as far as the story showed. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip contradicts the bible, the facts or the scene: a changed pronoun, an object the player does not have, someone acting in the scene who was elsewhere, a person in a new place with no movement shown. Only list a slip you can point to in the reply's own words. Write real content about this story; never copy these descriptions. "carrying" and "things" hold only what the story has actually shown, never guesses. Be exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
-    """
-
-    /// The grounded engine's update: the one call after a reply. It proposes how the cards change
-    /// (place, people, things, facts, time, mood); code checks every proposal before storing it.
-    static let reviewGrounded = """
-    You keep the books for an interactive audio story. Read the latest exchange and fill in the form about how things stand NOW. Output ONLY one JSON object:
-    {"place":"the short name of the building or area the player is in now, 1-4 words; keep the name it had if they have not left",
-     "left":false,
-     "scene":"one or two plain sentences, written to the player as 'you': exactly where the player is now and what is going on around them",
-     "here":["the name of each named person the player is with right now: talking with, sitting with or walking with"],
-     "people":[{"name":"each named person","where":"exactly where they are now, sitting or standing","doing":"what they are doing","heading":"where they are going, or empty if staying"}],
-     "carrying":["each thing the player has on them or in their hands right now, 2-5 words each, e.g. 'a brass compass'; leave out anything they gave away, paid, ate, drank or put down; [] if nothing"],
-     "things":["up to 6 notable things in the place the player is in now that the story has shown, 2-6 words each, e.g. 'a cast-iron stove'"],
-     "time":"the story time now: time of day, and how long since the story began, e.g. 'Mid-morning, the day after the storm'",
-     "timeline":["at most 2 things this reply added to the story's history, each with its story time, e.g. 'Tuesday, 8:50 PM: Walter poured you a whiskey' (never 'now' or 'just now')"],
-     "new_facts":["the 1 or 2 most important things this exchange established that will still be true tomorrow, each a full sentence with the person's name: what someone told the player about their life, family, work or plans (with the place), a promise, something given or paid and to whom"],
-     "feeling":7,
-     "enjoying":"a person, place or activity the player clearly wants more of, or empty",
-     "steps_done":["the exact text of any OPEN STORY STEP the player completed in this exchange; [] if none"],
-     "unanswered":"any question the player asked that the reply did not really answer, with the true answer, or empty",
-     "next":"2 sentences: what the next reply should do if the player goes along (the next small step toward the feeling, with the people who are here), and one concrete detail already in the story to use"}
-    "left" is true only if, in this reply, the player went out of the building or area they were in and into a different place (out a door, down a street, to another building). Moving to another seat, table or corner of the same room is false. When the player leaves, "here" names exactly the people who went with them. "feeling" is 0-10: how strongly the player seems to feel the FEELING TO ACHIEVE. "carrying", "things" and "new_facts" hold only what the story has actually shown, never guesses. Time only moves forward. Write real content about this story; never copy these descriptions. No commentary.
     """
 
     /// Each key of the review, for asking again when a review leaves some out.

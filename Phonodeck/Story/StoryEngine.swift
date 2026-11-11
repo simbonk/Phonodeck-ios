@@ -40,8 +40,9 @@ final class StoryEngine {
     /// The plan and the look-ahead use the model's reasoning mode (Qwen's thinking): much slower,
     /// up to about a minute per turn, but the Game Master really works the problem first.
     var deepThinking: Bool { didSet { UserDefaults.standard.set(deepThinking, forKey: "deepThinking") } }
-    /// The grounded engine: the player's message is read into fixed choices and code settles who
-    /// is in the scene before the reply is written. Off, the Game Master writes a free plan instead.
+    /// The grounded engine: the world lives in the app as cards, a short read of the player's
+    /// message decides which cards this moment needs, and the storyteller sees only those (see
+    /// `runGroundedTurn`). Off, the classic Game Master plans and reviews with the whole world each turn.
     var grounded: Bool { didSet { UserDefaults.standard.set(grounded, forKey: "groundedEngine") } }
     /// How far the current reasoning step is toward its room to think (0 to 1), or nil when
     /// nothing is reasoning. About 4 characters a token.
@@ -643,35 +644,47 @@ final class StoryEngine {
         library.save(a)
     }
 
-    /// The whole story as plain text, for copying out to refine it: the set-up and the world as
-    /// the Game Master holds it now, then every turn in order with what happened behind the scenes
-    /// (the plan and its reasoning before each reply, the review after it).
+    /// The whole story as plain text, for copying out to refine it. Kept short: the world as the
+    /// app holds it now, then every turn with what happened behind the scenes (with the grounded
+    /// engine: how the message was read, what was fetched and why, the prompt's size, and what was
+    /// filed afterwards).
     func storyText() -> String {
         guard let a = adventure else { return "" }
         var out = ["# " + a.title, ""]
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
-        out.append("Game Master planning " + (gmPlans ? (grounded ? "on (grounded engine)" : "on") : "off") + ", reasoning "
-                   + (reasons ? "on" : deepThinking ? "off (this storyteller can't reason first)" : "off") + " · " + Self.build)
-        out += ["", "## Story bible", a.bible]
-        let people = a.lore.filter { $0.kind == .person }.map { "- " + ($0.isPlayer && a.playerName.isEmpty ? "You" : $0.name) + ($0.isPlayer ? " (the player)" : $0.role.isEmpty ? "" : " (\($0.role))")
-            + (a.nameless && !$0.isPlayer && !$0.known && !$0.byPlayer ? " [name not said yet]" : "") + ": " + $0.desc }
-        if !people.isEmpty { out += ["", "## People"] + people }
-        if !a.facts.isEmpty { out += ["", "## Facts now"] + a.facts.map { "- " + $0 } }
-        if !a.storyTime.isEmpty { out += ["", "## Story time now", a.storyTime] }
-        if !a.timeline.isEmpty { out += ["", "## Timeline"] + a.timeline.map { "- " + $0 } }
-        if !a.whereabouts.isEmpty { out += ["", "## Where people are"] + a.whereabouts.map { "- " + ($0.here == false ? "[elsewhere] " : $0.engaged == true ? "[with you] " : $0.engaged == false ? "[in the room, background] " : $0.here == true ? "[in the room] " : "") + $0.line } }
-        if !a.scene.isEmpty { out += ["", "## Scene now", a.scene] }
-        if !a.carrying.isEmpty { out += ["", "## You have", a.carrying.joined(separator: "; ")] }
-        if !a.things.isEmpty { out += ["", "## In this place", a.things.joined(separator: "; ")] }
-        if !a.checks.isEmpty { out += ["", "## Last world check"] + a.checks.map { "- " + $0 } }
+        out.append((grounded ? "Grounded engine (read, fetch, paint, file)" + (gmPlans ? "" : ", reading off")
+                    : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")) + " · " + Self.build)
+        if grounded {
+            out += ["", "## Premise (the storyteller's only standing view of the story)", Cards.premise(a)]
+        } else {
+            out += ["", "## Story bible", a.bible]
+        }
+        out += ["", "## The world the app holds"]
+        let names = a.nameless
+        for p in a.lore where p.kind == .person && !p.isPlayer {
+            let w = a.whereabouts.first { Cards.card(for: $0, in: a)?.id == p.id }
+            let state = w.map { $0.here == false ? "elsewhere" : $0.engaged == true ? "with you" : "in the room" } ?? "not placed"
+            let facts = Cards.facts(about: p, in: a).count
+            out.append("- \(p.name)" + (p.role.isEmpty ? "" : " (\(p.role))") + (names && !p.known && !p.byPlayer ? " [name not said yet]" : "")
+                       + ": " + state + (w.map { ", " + Continuity.placed($0.at) } ?? "") + (facts > 0 ? " · \(facts) fact\(facts == 1 ? "" : "s") on file" : ""))
+        }
+        let placeCards = a.lore.filter { $0.kind == .place }.map(\.name)
+        if !placeCards.isEmpty { out.append("- Place cards: " + placeCards.joined(separator: ", ")) }
+        let items = a.lore.filter { $0.kind == .item || $0.kind == .faction || $0.kind == .other }.map(\.name)
+        if !items.isEmpty { out.append("- Other cards: " + items.joined(separator: ", ")) }
+        out.append("- Now: " + (a.location.isEmpty ? "on the move" : a.location) + (a.storyTime.isEmpty ? "" : " · " + a.storyTime))
+        if !a.carrying.isEmpty { out.append("- You have: " + a.carrying.joined(separator: "; ")) }
+        let here = Cards.props(a)
+        if !here.isEmpty { out.append("- Props here: " + here.joined(separator: "; ")) }
+        if !a.facts.isEmpty { out += ["", "## Facts on file (\(a.facts.count); each reply gets only the ones it needs)"] + a.facts.map { "- " + $0 } }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
         for t in a.transcript {
-            if let b = t.before, !b.isEmpty { out += ["[Behind the scenes, before the reply]", b, ""] }
+            if let b = t.before, !b.isEmpty { out += [b, ""] }
             out.append((t.role == .player ? me : "GAME MASTER") + ":\n" + t.text)
             out.append("")
-            if let b = t.after, !b.isEmpty { out += ["[Behind the scenes, the review while it was read aloud]", b, ""] }
+            if let b = t.after, !b.isEmpty { out += [b, ""] }
         }
         return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -733,6 +746,7 @@ final class StoryEngine {
     }
 
     private func runTurn(input: String, hidden: Bool, forceFinal: Bool = false) async {
+        if grounded { await runGroundedTurn(input: input, hidden: hidden, forceFinal: forceFinal); return }
         guard var a = adventure else { return }
         let turnBegan = Date()
         ComputerSounds.shared.startHum()
@@ -781,7 +795,7 @@ final class StoryEngine {
         }
         let opening = hidden && a.transcript.isEmpty
         // The opening scene paints the place, so it gets more room than an ordinary reply.
-        let maxOut = opening ? 520 : a.isShort || grounded ? 300 : 420
+        let maxOut = opening ? 520 : a.isShort ? 300 : 420
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
         namesThisTurn = []
@@ -861,14 +875,6 @@ final class StoryEngine {
         let spoken = a.transcript.map(\.text).joined(separator: " ") + " " + input
         let locked = a.lore.filter { ($0.kind == .item || $0.kind == .faction) && !$0.byPlayer && !Continuity.names(place: $0.name, in: spoken) }.map(\.name)
         var memories = recalled.filter { m in !a.cast.contains { m.hasPrefix($0.name) } && !locked.contains { m.hasPrefix($0) } }
-        if grounded {
-            // The cards and the recent turns already carry the present. An older moment is fetched
-            // only when the player's own words reach for it.
-            let plain: Set<String> = ["where", "there", "their", "about", "would", "could", "should", "which", "after", "before", "other", "these",
-                                      "those", "while", "every", "under", "really", "think", "going", "something", "anything", "right", "still", "again"]
-            let asked = Continuity.wordSet(input).filter { $0.count >= 5 && !plain.contains($0) }
-            memories = Array(memories.filter { !asked.isDisjoint(with: Continuity.wordSet($0)) }.prefix(3))
-        }
         a.lastDirector = adventure?.lastDirector ?? a.lastDirector   // the director just noted which nudge it used
 
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
@@ -881,18 +887,6 @@ final class StoryEngine {
         var plan = ""
         if planning {
             stage = "The Game Master is planning"
-            if grounded, let read = await readPlayer(a, input: input) {
-                guard !Task.isCancelled else { adventure = snapshot; return }
-                plan = settle(&a, read: read, input: input)
-                let told = revealName(&a, input: input, to: read.to, introduced: introduced)
-                if !told.isEmpty { plan = Self.withAnswer(plan, told) }
-                // An answer that gives away a name the story hasn't said would come out as nonsense
-                // once the name is put back to a role ("her name is the regular"), so it goes.
-                else if Self.answerNamesHidden(plan, a) {
-                    plan = plan.components(separatedBy: "\n").map { $0.hasPrefix("ANSWER:") ? "ANSWER: none" : $0 }.joined(separator: "\n")
-                }
-                adventure = a
-            }
             if plan.isEmpty, !hidden {
                 let told = revealName(&a, input: input, to: "", introduced: introduced)
                 if !told.isEmpty { notes.insert("NAME: " + told + " Say it in this reply.", at: 0); adventure = a }
@@ -955,7 +949,7 @@ final class StoryEngine {
                 }
             }
             if presence != nil {
-                let ok = presence!.finish(restore: !grounded)
+                let ok = presence!.finish(restore: true)
                 reply = presence!.accepted
                 streaming = reply
                 if narrate, !ok.isEmpty { narrator.feed(ok) }
@@ -1135,7 +1129,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10t"
+    static let build = "build 2026-11-11a"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1220,24 +1214,28 @@ final class StoryEngine {
         return clip(lines.joined(separator: "\n"), 1200)
     }
 
-    // MARK: The grounded engine: read the player, settle the scene
+    // MARK: The grounded engine: read, fetch, paint, file
 
     /// How the player's new message was read: fixed choices, checked against what exists.
     struct PlayerRead {
         var to = ""          // a cast member's name, or "" for nobody
         var going = ""       // "" for staying, a known place, or "somewhere new"
+        var about: [String] = []   // cards the message is about, from the menu
         var answer = ""
         var beat = ""
         var does = ""        // the player's own action, restated: what the reply turns on
         var dropped = ""     // why the reader's next beat was not used, for the export
     }
 
-    /// Reads the player's new message into fixed choices with one short call. Nil when the model
-    /// gave nothing usable (the free plan is used instead).
+    /// Read: the player's new message into fixed choices with one short call. The read sees only a
+    /// menu of names (who is here, the places, the cards), the facts code fetched for the words of
+    /// the message, the end of the last reply and the message itself. Nil when the model gave
+    /// nothing usable (code then settles the scene on its own).
     private func readPlayer(_ a: Adventure, input: String) async -> PlayerRead? {
         let cast = a.cast.map(\.name)
         let here = a.location
         let places = a.places.filter { $0.caseInsensitiveCompare(here) != .orderedSame }.suffix(5).map { $0 }
+        let menu = Cards.menu(a, input: input)
         func state(_ name: String) -> String {
             guard let w = a.whereabouts.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return "" }
             return " [" + (w.here == false ? "elsewhere: " : w.engaged == true ? "with the player: " : "in the place: ") + clip(w.at, 80) + "]"
@@ -1246,19 +1244,21 @@ final class StoryEngine {
         prompt += "\nTHE PLAYER IS IN: " + (here.isEmpty ? "(unnamed place)" : here)
         if !places.isEmpty { prompt += "\nOTHER PLACES: " + places.joined(separator: "; ") }
         prompt += "\nPEOPLE: " + (cast.isEmpty ? "(none)" : a.cast.map { $0.name + ($0.role.isEmpty ? "" : " (\($0.role))") + state($0.name) }.joined(separator: "; "))
+        if !menu.isEmpty { prompt += "\nCARDS: " + menu.joined(separator: "; ") }
         let played = a.elapsed / 60
-        if !a.setup.simulator, let act = a.roadmap.first(where: { played >= $0.from && played <= $0.to }) ?? a.roadmap.first(where: { played < $0.to }) {
+        if let act = a.roadmap.first(where: { played >= $0.from && played <= $0.to }) ?? a.roadmap.first(where: { played < $0.to }) {
             prompt += "\nTHE STORY IS HEADING TOWARD (only if the player goes along): " + clip(act.goal, 220)
         }
-        let known = a.facts.suffix(8).map { clip($0, 140) } + a.timeline.suffix(4).map { clip($0, 140) }
-        if !known.isEmpty { prompt += "\n\nKNOWN SO FAR (an answer never contradicts these):\n" + known.map { "- " + $0 }.joined(separator: "\n") }
+        // What the app already holds about the words of the message (code's own fetch, no model).
+        let known = Cards.pick(a, input: input, about: [], opening: false).known.suffix(6).map { clip($0, 140) }
+        if !known.isEmpty { prompt += "\n\nKNOWN (an answer never contradicts these):\n" + known.map { "- " + $0 }.joined(separator: "\n") }
         if let last = a.transcript.dropLast().last(where: { $0.role == .gm }) {
-            prompt += "\n\nTHE STORY JUST SAID (already answered; context only):\n" + clip("…" + String(last.text.suffix(600)), 620)
+            prompt += "\n\nTHE STORY JUST SAID (already answered; context only):\n" + clip("…" + String(last.text.suffix(400)), 420)
         }
         prompt += "\n\nTHE PLAYER'S NEW MESSAGE: " + clip(input, 800) + "\n\nThe form:"
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 200, temperature: 0.2, repetitionPenalty: 1.1,
-                                                            grammar: JSONGrammar.intent(cast: cast, places: places)))) ?? ""
+                                             options: .init(maxTokens: 220, temperature: 0.2, repetitionPenalty: 1.1,
+                                                            grammar: JSONGrammar.intent(cast: cast, places: places, about: menu)))) ?? ""
         guard let m = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !m.isEmpty else { return nil }
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         var read = PlayerRead()
@@ -1271,6 +1271,8 @@ final class StoryEngine {
         let going = s("going").lowercased()
         if going == "somewhere new" { read.going = "somewhere new" }
         else if let p = places.first(where: { $0.lowercased() == going }) { read.going = p }
+        let picked = ((m["about"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        read.about = picked.compactMap { w in menu.first { $0.caseInsensitiveCompare(w) == .orderedSame } }
         read.answer = Self.echoesPrompt(s("answer")) ? "" : clip(s("answer"), 260)
         read.beat = Self.echoesPrompt(s("beat")) ? "" : clip(s("beat"), 260)
         read.does = Self.echoesPrompt(s("does")) ? "" : clip(s("does"), 200)
@@ -1285,7 +1287,7 @@ final class StoryEngine {
             }
             if lifted { read.beat = ""; read.dropped = "copied from the last reply" }
         }
-        return read.beat.isEmpty && read.to.isEmpty && read.going.isEmpty && read.does.isEmpty ? nil : read
+        return read.beat.isEmpty && read.to.isEmpty && read.going.isEmpty && read.does.isEmpty && read.about.isEmpty ? nil : read
     }
 
     /// Settles the scene in code from the reading, before the reply is written: who the player is
@@ -1367,6 +1369,507 @@ final class StoryEngine {
         return lines.joined(separator: "\n")
     }
 
+    /// How long a new turn lets the filing of the last reply finish before it is dropped.
+    static let fileGrace = 6.0
+
+    /// One turn of the grounded engine. The world lives in the app (the cards in the World panel);
+    /// the storyteller sees only what the player's action touches.
+    /// 1. Read: one short call reads the message into fixed choices (who, where, what about).
+    /// 2. Fetch: code settles the scene and picks the cards for this moment.
+    /// 3. Paint: the reply, from short rules, a premise and those cards.
+    /// 4. File: while the reply is read aloud, one small call notes what it added; code keeps the
+    ///    place, who is where and the clock itself. The next turn never waits long for it.
+    private func runGroundedTurn(input: String, hidden: Bool, forceFinal: Bool) async {
+        guard var a = adventure else { return }
+        let turnBegan = Date()
+        ComputerSounds.shared.startHum()
+        housekeepingJob?.cancel()
+        if let job = memoryJob {
+            stage = "Filing the last moment"
+            let waiter = Task { await job.value }
+            let grace = Self.fileGrace
+            _ = await withTaskGroup(of: Void.self) { group in
+                group.addTask { await waiter.value }
+                group.addTask { try? await Task.sleep(for: .seconds(grace)) }
+                await group.next()
+                group.cancelAll()
+            }
+            job.cancel()
+            memoryJob = nil
+            guard !Task.isCancelled else { return }
+            a = adventure ?? a
+        }
+        let snapshot = a
+        placeBeforeTurn = a.location
+        lastRead = ""
+        planThoughts = ""
+        let played = clockTick(&a, hidden: hidden, paused: Date().timeIntervalSince(turnBegan) + a.gmWait)
+        let ticked = Date()
+        if forceFinal { a.left = 0 }
+        if !hidden, let c = a.clock {
+            a.clock = c + max(1, Int((played / 60).rounded()))
+            a.storyTime = Continuity.storyTime(clock: a.clock!, old: a.storyTime)
+        }
+        if !hidden, let said = Continuity.statedTime(input, near: a.clock) {
+            a.clock = said
+            a.storyTime = Continuity.storyTime(clock: said, old: a.storyTime)
+        }
+        let opening = hidden && a.transcript.isEmpty
+        let maxOut = opening ? 520 : 300
+        let playerNarrates = !hidden && Self.narrates(input)
+        let playerAsks = !hidden && !playerNarrates && Self.asks(input)
+        namesThisTurn = []
+        let introduced = hidden ? false : learnPlayerName(&a, input: input)
+
+        if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
+        pendingInput = nil
+        adventure = a
+        streaming = ""
+        thinkingSince = Date()
+
+        // 1. Read.
+        var read: PlayerRead? = nil
+        if !hidden, !playerNarrates, gmPlans {
+            stage = "Reading what you do"
+            read = await readPlayer(a, input: input)
+            guard !Task.isCancelled else { adventure = snapshot; return }
+        }
+
+        // 2. Fetch. Code settles who the player is with and where, then picks the cards.
+        var moment = ""
+        var extra: [String] = []
+        if !hidden, !playerNarrates {
+            moment = settle(&a, read: read ?? PlayerRead(), input: input)
+            if read == nil { lastRead = (gmPlans ? "no usable reading; " : "reading off; ") + lastRead }
+            let told = revealName(&a, input: input, to: read?.to ?? "", introduced: introduced)
+            if !told.isEmpty { moment = Self.withAnswer(moment, told) }
+            else if Self.answerNamesHidden(moment, a) {
+                moment = moment.components(separatedBy: "\n").map { $0.hasPrefix("ANSWER:") ? "ANSWER: none" : $0 }.joined(separator: "\n")
+            }
+            // What the player did goes on the timeline, in code, at the story time it happened.
+            if let does = read?.does, !does.isEmpty {
+                let when = a.clock.map { Continuity.clockText($0) } ?? ""
+                a.timeline.append(clip((when.isEmpty ? "" : when + ": ") + does, 200))
+                if a.timeline.count > 24 { a.timeline = Array(a.timeline.prefix(2) + a.timeline.suffix(22)) }
+            }
+            adventure = a
+        } else if playerNarrates {
+            let told = revealName(&a, input: input, to: "", introduced: introduced)
+            if !told.isEmpty { extra.append("NAME: " + told + " Say it in this reply.") }
+            adventure = a
+        }
+        stage = "Gathering the world"
+        let pick = Cards.pick(a, input: hidden ? "" : input, about: read?.about ?? [], opening: opening)
+        var memories: [String] = []
+        if !hidden, pick.recall {
+            let recent = Set(a.transcript.suffix(5).map(\.id))
+            let older = a.transcript.enumerated().filter { !recent.contains($0.element.id) }.map { ($0.offset + 1, $0.element) }
+            let found = await Recall.memories(for: a, input: input, olderTurns: older, chaptersInPrompt: 0, budget: 900, earlier: earlierStories(a))
+            guard !Task.isCancelled else { adventure = snapshot; return }
+            // Cards already fetched, and items nobody has brought up, are not recalled again.
+            let spoken = a.transcript.map(\.text).joined(separator: " ")
+            let shut = Cards.locked(a, spoken: spoken)
+            memories = Array(found.filter { m in
+                !a.lore.contains { e in m.hasPrefix(e.name) && (shut.contains(e.name.lowercased()) || e.kind == .person || Continuity.names(place: e.name, in: a.location)) }
+            }.prefix(3))
+        }
+        extra += a.fixes.filter { $0.hasPrefix(Self.checked) }.suffix(2).map { "CORRECTION: " + String($0.dropFirst(Self.checked.count)) }
+        if !a.playerName.isEmpty, !nameTold(a), !a.nameless {
+            let knew = a.cast.filter(\.known).map(\.name)
+            extra.append("Nobody here knows the player's name (\(a.playerName)) because the player has not said it"
+                         + (knew.isEmpty ? "" : ", except " + knew.joined(separator: ", ") + ", who already knew them") + ". No one else says it.")
+        }
+
+        // 3. Paint.
+        let notes = groundedNotes(a, input: input, opening: opening, playerNarrates: playerNarrates, playerAsks: playerAsks)
+        var system = groundedSystem(a)
+        let card = Cards.briefing(a, pick: pick, memories: memories, extra: extra, notes: notes, moment: moment)
+        let lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
+        // The story's own last turns keep its voice and thread: as many of the last six as fit.
+        let budget = LLMService.contextBudget - maxOut - Self.safetyTokens
+        var used = Self.tokens(system) + Self.tokens(lead)
+        var kept: [StoryTurn] = []
+        let past = hidden ? a.transcript : Array(a.transcript.dropLast())
+        for t in past.suffix(6).reversed() {
+            var t = t
+            if t.text.count > 1400 { t.text = "…" + String(t.text.suffix(1400)) }
+            let cost = Self.tokens(t.text) + 8
+            if !kept.isEmpty, used + cost > budget { break }
+            kept.insert(t, at: 0)
+            used += cost
+        }
+        var history = kept.map { ChatTurn(role: $0.role == .player ? .user : .assistant, text: $0.text) }
+        if history.first?.role == .assistant { history.insert(ChatTurn(role: .user, text: "(The story begins.)"), at: 0) }
+        history.append(ChatTurn(role: .user, text: lead))
+        if a.nameless {
+            let told = nameTold(a)
+            system = Continuity.unnamed(system, in: a, playerTold: told)
+            history = history.map { ChatTurn(role: $0.role, text: Continuity.unnamed($0.text, in: a, playerTold: told)) }
+        }
+        stage = "The storyteller is writing"
+        a.gmWait = Date().timeIntervalSince(ticked)
+        if narrate { narrator.begin() }
+        var reply = ""
+        var interrupted = false
+        var presence: PresenceFilter? = nil
+        var redrawn = false
+        if !opening, !hidden {
+            let f = PresenceFilter(absent: absentPeople(a, input: input, plan: moment),
+                                   earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text))
+            if !f.idle { presence = f }
+        }
+        do {
+            for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
+                if stage != "" {
+                    stage = ""; thinkingSince = nil; forge?.close()
+                    if !narrate { ComputerSounds.shared.stopHum() }
+                }
+                if presence != nil {
+                    let ok = presence!.feed(piece)
+                    reply = presence!.accepted
+                    streaming = presence!.preview
+                    if narrate, !ok.isEmpty { narrator.feed(ok) }
+                } else {
+                    reply += piece
+                    streaming = reply
+                    if narrate { narrator.feed(piece) }
+                }
+            }
+            if presence != nil {
+                let ok = presence!.finish(restore: false)
+                reply = presence!.accepted
+                streaming = reply
+                if narrate, !ok.isEmpty { narrator.feed(ok) }
+                if presence!.gutted {
+                    // The check left almost nothing: the reply is written once more, with the reason in one line.
+                    let out = presence!.caught.map(\.name)
+                    var note = "(Write the reply again in 80 to 140 words. "
+                    if !out.isEmpty {
+                        note += out.joined(separator: " and ") + (out.count == 1 ? " is" : " are")
+                        note += " not part of this scene: do not show or quote them. "
+                    }
+                    note += "Stay with the player and whoever they are with. Use new sentences, none from earlier replies.)"
+                    var again = history
+                    if let last = again.popLast() { again.append(ChatTurn(role: .user, text: last.text + "\n\n" + note)) }
+                    var second = PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text))
+                    let left = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let survived = left.split(whereSeparator: \.isWhitespace).count < 12 ? "" : left
+                    for try await piece in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
+                        let ok = second.feed(piece)
+                        streaming = (survived.isEmpty ? "" : survived + "\n\n") + second.preview
+                        if narrate, !ok.isEmpty { narrator.feed(ok) }
+                    }
+                    let tail = second.finish(restore: false)
+                    if narrate, !tail.isEmpty { narrator.feed(tail) }
+                    let more = second.accepted.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if more.split(whereSeparator: \.isWhitespace).count >= 20 {
+                        reply = (survived.isEmpty ? "" : survived + "\n\n") + more
+                        redrawn = true
+                    } else {
+                        let back = presence!.giveBack()
+                        reply = presence!.accepted
+                        if narrate, !back.isEmpty { narrator.feed(back) }
+                    }
+                    streaming = reply
+                }
+            }
+        } catch LLMError.interrupted {
+            interrupted = true
+        } catch {
+            if !Task.isCancelled { self.error = error.localizedDescription }
+        }
+        if interrupted {
+            narrator.stop()
+            ComputerSounds.shared.stopHum()
+            stage = ""
+            thinkingSince = nil
+            streaming = ""
+            adventure = snapshot
+            interruptedTurn = (input, hidden, forceFinal)
+            return
+        }
+        if narrate { narrator.finish() }
+        if !narrate || !narrator.speaking { ComputerSounds.shared.stopHum() }
+        stage = ""
+        thinkingSince = nil
+        reply = Self.tidy(reply)
+        if !nameTold(a), !a.cast.contains(where: \.known) { reply = Self.dropName(a.playerName, from: reply) }
+        reply = Self.dropNameFromNarration(a.playerName, from: reply)
+        guard !reply.isEmpty, !Task.isCancelled else {
+            streaming = ""
+            adventure = snapshot
+            return
+        }
+        if let now = adventure, now.id == a.id { a.takeMemory(from: now) }
+        if opening { checkPronouns(&a, texts: [a.bible, reply]) }
+        settleClock(&a, reply: reply, opening: opening)
+        if !opening {
+            a.fixes.removeAll { $0.hasPrefix(Self.checked) }
+            a.fixes += continuitySlips(a, reply: reply).map { Self.checked + $0 }
+            for p in presence?.caught ?? [] {
+                a.fixes.append(Self.checked + "\(p.name) is not with the player: \(p.name) is \(Continuity.placed(p.at)) and stays out of the scene until the story shows them arriving.")
+            }
+        }
+        a.scene = Cards.sceneLine(a)
+
+        // Behind the scenes, for the story export: short, and every step shown.
+        var before: [String] = []
+        if !hidden {
+            if read == nil, !playerNarrates {
+                before.append("READ: " + (gmPlans ? "nothing usable came back; code settled the scene alone" : "off (planning is off)"))
+            } else if let r = read {
+                var l = "READ: to " + (r.to.isEmpty ? "nobody" : r.to) + " · " + (r.going.isEmpty ? "staying" : "going: " + r.going)
+                    + " · about: " + (r.about.isEmpty ? "nothing in particular" : r.about.joined(separator: ", "))
+                if !r.does.isEmpty { l += "\n  does: " + r.does }
+                if !r.answer.isEmpty { l += "\n  answer: " + r.answer }
+                if !r.beat.isEmpty { l += "\n  next: " + r.beat }
+                before.append(l)
+            } else {
+                before.append("READ: skipped (the player is narrating; their words are canon)")
+            }
+            if !lastRead.isEmpty { before.append("SETTLED IN CODE: " + lastRead) }
+        }
+        before.append("FETCHED:\n" + pick.why.map { "  - " + $0 }.joined(separator: "\n")
+                      + (memories.isEmpty ? "" : "\n" + memories.map { "  - Older moment: " + clip($0, 120) }.joined(separator: "\n")))
+        if !notes.isEmpty || !extra.isEmpty { before.append("NOTES: " + (extra.map { clip($0, 90) } + notes.map { clip($0, 90) }).joined(separator: " | ")) }
+        let turnTokens = kept.reduce(0) { $0 + Self.tokens($1.text) + 8 }
+        before.append("PROMPT: about \(Self.tokens(system) + Self.tokens(lead) + turnTokens) of \(LLMService.contextBudget) tokens"
+                      + " (rules and premise \(Self.tokens(system)), scene and cards \(Self.tokens(lead)), last \(kept.count) turns \(turnTokens)); \(maxOut) kept for the reply")
+        if let f = presence, !f.dropped.isEmpty {
+            var why: [String] = f.caught.map { "\($0.name) is \(Continuity.placed($0.at)), not with the player" }
+            if f.echoes > 0 { why.append("\(f.echoes) sentence\(f.echoes == 1 ? "" : "s") copied from earlier replies") }
+            if f.spokeForPlayer > 0 { why.append("the reply put words in the player's mouth") }
+            let cut = clip(f.dropped.joined().trimmingCharacters(in: .whitespacesAndNewlines), 300)
+            before.append("REPLY CHECK: " + (redrawn ? "too little was left, so the reply was written again. Left out first: " + cut
+                                                : why.joined(separator: "; ") + ". Left out: " + cut))
+        }
+        a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.joined(separator: "\n")))
+        streaming = ""
+        if a.left == 0 && !hidden { a.ended = true }
+        adventure = a
+        undoSnapshot = hidden ? nil : snapshot
+        library.save(a)
+        refreshVocabulary()
+
+        // 4. File, while the reply is read aloud. Small, and dropped if the player is quicker.
+        let exchange = "THE PLAYER: " + input + "\n\nTHE STORY: " + reply
+        memoryJob = Task {
+            await self.waitForVoice()
+            if !hidden { await self.remember(exchange) }
+            await self.fileTurn()
+        }
+        if !a.ended && (!narrate || !narrator.speaking) {
+            busy = false
+            listenIfReady()
+        }
+    }
+
+    /// The storyteller's standing rules for the grounded engine: short rules, the premise, the
+    /// feeling, and the player's own limits. No bible, no notes, no lists: the cards come per turn.
+    private func groundedSystem(_ a: Adventure) -> String {
+        var s = Prompts.groundedRules
+        if a.nameless { s += "\n- " + Prompts.namelessRule }
+        if !a.playerName.isEmpty, !a.nameless || nameTold(a) {
+            s += "\n- The player character is \(a.playerName), and that is \"you\". The name appears only in other characters' dialogue."
+        }
+        s += "\n\n" + Prompts.feelingRules(a.setup.feeling)
+        let age = PlayerDetails.saved.age
+        if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
+        var limits: [String] = []
+        if !a.setup.avoid.isEmpty { limits.append("The player asked: " + a.setup.avoid) }
+        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery.") }
+        if !limits.isEmpty { s += "\n\n## SET-UP LIMITS (never break them)\n" + limits.map { "- " + $0 }.joined(separator: "\n") }
+        let premise = Cards.premise(a)
+        if !premise.isEmpty { s += "\n\n## THE STORY\n" + premise }
+        let pinned = a.lore.filter { $0.byPlayer && !$0.isPlayer }
+        if !pinned.isEmpty {
+            s += "\n\n## FACTS THE PLAYER SET (always true)\n" + pinned.prefix(6).map { "- \($0.name): " + clip($0.desc, 200) }.joined(separator: "\n")
+        }
+        return s
+    }
+
+    /// At most a few notes for this reply, only where they apply: the opening, a question, the
+    /// player moving, narrating, the end of the session, and phrases that keep coming back.
+    private func groundedNotes(_ a: Adventure, input: String, opening: Bool, playerNarrates: Bool, playerAsks: Bool) -> [String] {
+        if opening {
+            let me = a.lore.first(where: \.isPlayer)?.desc ?? ""
+            return [
+                "THIS IS THE OPENING SCENE, and it may run to about 200 words. The listener cannot see anything yet: first tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and who is there, then paint it with sound, smell, light and texture.",
+                me.isEmpty ? "Make clear who the player is and why they are here." : "Make clear who the player is (\(clip(me, 160))) and why they are here.",
+                "Set up the feeling (" + (a.setup.feeling.isEmpty ? "the one the player came for" : a.setup.feeling) + ") from the first lines, and end on someone turned to the player.",
+            ]
+        }
+        var notes: [String] = []
+        if playerNarrates {
+            notes.append("THE PLAYER IS NARRATING: their passage is canon. Do not retell it; continue where it ends, in their voice. Keep it short.")
+        } else if Continuity.moves(input) {
+            notes.append("THE PLAYER IS MOVING: show them going where they said and what they find when they arrive. Nobody left behind comes along.")
+        }
+        if playerAsks { notes.append("THE PLAYER ASKED A QUESTION: answer it in the opening lines, plainly and concretely.") }
+        if a.left == 0 {
+            let feeling = a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling
+            notes.append("THIS IS THE FINAL REPLY: bring it to a storybook ending that lands \(feeling), right where the player is and with whoever is there, using only what is already in the story. Do not ask what they do next.")
+        } else if a.left == 1 {
+            notes.append("One reply left after this: start bringing it home.")
+        } else if (a.left ?? 99) <= 3 && secsLeft(a, live: false) < Double(a.minutes) * 60 * 0.4 {
+            notes.append("The session is nearly over: no new threads.")
+        }
+        let repeats = repeatedPhrases(a)
+        if !repeats.isEmpty { notes.append("Avoid these phrases from recent replies: " + repeats.joined(separator: ", ")) }
+        return notes
+    }
+
+    /// File: one small call notes what the last reply added (lasting facts, the things in the place,
+    /// what the player has, what people are doing), and names a new place. Code checks every entry
+    /// against the story's own words before it goes on a card, and keeps the place, who is where and
+    /// the clock itself.
+    private func fileTurn() async {
+        guard !Task.isCancelled, let start = adventure, let last = start.transcript.last, last.role == .gm else { return }
+        let playerSaid = start.transcript.dropLast().last.flatMap { $0.role == .player ? $0.text : nil } ?? ""
+        let me = Cards.first(start.playerName).lowercased()
+        let hereNames = start.whereabouts.filter { w in
+            let f = Cards.first(w.name).lowercased()
+            return w.here != false && f != me && f != "you"
+        }.map(\.name)
+        let present = start.cast.filter { c in hereNames.contains { Cards.first($0).caseInsensitiveCompare(Cards.first(c.name)) == .orderedSame } }
+        var prompt = Prompts.fileTurn
+        prompt += "\n\nPLACE: " + (start.location.isEmpty ? "(not named yet: the player just went somewhere new)" : start.location)
+        prompt += "\nPEOPLE HERE: " + (hereNames.isEmpty ? "(nobody)" : hereNames.joined(separator: "; "))
+        prompt += "\nYOU HAVE: " + (start.carrying.isEmpty ? "(nothing listed)" : start.carrying.joined(separator: "; "))
+        let known = present.flatMap { Cards.facts(about: $0, in: start).suffix(3) } + start.facts.suffix(3)
+        if !known.isEmpty { prompt += "\n\nALREADY KNOWN (do not repeat):\n" + Array(Set(known)).prefix(8).map { "- " + clip($0, 140) }.joined(separator: "\n") }
+        if !playerSaid.isEmpty { prompt += "\n\nTHE PLAYER: " + clip(playerSaid, 500) }
+        prompt += "\n\nTHE STORY: " + clip(last.text, 1400) + "\n\nThe form:"
+        let raw = (try? await llm.complete(system: nil, prompt: prompt,
+                                           options: .init(maxTokens: 320, temperature: 0.3, repetitionPenalty: 1.1,
+                                                          grammar: JSONGrammar.filing(cast: start.cast.map(\.name))))) ?? ""
+        guard !Task.isCancelled, var now = adventure, now.id == start.id else { return }
+        let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+        var filed: [String] = []
+        var refused: [String] = []
+        // Every entry must be in the story's own words (the bible and everything said so far).
+        let story = Continuity.wordSet(start.bible + " " + start.transcript.map(\.text).joined(separator: " "))
+        func list(_ k: String, cap: Int) -> [String] {
+            var out: [String] = []
+            for item in ((m[k] as? [Any]) ?? []) {
+                guard let v = (item as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), v.count > 3, !Self.echoesPrompt(v),
+                      !Self.brokenEntry(v) else { continue }
+                if !out.contains(where: { Self.similar($0, v) }) { out.append(v) }
+                if out.count >= cap { break }
+            }
+            return out
+        }
+        func checked(_ entries: [String], share: Double = 0.6) -> [String] {
+            entries.filter { e in
+                if Continuity.grounded(e, in: story, share: share) { return true }
+                refused.append(e)
+                return false
+            }
+        }
+        // Facts: filed under the person they name (the role a nameless story uses becomes the name).
+        let roles = Continuity.hiddenNames(start)
+        func named(_ f: String) -> String {
+            var f = f
+            for r in roles {
+                f = f.replacingOccurrences(of: "\"" + r.role + "\"", with: r.name, options: .caseInsensitive)
+                if f.lowercased().hasPrefix(r.role.lowercased() + " ") { f = r.name + f.dropFirst(r.role.count) }
+            }
+            return f.replacingOccurrences(of: "\"", with: "").trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
+        }
+        let people = start.cast.map(\.name) + [start.playerName]
+        let fresh = checked(list("new_facts", cap: 2).map(named), share: 0.5).compactMap { Continuity.lastingFact($0, people: people) }
+        var facts = now.facts
+        for f in fresh where !facts.contains(where: { Self.similar($0, f) }) {
+            if let i = facts.firstIndex(where: { Self.sameOpening($0, f) }) { facts[i] = clip(f, 200) } else { facts.append(clip(f, 200)) }
+            let under = start.cast.first { Cards.mentions($0, in: f) }?.name ?? (f.hasPrefix("You") ? "you" : "the world")
+            filed.append("Fact, under \(under): " + f)
+        }
+        // The store can hold many facts now: only the ones a moment needs are ever sent.
+        if facts.count > 40 { facts = Array(facts.prefix(6) + facts.suffix(34)) }
+        now.facts = facts
+        // A new place, named by the story: when the player is on the move (code cleared the place),
+        // when no place is known yet, or when the read missed a move the exchange plainly shows
+        // (going somewhere, and the reply names where). It gets its own card from the reply.
+        if let placeSaid = (m["place"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), placeSaid.count > 2, !Self.echoesPrompt(placeSaid) {
+            let loc = Self.placeName(placeSaid, known: now.lore.filter { $0.kind == .place }.map(\.name) + now.places)
+            let missed = !now.location.isEmpty && loc.caseInsensitiveCompare(now.location) != .orderedSame && Continuity.moves(playerSaid)
+                && Continuity.leavesPlace(playerSaid + " " + last.text) && Continuity.mentions(place: loc, in: last.text)
+            if now.location.isEmpty || missed {
+                let from = now.location.isEmpty ? placeBeforeTurn : now.location
+                if missed {
+                    // Whoever the reply does not show coming along stays where the player left them.
+                    for i in now.whereabouts.indices where now.whereabouts[i].here != false {
+                        let f = Cards.first(now.whereabouts[i].name)
+                        if f.lowercased() == me || f.lowercased() == "you" || last.text.contains(f) { continue }
+                        now.whereabouts[i].here = false
+                        now.whereabouts[i].engaged = false
+                        now.whereabouts[i].leftAt = from
+                    }
+                    filed.append("Move the read missed: " + from + " to " + loc)
+                }
+                now.visit(loc, from: from)
+                now.location = loc
+                now.things = now.placeThings[loc.lowercased()] ?? []
+                if !now.lore.contains(where: { $0.kind == .place && $0.name.caseInsensitiveCompare(loc) == .orderedSame }) {
+                    let look = PresenceFilter.sentences(last.text).filter { !$0.contains("\"") && !$0.contains("“") }.prefix(2).joined(separator: " ")
+                    _ = addLore(&now, LoreEntry(name: loc, kind: .place, desc: clip(look.trimmingCharacters(in: .whitespacesAndNewlines), 240)))
+                    filed.append("New place card: " + loc)
+                } else {
+                    filed.append("Place: " + loc)
+                }
+            }
+        }
+        // What the player has: new things are added; a thing leaves only when the moment shows it going.
+        let held = checked(list("carrying", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) })
+        if !held.isEmpty {
+            let said = (playerSaid + " " + last.text).lowercased()
+            let gone = #"\b(give|gives|gave|given|hand|hands|handed|pay|pays|paid|sell|sold|eat|eats|ate|eaten|drink|drank|finish|finished|drop|dropped|leave|left|put|puts|set|sets|place|places|placed|slide|slides|slid|lose|lost|toss|tossed|swap|swapped|trade|traded)\b"#
+            let parting = said.range(of: gone, options: .regularExpression) != nil
+            var ledger = held
+            for old in start.carrying where !held.contains(where: { Self.similar($0, old) }) {
+                let noun = old.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
+                if parting, noun.count >= 3, said.contains(noun) { filed.append("Gone from your hands: " + old); continue }
+                ledger.append(old)
+            }
+            for h in held where !start.carrying.contains(where: { Self.similar($0, h) }) { filed.append("You have: " + h) }
+            now.carrying = Array(ledger.prefix(8))
+        }
+        // The things in the place: only what this reply showed, kept with the place.
+        let shown = Continuity.wordSet(last.text)
+        let around = checked(list("things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
+            if Continuity.grounded(e, in: shown) { return true }
+            refused.append(e)
+            return false
+        }
+        if !around.isEmpty {
+            let key = now.location.lowercased()
+            let had = key.isEmpty ? now.things : (now.placeThings[key] ?? [])
+            let merged = Array((around + had.filter { o in !around.contains { Self.similar($0, o) } }).prefix(8))
+            now.things = merged
+            if !key.isEmpty { now.placeThings[key] = merged }
+            let added = around.filter { n in !had.contains { Self.similar($0, n) } }
+            if !added.isEmpty { filed.append("Props here: " + added.joined(separator: "; ")) }
+        }
+        // What people are doing now (where they are is kept in code).
+        for d in ((m["people"] as? [[String: Any]]) ?? []) {
+            guard let name = (d["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty,
+                  let doing = (d["doing"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), doing.count > 3, !Self.echoesPrompt(doing),
+                  let i = now.whereabouts.firstIndex(where: { Cards.first($0.name).caseInsensitiveCompare(Cards.first(name)) == .orderedSame }) else { continue }
+            now.whereabouts[i].doing = clip(doing, 100)
+            filed.append(now.whereabouts[i].name + " is " + clip(doing, 60))
+        }
+        now.scene = Cards.sceneLine(now)
+        if let i = now.transcript.firstIndex(where: { $0.id == last.id }) {
+            var note = "FILED: " + (filed.isEmpty ? "nothing new" : "\n" + filed.map { "  - " + $0 }.joined(separator: "\n"))
+            if !refused.isEmpty { note += "\nREFUSED (not in the story's words): " + refused.prefix(6).joined(separator: "; ") }
+            if raw.isEmpty { note = "FILED: no answer came back" }
+            now.transcript[i].after = note
+        }
+        now.checks = Self.worldChanges(from: start, to: now, refused: refused, named: namesThisTurn)
+        adventure = now
+        library.save(now)
+    }
+
     /// One planning call; keeps only the plan lines, in case the model wanders into the story itself.
     private func planLines(_ prompt: String) async -> [String] {
         let sink = ThoughtSink()
@@ -1416,7 +1919,7 @@ final class StoryEngine {
         }
         let sink = ThoughtSink()
         let reply = await think(prompt, quickTokens: Self.reviewTokens, deepTokens: Self.reviewDeepTokens, temperature: 0.3, thoughts: sink,
-                                grammar: JSONGrammar.review(cast: start.cast.map(\.name), grounded: grounded))
+                                grammar: JSONGrammar.review(cast: start.cast.map(\.name)))
         guard !Task.isCancelled, var now = adventure, now.id == start.id else { return }
         // A review that loops or runs out of room never closes its JSON: keep what it finished. Then
         // the shape is checked: lists that came back as one string are split, and anything still
@@ -1501,35 +2004,6 @@ final class StoryEngine {
             fixes.append("Still unanswered, answer it plainly next: " + clip(u, 300))
         }
         now.fixes = fixes + now.fixes.filter { $0.hasPrefix(Self.checked) }
-        if grounded {
-            // What the memory pass used to find out. The place changes only when the exchange itself
-            // names the new one.
-            let exchange = (start.transcript.last(where: { $0.role == .player })?.text ?? "") + " " + lastReply
-            if let raw = text("place") {
-                let loc = Self.placeName(raw, known: now.lore.filter { $0.kind == .place }.map(\.name) + now.places)
-                // A new place is taken when the exchange names it, or when the player went somewhere
-                // and the exchange mentions it by its telling word ("We enter the theatre").
-                let went = (m["left"] as? Bool) == true || Continuity.moves(exchange) || Continuity.leavesPlace(exchange)
-                if now.location.isEmpty || loc.caseInsensitiveCompare(now.location) == .orderedSame || Continuity.names(place: loc, in: exchange)
-                    || (went && Continuity.mentions(place: loc, in: exchange)) {
-                    let from = now.location.isEmpty ? placeBeforeTurn : now.location
-                    if loc.caseInsensitiveCompare(from) != .orderedSame {
-                        // A new place is a new scene: its own things (none until the story shows them).
-                        now.things = now.placeThings[loc.lowercased()] ?? []
-                    }
-                    now.visit(loc, from: from)
-                    now.location = loc
-                }
-            }
-            if let f = (m["feeling"] as? NSNumber)?.intValue ?? (m["feeling"] as? String).flatMap({ Int($0) }) {
-                now.mood = Mood(feeling: max(0, min(10, f)), enjoying: text("enjoying").map { clip($0, 80) } ?? "", leavingPlot: now.mood.leavingPlot)
-            }
-            for done in list("steps_done", cap: 3) {
-                if let i = now.beats.firstIndex(where: { !$0.done && ($0.text.localizedCaseInsensitiveContains(done) || done.localizedCaseInsensitiveContains($0.text)) }) {
-                    now.beats[i].done = true
-                }
-            }
-        }
         if let n = text("next") { now.nextMove = clip(n, 600) }
         if let sc = text("scene"), sc.count > 10 { now.scene = clip(sc, 320) }
         // The scene card's lists. What the player has is replaced whenever the review gives it (an
@@ -1774,8 +2248,7 @@ final class StoryEngine {
     /// The review's prompt; `scale` shrinks the long parts together when it must fit a smaller room.
     private func reviewPrompt(_ start: Adventure, scale: Double) -> String {
         func n(_ chars: Int) -> Int { Int(Double(chars) * scale) }
-        let update = grounded
-        var prompt = (update ? Prompts.reviewGrounded : Prompts.review) + "\n\nFEELING TO ACHIEVE: " + (start.setup.feeling.isEmpty ? "what the player came for" : start.setup.feeling)
+        var prompt = Prompts.review + "\n\nFEELING TO ACHIEVE: " + (start.setup.feeling.isEmpty ? "what the player came for" : start.setup.feeling)
         prompt += "\n\nSTORY BIBLE:\n" + clip(start.bible, n(1600))
         let limits = limitsText(start)
         if !limits.isEmpty { prompt += "\n\nSET-UP LIMITS:\n" + limits }
@@ -1796,11 +2269,6 @@ final class StoryEngine {
             if let next = start.roadmap.first(where: { $0.from > act.from }) { prompt += "\nAFTER THAT: " + next.goal }
         }
         if !start.goalProgress.isEmpty { prompt += "\nPROGRESS: " + start.goalProgress }
-        if update {
-            prompt += "\n\nPLACE BEFORE THIS REPLY: " + (start.location.isEmpty ? "(unnamed)" : start.location)
-            let steps = start.beats.filter { !$0.done }.map(\.text)
-            if !steps.isEmpty { prompt += "\nOPEN STORY STEPS: " + steps.prefix(4).joined(separator: "; ") }
-        }
         prompt += "\n\nRECENT TURNS (the last one is the reply to review):\n" + recentTurns(start, 3, each: n(700))
         return prompt
     }
@@ -2005,7 +2473,7 @@ final class StoryEngine {
     static func echoesPrompt(_ s: String) -> Bool {
         let probe = s.lowercased().trimmingCharacters(in: .whitespaces).prefix(32)
         guard probe.count >= 14 else { return false }
-        return Prompts.review.lowercased().contains(probe) || Prompts.reviewGrounded.lowercased().contains(probe) || Prompts.reviewKeyHelp.values.contains { $0.lowercased().contains(probe) }
+        return Prompts.review.lowercased().contains(probe) || Prompts.fileTurn.lowercased().contains(probe) || Prompts.readPlayer.lowercased().contains(probe) || Prompts.reviewKeyHelp.values.contains { $0.lowercased().contains(probe) }
     }
 
     /// Two lines that say nearly the same thing (most of their words shared).
@@ -2442,24 +2910,17 @@ final class StoryEngine {
         let roaming = !a.setup.simulator && a.mood.leavingPlot
         let calm = a.setup.simulator || happy || roaming
         var notes: [String] = []
-        // Focused: in the grounded engine, an ordinary reply is about what the player just said and
-        // did, and nothing else. The flourishes (a moment of awe, a payoff, a hook, someone's
-        // agenda) pull a small model away from the player, so they are left out.
-        let focus = grounded && !playerNarrates && !final
-        if focus {
-            notes.append("FOCUS ON THE PLAYER: the whole reply is about the player's message below. In this order: what the player does lands (the plan's THE PLAYER DOES), the person they are with responds to exactly that (the plan's ANSWER and THEN), and at most one short sentence of the room around that moment. Bring up no new topic, news or backstory. The player's message is everything the player says and does: never write more words or actions for the player.")
-        }
         if playerAsks {
             notes.append("THE PLAYER ASKED A QUESTION. Answer it first, in the opening lines, plainly and concretely: the person they are speaking to tells them, or they see it for themselves. No riddles or vague hints.")
         }
         notes += ["FEELING TO ACHIEVE: \(feeling). Make this reply deliver it."
             + ((a.mood.feeling ?? 10) < 5 ? " Last reading was \(a.mood.feeling ?? 0)/10, so lean into it harder." : "")]
-        if happy, !focus { notes.append("The player is enjoying this" + (a.mood.enjoying.isEmpty ? "" : " (\(a.mood.enjoying))") + ". No new complications or interruptions; deepen what is working.") }
+        if happy { notes.append("The player is enjoying this" + (a.mood.enjoying.isEmpty ? "" : " (\(a.mood.enjoying))") + ". No new complications or interruptions; deepen what is working.") }
         if roaming { notes.append("The player is leaving the plot behind. Let it go; make wherever they are worth being in.") }
 
         let played = a.elapsed / 60
         let phase = calm ? "savour" : played / Double(max(1, a.minutes)) < 0.5 ? "rising" : played / Double(max(1, a.minutes)) < 0.85 ? "peak" : "release"
-        if !focus, !(happy && phase == "savour") { notes.append("PACING: " + [
+        if !(happy && phase == "savour") { notes.append("PACING: " + [
             "rising": "momentum is building; keep things moving and curious.",
             "peak": "a high-intensity beat; force a decisive moment.",
             "release": "aftermath and breathing room; let consequences land.",
@@ -2468,7 +2929,7 @@ final class StoryEngine {
 
         if playerNarrates {
             notes.append("THE PLAYER IS NARRATING: their passage is canon. Do not retell it; continue where it ends, in their voice. Keep it short.")
-        } else if !final, !focus {
+        } else if !final {
             var pool = Prompts.director.keys.filter { k in
                 !((calm || wrap || playerAsks) && Prompts.disruptive.contains(k)) && !((playerAsks || a.setup.simulator || wrap) && k == "seed")
                     && turn - (a.lastDirector[k] ?? -99) >= 3
@@ -2498,14 +2959,12 @@ final class StoryEngine {
         } else if wrap {
             notes.append("WRAP-UP: the session is nearly over. Steer toward a payoff and an ending. No new threads.")
         }
-        if focus {
-            notes.append("End on the person the player is with, turned to the player and leaving room for them to answer. No menu of options.")
-        } else if !final && !playerNarrates {
+        if !final && !playerNarrates {
             // A calm scene is not broken into by a new arrival.
             notes.append(Prompts.endings.filter { !((calm || wrap) && $0 == Prompts.interruptingEnding) }.randomElement()!)
         }
         // The showrunner's agendas, acted out: someone pursues what they want, on screen.
-        if !focus, !a.isShort, !calm, !wrap, !playerNarrates, !playerAsks, let cast = a.notes?.cast, let c = cast.randomElement(), Double.random(in: 0..<1) < 0.6 {
+        if !a.isShort, !calm, !wrap, !playerNarrates, !playerAsks, let cast = a.notes?.cast, let c = cast.randomElement(), Double.random(in: 0..<1) < 0.6 {
             notes.append("Motive in action: \(c.name) wants \(c.wants)" + (c.fears.isEmpty ? "" : " and fears \(c.fears)")
                 + ". Show them pursuing it visibly in this reply (a choice, a lie, a favour, a closed door), even where it cuts against what the player wants.")
         }
@@ -2542,11 +3001,10 @@ final class StoryEngine {
             + "\nALREADY KNOWN: " + (known.isEmpty ? "(none)" : known)
             + "\nOPEN STORY STEPS: " + (steps.isEmpty ? "(none)" : steps)
             + "\n\nLATEST EXCHANGE\n" + exchange
-        // The grounded engine has one call after a reply (the update, in `review`), which also finds
-        // the place, the mood and the story steps done. Here only the housekeeping remains: names
-        // the story has revealed, and folding old turns into chapters.
+        // The grounded engine files each reply itself (`fileTurn`). Here only the housekeeping
+        // remains for it: names the story has revealed, and folding old turns into chapters.
         var m: [String: Any] = [:]
-        if !(grounded && gmPlans) {
+        if !grounded {
             guard let reply = try? await llm.complete(system: nil, prompt: prompt, options: .init(maxTokens: 350, temperature: 0.3, repetitionPenalty: 1.12,
                                                                                              grammar: JSONGrammar.memory)),
                   let parsed = JSONExtract.object(reply) else { return }
