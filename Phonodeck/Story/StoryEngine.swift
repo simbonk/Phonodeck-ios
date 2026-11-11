@@ -1135,7 +1135,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-10s"
+    static let build = "build 2026-11-10t"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1556,7 +1556,17 @@ final class StoryEngine {
             }
             now.carrying = Array(ledger.prefix(8))
         }
-        let around = checked(items("things", cap: 8))
+        var around = checked(items("things", cap: 8))
+        // On the turn the player arrives somewhere, the props must come from this reply: the update
+        // tends to list the room they just left ("a single lamp; wet floorboards" in the hotel).
+        if now.location.caseInsensitiveCompare(start.location) != .orderedSame {
+            let fresh = Continuity.wordSet(lastReply)
+            around = around.filter { e in
+                if Continuity.grounded(e, in: fresh) { return true }
+                refused.append(e)
+                return false
+            }
+        }
         if !around.isEmpty {
             now.things = around
             // Each place keeps its own things: the newest first, the older ones it already had after.
