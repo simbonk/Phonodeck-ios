@@ -51,8 +51,33 @@ final class EnginePack: @unchecked Sendable {
         var error: String?
     }
 
-    /// Runs the file in a fresh JavaScriptCore context and reads `PhonodeckEngine` from it.
+    /// Files that ran too long once are never run again (by their text).
+    private static var stuck = Set<Int>()
+    private static let stuckLock = NSLock()
+
+    /// Runs the file in a fresh JavaScriptCore context and reads `PhonodeckEngine` from it. A file
+    /// that doesn't finish within a few seconds (an endless loop) is given up on instead of freezing
+    /// the app, and never run again.
     static func parse(_ source: String) -> Parsed {
+        let key = source.hashValue
+        stuckLock.lock(); let known = stuck.contains(key); stuckLock.unlock()
+        if known { var p = Parsed(); p.error = "it ran too long and was stopped."; return p }
+        var result: Parsed?
+        let done = DispatchSemaphore(value: 0)
+        let worker = Thread {
+            result = evaluate(source)
+            done.signal()
+        }
+        worker.stackSize = 4 << 20
+        worker.start()
+        if done.wait(timeout: .now() + 4) == .timedOut {
+            stuckLock.lock(); stuck.insert(key); stuckLock.unlock()
+            var p = Parsed(); p.error = "it ran too long and was stopped."; return p
+        }
+        return result ?? Parsed()
+    }
+
+    private static func evaluate(_ source: String) -> Parsed {
         var p = Parsed()
         guard let ctx = JSContext() else { p.error = "JavaScript isn't available."; return p }
         var thrown: String?
@@ -179,9 +204,11 @@ final class EnginePack: @unchecked Sendable {
     /// newest version on the phone, it is saved as the next version; the one in use stays in use
     /// until the player picks another. Returns what happened, in a sentence.
     static func check() async -> String {
-        guard let url = URL(string: sourceURL.trimmingCharacters(in: .whitespaces)), url.scheme?.hasPrefix("http") == true else {
+        guard let url = URL(string: sourceURL.trimmingCharacters(in: .whitespaces)), url.host != nil else {
             return "That address doesn't look right."
         }
+        // Only https, so nobody between the phone and the server can swap the file on the way.
+        guard url.scheme?.lowercased() == "https" else { return "The address has to start with https://." }
         var req = URLRequest(url: url)
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.timeoutInterval = 20
