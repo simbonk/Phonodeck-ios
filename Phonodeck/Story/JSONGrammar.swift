@@ -93,6 +93,7 @@ enum JSONGrammar {
             "root ::= \"{\" ws " + [
                 key("to") + " who",
                 key("going") + " where",
+                key("new_place") + " s40",
                 key("look") + " looks",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("who", cast + ["nobody"]),
@@ -102,6 +103,7 @@ enum JSONGrammar {
             cardNames.isEmpty ? "" : "lname ::= " + cardNames.map { "\"" + $0 + "\"" }.joined(separator: " | "),
             personNames.isEmpty ? "" : "pname ::= " + personNames.map { "\"" + $0 + "\"" }.joined(separator: " | "),
             #"topic ::= [a-zA-Z0-9 ,'-]{3,40}"#,
+            capped("s40", 40),
             common,
         ].filter { !$0.isEmpty }.joined(separator: "\n")
     }
@@ -156,6 +158,14 @@ enum JSONGrammar {
             common,
         ].joined(separator: "\n")
     }
+
+    /// Building a place the player arrives in (see `Prompts.buildPlace`).
+    static let place = [
+        "root ::= \"{\" ws " + key("desc") + " s300 \",\" ws " + key("things") + " items ws \"}\"",
+        #"items ::= "[" ws ( s60 ( "," ws s60 ){0,4} )? ws "]""#,
+        capped("s300", 300), capped("s60", 60),
+        common,
+    ].joined(separator: "\n")
 
     /// Coming back to a place after a long time away (see `Prompts.awayQuestion`): who is still
     /// there, picked from the people left there, and up to two ordinary changes.
