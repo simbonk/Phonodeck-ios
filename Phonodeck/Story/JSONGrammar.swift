@@ -74,56 +74,101 @@ enum JSONGrammar {
         }
     }
 
-    /// The grounded engine's filing after a reply (see `Prompts.fileTurn`): only what the moment
-    /// added. People are picked from the story's named cast.
-    static func filing(cast: [String]) -> String {
-        let names = safe(cast, max: 40)
-        let who = names.isEmpty ? "who ::= s40" : "who ::= " + names.map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
-        return [
-            "root ::= \"{\" ws " + [
-                key("place") + " s60",
-                key("new_facts") + " facts",
-                key("things") + " items",
-                key("carrying") + " items",
-                key("people") + " people",
-            ].joined(separator: " \",\" ws ") + " ws \"}\"",
-            #"facts ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
-            #"items ::= "[" ws ( s60 ( "," ws s60 ){0,5} )? ws "]""#,
-            #"people ::= "[" ws ( person ( "," ws person ){0,2} )? ws "]""#,
-            "person ::= \"{\" ws " + [key("name") + " who", key("doing") + " s100"].joined(separator: " \",\" ws ") + " ws \"}\"",
-            who,
-            capped("s40", 40), capped("s60", 60), capped("s100", 100), capped("s160", 160),
-            common,
-        ].joined(separator: "\n")
-    }
-
     /// One of a fixed set of answers, as a JSON string. Names that can't be spelled safely in a
     /// grammar are left out.
     private static func choice(_ name: String, _ options: [String]) -> String {
         return name + " ::= " + safe(options, max: 60).map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
     }
 
-    /// The reading of the player's new message (see `Prompts.readPlayer`): who they turn to and
-    /// where they go are picked from what exists, never written freely.
-    static func intent(cast: [String], places: [String], about: [String]) -> String {
-        let cards = safe(about, max: 60)
+    /// The first half of the read (see `Prompts.lookQuestion`): who the player turns to and where
+    /// they go, picked from what exists, and up to three lookups from the fixed list in `Looks`.
+    static func look(cast: [String], places: [String], cards: [String], people: [String]) -> String {
+        let cardNames = safe(cards, max: 60)
+        let personNames = safe(people, max: 40)
+        var looks: [String] = Looks.Kind.allCases.filter { !$0.takesTarget }.map { #""\""# + $0.rawValue + #"\"""# }
+        if !cardNames.isEmpty { looks.append(#""\"look at " lname "\"""#) }
+        if !personNames.isEmpty { looks.append(#""\"where is " pname "\"""#) }
+        looks.append(#""\"remember " topic "\"""#)
         return [
             "root ::= \"{\" ws " + [
                 key("to") + " who",
                 key("going") + " where",
-                key("about") + " about",
-                key("does") + " s200",
-                key("answer") + " s240",
-                key("beat") + " s240",
+                key("look") + " looks",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("who", cast + ["nobody"]),
             choice("where", ["staying"] + places + ["somewhere new"]),
-            cards.isEmpty ? #"about ::= "[" ws "]""# : #"about ::= "[" ws ( card ( "," ws card ){0,2} )? ws "]""#,
-            cards.isEmpty ? "" : choice("card", cards),
-            capped("s240", 240),
-            capped("s200", 200),
+            #"looks ::= "[" ws ( lk ( "," ws lk ){0,2} )? ws "]""#,
+            "lk ::= " + looks.joined(separator: " | "),
+            cardNames.isEmpty ? "" : "lname ::= " + cardNames.map { "\"" + $0 + "\"" }.joined(separator: " | "),
+            personNames.isEmpty ? "" : "pname ::= " + personNames.map { "\"" + $0 + "\"" }.joined(separator: " | "),
+            #"topic ::= [a-zA-Z0-9 ,'-]{3,40}"#,
+            common,
+        ].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    /// The second half of the read (see `Prompts.planQuestion`): the moment, planned from what was
+    /// looked up.
+    static let plan = [
+        "root ::= \"{\" ws " + [
+            key("does") + " s200",
+            key("answer") + " s240",
+            key("beat") + " s240",
+        ].joined(separator: " \",\" ws ") + " ws \"}\"",
+        capped("s240", 240),
+        capped("s200", 200),
+        common,
+    ].joined(separator: "\n")
+
+    /// One short answer after a reply (see `Prompts.rebuild`): a list of up to `n` strings of at
+    /// most `chars` characters, under one key.
+    static func strings(_ k: String, max n: Int, chars: Int) -> String {
+        [
+            "root ::= \"{\" ws " + key(k) + " items ws \"}\"",
+            n <= 1 ? #"items ::= "[" ws ( s )? ws "]""# : #"items ::= "[" ws ( s ( "," ws s ){0,\#(n - 1)} )? ws "]""#,
+            capped("s", chars),
             common,
         ].joined(separator: "\n")
+    }
+
+    /// One short free answer under one key.
+    static func text(_ k: String, chars: Int) -> String {
+        ["root ::= \"{\" ws " + key(k) + " s ws \"}\"", capped("s", chars), common].joined(separator: "\n")
+    }
+
+    /// Up to `n` names picked from a fixed list, under one key ([] for none).
+    static func names(_ k: String, from options: [String], max n: Int) -> String {
+        let ok = safe(options, max: 60)
+        guard !ok.isEmpty else { return strings(k, max: 0, chars: 1).replacingOccurrences(of: "( s )?", with: "") }
+        return [
+            "root ::= \"{\" ws " + key(k) + " items ws \"}\"",
+            n <= 1 ? #"items ::= "[" ws ( nm )? ws "]""# : #"items ::= "[" ws ( nm ( "," ws nm ){0,\#(n - 1)} )? ws "]""#,
+            choice("nm", ok),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// One choice from a fixed list, under one key, plus a short free name (for a new place).
+    static func pickOne(_ k: String, from options: [String], free: String, chars: Int) -> String {
+        [
+            "root ::= \"{\" ws " + key(k) + " opt \",\" ws " + key(free) + " s ws \"}\"",
+            choice("opt", options),
+            capped("s", chars),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// Coming back to a place after a long time away (see `Prompts.awayQuestion`): who is still
+    /// there, picked from the people left there, and up to two ordinary changes.
+    static func away(people: [String]) -> String {
+        let ok = safe(people, max: 60)
+        return [
+            "root ::= \"{\" ws " + key("still_here") + " here \",\" ws " + key("changes") + " items ws \"}\"",
+            ok.isEmpty ? #"here ::= "[" ws "]""# : #"here ::= "[" ws ( nm ( "," ws nm ){0,5} )? ws "]""#,
+            ok.isEmpty ? "" : choice("nm", ok),
+            #"items ::= "[" ws ( s ( "," ws s )? )? ws "]""#,
+            capped("s", 140),
+            common,
+        ].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     /// The memory pass (see `Prompts.memory`).

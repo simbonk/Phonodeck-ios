@@ -6,9 +6,9 @@ import Foundation
 /// and faction (the lore), the facts, who is where, what the player has and what each place holds.
 /// Facts are filed under the card they are about by name, the way the World panel shows them.
 ///
-/// Each reply the storyteller sees only the cards the player's action touches: the place they are
-/// in, the person they are dealing with (with that person's facts), one line for anyone else in
-/// the room, and whatever the player's message is about. Everything else stays in the app.
+/// Each reply the storyteller sees only the place, whoever the player is facing (their full card),
+/// the names of anyone else in the room, and what the read looked up (see `Looks`). Everything
+/// else stays in the app until a lookup asks for it.
 enum Cards {
     /// What was fetched for one reply, and why (the "why" lines go into the story export).
     struct Pick {
@@ -20,16 +20,12 @@ enum Cards {
         var background: [String] = []
         /// People somewhere else whom the player's message mentions.
         var away: [String] = []
-        /// Other cards the message is about (a place, an item, someone not placed yet).
-        var about: [String] = []
-        /// Facts that are not about any person fetched above, picked for this moment.
+        /// The world's ground facts (the weather, the year, the city).
         var facts: [String] = []
         /// The notable things in the place.
         var props: [String] = []
-        /// Every fact fetched (people's included), for the read's KNOWN list.
+        /// Every fact fetched (people's included).
         var known: [String] = []
-        /// The message reaches for something with no card: older moments are searched.
-        var recall = false
         /// One line per fetched card: what it was and why it was fetched.
         var why: [String] = []
     }
@@ -130,128 +126,79 @@ enum Cards {
         return s.joined(separator: "\n")
     }
 
-    /// Picks the cards for this moment. `about` is what the read said the message is about;
-    /// `opening` paints the whole room, so everyone placed there gets their full card.
-    static func pick(_ a: Adventure, input: String, about: [String], opening: Bool) -> Pick {
+    /// Picks what the storyteller sees without asking: the place, whoever the player is facing
+    /// (their full card), and the names of anyone else in the room, like the edge of an eye's view.
+    /// Everything else comes only through a lookup (see `Looks`). `opening` paints the whole room,
+    /// so everyone placed there gets their full card; `around` is set when a lookup asked what is
+    /// in the place.
+    static func pick(_ a: Adventure, input: String, opening: Bool, around: Bool) -> Pick {
         var p = Pick()
         let me = first(a.playerName).lowercased()
-        var fetched: [LoreEntry] = []
 
         // The place.
         if !a.location.isEmpty {
-            let card = placeCard(a)
-            let desc: String = card?.desc ?? ""
-            p.place = desc.isEmpty ? a.location : a.location + ": " + clip(desc, 260)
-            p.why.append(desc.isEmpty ? "Place card: \(a.location) (no description yet)" : "Place card: \(a.location)")
-            if let card { fetched.append(card) }
+            let desc: String = placeCard(a)?.desc ?? ""
+            p.place = desc.isEmpty ? a.location : a.location + ": " + clip(desc, 200)
+            p.why.append(desc.isEmpty ? "Place: \(a.location) (no description yet)" : "Place card: \(a.location)")
         } else {
             p.why.append("Place: not named yet (the player is on the move)")
         }
-        p.props = Array(props(a).prefix(6))
-        if !p.props.isEmpty { p.why.append("Props here: \(p.props.count)") }
+        if opening || around {
+            p.props = Array(props(a).prefix(6))
+            if !p.props.isEmpty { p.why.append("Props here: \(p.props.count)" + (opening ? " (opening)" : " (looked around)")) }
+        }
 
-        // The people: full cards for whoever the player is dealing with, one line for the rest of
-        // the room, and someone elsewhere only when the message mentions them.
+        // The people: a full card for whoever the player is facing, a name for the rest of the
+        // room, and someone elsewhere only when the message names them.
         let others = a.whereabouts.filter { w in
             let f = first(w.name).lowercased()
             return !f.isEmpty && f != me && f != "you"
         }
-        let dealing = others.contains { $0.here != false && $0.engaged == true }
         for w in others {
             let c = card(for: w, in: a)
             let name = c?.name ?? w.name
             let pr = pronoun(name, in: a)
             let spot = Continuity.placed(w.at) + (w.doing.isEmpty ? "" : ", " + w.doing)
             let named = c.map { mentions($0, in: input) } ?? input.lowercased().contains(first(w.name).lowercased())
-            if w.here != false, opening || !dealing || w.engaged == true || named {
+            if w.here != false, opening || w.engaged == true {
                 let role: String = c?.role ?? ""
                 var line: String = name
                 if !role.isEmpty { line += " (\(role))" }
                 if !pr.isEmpty { line += ", " + pr }
-                if let c, !c.desc.isEmpty { line += ": " + clip(c.desc, 240) }
-                line += " Now: " + clip(spot, 140) + "."
-                let theirs = c.map { Array(facts(about: $0, in: a).suffix(4)) } ?? []
+                if let c, !c.desc.isEmpty { line += ": " + clip(c.desc, 200) }
+                line += " Now: " + clip(spot, 120) + "."
+                let theirs = c.map { Array(facts(about: $0, in: a).suffix(3)) } ?? []
                 if !theirs.isEmpty { line += " Known: " + theirs.map { clip($0, 150) }.joined(separator: " ") }
                 p.with.append(line)
                 p.known += theirs
-                if let c { fetched.append(c) }
-                let reason = opening ? "in the opening scene" : w.engaged == true ? "you are dealing with them" : named ? "your message names them" : "in the room with you"
-                p.why.append("\(name): full card, \(reason) (\(theirs.count) fact\(theirs.count == 1 ? "" : "s"))")
+                p.why.append("\(name): full card, " + (opening ? "in the opening scene" : "you are facing them") + " (\(theirs.count) fact\(theirs.count == 1 ? "" : "s"))")
             } else if w.here != false {
-                let tag: String = pr.isEmpty ? "" : " (\(pr))"
-                p.background.append("\(name)\(tag): \(clip(spot, 100))")
-                p.why.append("\(name): one line, in the background")
+                p.background.append(pr.isEmpty ? name : "\(name) (\(pr))")
+                p.why.append("\(name): name only, at the edge of view")
             } else if named {
                 p.away.append("\(name) is \(Continuity.placed(w.at)), not here: they can be talked about, not seen or heard.")
-                if let c { fetched.append(c) }
-                p.why.append("\(name): elsewhere, mentioned in your message")
+                p.why.append("\(name): elsewhere, named in your message")
             }
         }
 
-        // Whatever the message is about: what the read picked, and any card the message names.
-        var wanted = about
-        for e in a.lore where !e.isPlayer && !fetched.contains(where: { $0.id == e.id }) {
-            let hit = e.kind == .person ? mentions(e, in: input) : Continuity.names(place: e.name, in: input)
-            if hit, !wanted.contains(where: { $0.caseInsensitiveCompare(e.name) == .orderedSame }) { wanted.append(e.name) }
-        }
-        for w in wanted.prefix(4) {
-            if let e = a.lore.first(where: { $0.name.caseInsensitiveCompare(w) == .orderedSame && !$0.isPlayer }) {
-                guard !fetched.contains(where: { $0.id == e.id }) else { continue }
-                fetched.append(e)
-                let theirs = Array((e.kind == .person ? facts(about: e, in: a) : a.facts.filter { Continuity.names(place: e.name, in: $0) }).suffix(2))
-                let kind: String = e.kind == .person && !e.role.isEmpty ? e.role : e.kind.rawValue
-                var line: String = "\(e.name) (\(kind))"
-                if !e.desc.isEmpty { line += ": " + clip(e.desc, 220) }
-                if !theirs.isEmpty { line += " Known: " + theirs.map { clip($0, 150) }.joined(separator: " ") }
-                if e.kind == .person, let spot = a.whereabouts.first(where: { card(for: $0, in: a)?.id == e.id }), spot.here == false {
-                    line += " (Not here: " + Continuity.placed(spot.at) + ".)"
-                }
-                p.about.append(line)
-                p.known += theirs
-                p.why.append("\(e.name): \(e.kind.rawValue) card, your message is about it")
-            } else if p.props.contains(where: { $0.caseInsensitiveCompare(w) == .orderedSame }) {
-                p.why.append("\(w): a prop here, already in the scene")
-            } else {
-                p.recall = true
-                p.why.append("\(w): no card, older moments searched")
-            }
-        }
-
-        // Facts not about anyone fetched above: only those that share a telling word with the
-        // message (or what it is about). The opening paints the world, so it gets a few more.
-        let kw = keywords(input + " " + wanted.joined(separator: " "))
+        // The world's own ground (the weather, the year, the city) goes with every reply: the
+        // first two facts the world was built with that are about nobody in particular. The
+        // opening paints the world, so it gets a few more.
         let general = a.facts.filter { f in
             !a.cast.contains { f.hasPrefix($0.name + " uses ") || mentions($0, in: f) } && !Continuity.elsewhereFact(f, in: a)
         }
-        let hits = general.filter { !keywords($0).isDisjoint(with: kw) }
-        // The world's own ground (the weather, the year, the city) goes with every reply: the
-        // first two facts the world was built with that are not about the player.
         let ground = Array(a.facts.prefix(8).filter { f in general.contains(f) && !f.hasPrefix("You") }.prefix(2))
-        if opening {
-            p.facts = Array(general.prefix(5))
-        } else {
-            p.facts = ground
-            for f in hits.suffix(3) where !p.facts.contains(f) { p.facts.append(f) }
-        }
+        p.facts = opening ? Array(general.prefix(5)) : ground
         for f in p.facts {
-            let shared = keywords(f).intersection(kw).sorted().prefix(2).joined(separator: ", ")
-            let reason: String = opening ? "opening" : ground.contains(f) ? "the world's ground, every reply" : "shares: " + shared
-            p.why.append("Fact: \"\(clip(f, 70))\" (\(reason))")
+            p.why.append("Fact: \"\(clip(f, 70))\" (" + (opening ? "opening" : "the world's ground, every reply") + ")")
         }
         p.known += p.facts
-
-        // Asking after the past reaches for older moments.
-        let past = #"(?i)\b(remember|earlier|before|last time|again|back then|yesterday|used to|you said|told me)\b"#
-        if !opening, input.range(of: past, options: .regularExpression) != nil {
-            p.recall = true
-            p.why.append("Your message reaches back: older moments searched")
-        }
         return p
     }
 
     /// The scene as the storyteller reads it: the fetched cards, then the notes, then this moment
     /// (last, right before the player's words, because small models follow what they read last).
-    static func briefing(_ a: Adventure, pick p: Pick, memories: [String], extra: [String], notes: [String], moment: String) -> String {
+    static func briefing(_ a: Adventure, pick p: Pick, looked: [String], extra: [String], notes: [String], moment: String) -> String {
         var l: [String] = ["THE SCENE (the reply must agree with every line)"]
         if !p.place.isEmpty { l.append("- Place: " + p.place) }
         if !a.storyTime.isEmpty {
@@ -264,14 +211,13 @@ enum Cards {
         } else if !a.whereabouts.isEmpty {
             l.append("- With you: nobody in particular.")
         }
-        if !p.background.isEmpty { l.append("- In the background (there and quiet; they don't join in): " + p.background.joined(separator: "; ")) }
+        if !p.background.isEmpty { l.append("- Also in the room (quiet; they don't join in): " + p.background.joined(separator: ", ")) }
         l += p.away.map { "- " + $0 }
         let held: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.prefix(6).joined(separator: "; ")
         l.append("- You have (nothing else): " + held)
         if !p.props.isEmpty { l.append("- Around you (use one only if the moment calls for it): " + p.props.joined(separator: "; ")) }
-        if !p.about.isEmpty { l += ["", "ALSO RELEVANT"] + p.about.map { "- " + $0 } }
         if !p.facts.isEmpty { l += ["", "FACTS (always true)"] + p.facts.map { "- " + $0 } }
-        if !memories.isEmpty { l += ["", "EARLIER MOMENTS (from older turns)"] + memories.map { "- " + $0 } }
+        if !looked.isEmpty { l += ["", "LOOKED UP (from the app; the reply agrees with every line)"] + looked.map { "- " + $0 } }
         if !extra.isEmpty { l += [""] + extra.map { "- " + $0 } }
         if !notes.isEmpty { l += ["", "NOTES"] + notes.map { "- " + $0 } }
         if !moment.isEmpty { l += ["", "THIS MOMENT (write exactly this)", moment] }
