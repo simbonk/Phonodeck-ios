@@ -126,8 +126,9 @@ enum Prompts {
     You read the player's NEW MESSAGE in an interactive audio story and fill in a short form. Output ONLY one JSON object:
     {"to":"the one person the player is speaking to or doing something with in the new message, or \"nobody\"",
      "going":"\"staying\" if the player stays in the place they are in; the name of a place if they go there; \"somewhere new\" if they leave for a place that is not listed",
+ "does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell Walter it is half past ten and say your name is Simon')",
      "answer":"only if the player asked a question: the plain facts the person they asked tells them (names, places, what happened), taken from KNOWN SO FAR or THE STORY JUST SAID where they cover it, never the player's own words; otherwise empty",
-     "beat":"one sentence: the one thing that happens in the reply, between the player and whoever they are with, that delivers the FEELING"}
+     "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they introduce her, they give their name back), in a way that delivers the FEELING"}
     Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going. Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
 

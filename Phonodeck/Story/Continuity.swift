@@ -186,6 +186,35 @@ enum Continuity {
         return nil
     }
 
+    /// The time the player says it is ("it's about half past 10", "it's 10:30 actually"), as
+    /// minutes after midnight, taking whichever of morning or evening is nearer the story clock.
+    static func statedTime(_ input: String, near clock: Int?) -> Int? {
+        let l = input.lowercased().replacingOccurrences(of: "’", with: "'")
+        guard l.range(of: #"\b(it'?s|it is|the time is|actually)\b"#, options: .regularExpression) != nil else { return nil }
+        let names = ["one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12]
+        func hour(_ w: String) -> Int? { Int(w) ?? names[w] }
+        let num = #"(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"#
+        func find(_ p: String) -> [String]? {
+            guard let re = try? NSRegularExpression(pattern: p), let m = re.firstMatch(in: l, range: NSRange(location: 0, length: (l as NSString).length)) else { return nil }
+            return (1..<m.numberOfRanges).map { m.range(at: $0).location == NSNotFound ? "" : (l as NSString).substring(with: m.range(at: $0)) }
+        }
+        var h: Int?, mm = 0, half: String? = nil
+        if let g = find(#"\bhalf past "# + num + #"\b"#) { h = hour(g[0]); mm = 30 }
+        else if let g = find(#"\bquarter past "# + num + #"\b"#) { h = hour(g[0]); mm = 15 }
+        else if let g = find(#"\bquarter (to|till) "# + num + #"\b"#), let x = hour(g[1]) { h = x == 1 ? 12 : x - 1; mm = 45 }
+        else if let g = find(#"\b(\d{1,2}):(\d{2})\s*([ap])?"#) { h = Int(g[0]); mm = Int(g[1]) ?? 0; half = g[2] }
+        else if let g = find(#"\b"# + num + #"\s*(o'?clock|([ap])\.?\s?m\b)"#) { h = hour(g[0]); half = g[2] }
+        guard var hr = h, hr >= 0, hr <= 23, mm < 60 else { return nil }
+        if hr > 12 { return hr * 60 + mm }
+        hr %= 12
+        if half == "a" { return hr * 60 + mm }
+        if half == "p" { return (hr + 12) * 60 + mm }
+        let am = hr * 60 + mm, pm = am + 720
+        guard let c = clock.map({ ((($0 % 1440) + 1440) % 1440) }) else { return am }
+        func gap(_ x: Int) -> Int { let d = abs(x - c); return min(d, 1440 - d) }
+        return gap(am) <= gap(pm) ? am : pm
+    }
+
     /// "9:40 PM".
     static func clockText(_ minutes: Int) -> String {
         let m = ((minutes % 1440) + 1440) % 1440
@@ -580,7 +609,14 @@ struct PresenceFilter {
     private var pending = ""
     private var inQuote = false
     private var dropping = false
+    /// Inside a quote the reply put in the player's mouth.
+    private var voicing = false
     private var raw = ""
+    /// How many lines were left out for speaking for the player.
+    private(set) var spokeForPlayer = 0
+    private static let playerVoice = try! NSRegularExpression(
+        pattern: #"[,.!?…—-]["”]\s*you (say|said|note|noted|ask|asked|add|added|reply|replied|answer|answered|tell|told|whisper|whispered|murmur|murmured|insist|explain|suggest|offer|call|joke|laugh|admit)\b|\byou (say|said|note|ask|add|reply|answer|whisper|murmur|tell (him|her|them))[^"“.]{0,30}[,:]\s*["“]"#,
+        options: [.caseInsensitive])
     /// What has been let through so far.
     private(set) var accepted = ""
     /// The sentences left out, in order.
@@ -676,6 +712,8 @@ struct PresenceFilter {
 
     private mutating func judge(_ unit: String) -> String {
         let narrated = narration(of: unit, from: inQuote)
+        let startsInQuote = inQuote
+        if !startsInQuote { voicing = false }
         for ch in unit {
             switch ch {
             case "\"": inQuote.toggle()
@@ -691,12 +729,20 @@ struct PresenceFilter {
         } else if said.contains(Self.key(unit)) {
             keep = false
             echoes += 1
+        } else if voicing && startsInQuote {
+            keep = false
+        } else if Self.playerVoice.firstMatch(in: unit, range: NSRange(location: 0, length: (unit as NSString).length)) != nil {
+            // The reply gives the player words they never said ("...," you note). The player's
+            // message is all the player says, so the line goes, and the rest of that quote with it.
+            keep = false
+            voicing = true
+            spokeForPlayer += 1
         } else if caught.count < 3, let who = hit(narrated) {
             dropping = true
             keep = false
             if !caught.contains(where: { $0.name == who.name }) { caught.append(who) }
         }
-        if endsParagraph { dropping = false; inQuote = false }
+        if endsParagraph { dropping = false; inQuote = false; voicing = false }
         if keep {
             accepted += unit
             return unit
