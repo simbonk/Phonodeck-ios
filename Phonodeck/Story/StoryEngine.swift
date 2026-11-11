@@ -1174,7 +1174,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11j"
+    static let build = "build 2026-11-11k"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1378,6 +1378,7 @@ final class StoryEngine {
         var read = given
         let said = Continuity.wordSet(input)
         let knownPlaces: [String] = a.lore.filter { $0.kind == .place }.map(\.name) + a.places
+        var backInside = false
         func bare(_ s: String) -> String {
             let l = s.lowercased().trimmingCharacters(in: .whitespaces)
             return l.hasPrefix("the ") ? String(l.dropFirst(4)) : l
@@ -1392,12 +1393,24 @@ final class StoryEngine {
         if let k = knownPlaces.first(where: { $0.caseInsensitiveCompare(a.location) != .orderedSame && Self.goesTo($0, in: input) }) {
             read.going = k
         }
+        // "Let's head back inside", "I go back in": back to the place the player came here from.
+        let backIn = #"(?i)\b(back (inside|indoors|in there|in)|(go|goes|head|heads|step|steps|come|comes|walk|walks|get|gets) (back )?(inside|indoors))\b"#
+        if read.going.isEmpty || read.going == "somewhere new", read.newPlace.isEmpty, !a.location.isEmpty,
+           input.range(of: backIn, options: .regularExpression) != nil {
+            let here = a.location
+            let ties = a.links.filter { $0.from.caseInsensitiveCompare(here) == .orderedSame || $0.to.caseInsensitiveCompare(here) == .orderedSame }
+            if let tie = ties.last {
+                read.going = tie.from.caseInsensitiveCompare(here) == .orderedSame ? tie.to : tie.from
+                backInside = true
+            }
+        }
         let me = a.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
         let addressed = read.to.lowercased().split(separator: " ").first.map(String.init) ?? ""
         // Leaving takes two things agreeing: the reading, and words that read like going somewhere
         // (or the player already being on the way).
         let named = !read.newPlace.isEmpty && read.newPlace.caseInsensitiveCompare(a.location) != .orderedSame
-        let toKnown = read.going != "somewhere new" && knownPlaces.contains { $0.caseInsensitiveCompare(read.going) == .orderedSame } && Self.goesTo(read.going, in: input)
+        let toKnown = read.going != "somewhere new" && knownPlaces.contains { $0.caseInsensitiveCompare(read.going) == .orderedSame }
+            && (backInside || Self.goesTo(read.going, in: input))
         let leaving = !read.going.isEmpty && (Continuity.leavesPlace(input) || a.location.isEmpty || named || toKnown)
         // "Let's go", "she takes my arm", "with me": the person the player is with comes along.
         let together = input.range(of: #"(?i)\b(let'?s|we|us|together|with me|join me|come with|takes? (my|your|it|the) (arm|hand)|takes? it|arm in arm|follows? me|lead (her|him|them))\b"#, options: .regularExpression) != nil
@@ -1559,6 +1572,17 @@ final class StoryEngine {
         catchUpNotes = []
         // The opening place is built like any place the player arrives in, when the architect gave
         // it only a line.
+        if hidden, a.transcript.isEmpty {
+            // The premise's time of day is set before anything is painted, so the place and the
+            // opening are written for it.
+            let told = Self.premiseDayParts(a)
+            if let lo = told.min(), let hi = told.max(), hi - lo <= 1 {
+                if a.clock == nil || !told.contains(Continuity.part(of: a.clock!)) {
+                    a.clock = Continuity.partStarts[hi]
+                    a.storyTime = Continuity.storyTime(clock: Continuity.partStarts[hi], old: a.storyTime)
+                }
+            }
+        }
         if hidden, a.transcript.isEmpty, let card = Cards.placeCard(a), card.desc.count < 120, !card.byPlayer {
             stage = "Building " + a.location
             if let i = a.lore.firstIndex(where: { $0.id == card.id }) { a.lore[i].desc = "" }
@@ -2140,7 +2164,9 @@ final class StoryEngine {
             let took: String = String(format: "%.1fs", Date().timeIntervalSince(t0))
             times.append(label + " " + took)
             guard !Task.isCancelled else { return nil }
-            return JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+            // The small model sometimes slips into another script mid-answer: those characters go.
+            let plain = String(String.UnicodeScalarView(raw.unicodeScalars.filter { $0.value < 0x2E80 }))
+            return JSONExtract.object(plain) ?? Self.salvageJSON(plain)
         }
         func strings(_ m: [String: Any]?, _ k: String, cap: Int) -> [String] {
             var out: [String] = []
@@ -2216,6 +2242,15 @@ final class StoryEngine {
                     now.whereabouts[i].leftAt = from
                 }
                 filed.append("Move the read missed: " + from + " to " + loc)
+            }
+            // Whoever was left at the place the player has come back to is there again.
+            for i in now.whereabouts.indices where now.whereabouts[i].here == false {
+                guard let at = now.whereabouts[i].leftAt, !at.isEmpty,
+                      at.caseInsensitiveCompare(loc) == .orderedSame || Continuity.names(place: at, in: loc) else { continue }
+                if missed, at.caseInsensitiveCompare(from) == .orderedSame { continue }
+                now.whereabouts[i].here = true
+                now.whereabouts[i].leftAt = nil
+                filed.append("Back in view: " + now.whereabouts[i].name)
             }
             now.visit(loc, from: from)
             now.location = loc
@@ -2399,7 +2434,7 @@ final class StoryEngine {
         guard sm != nil else { return }
         let spotSaid = ((sm?["spot"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
         var spot: String = ""
-        if spotSaid.count > 3, !Self.echoesPrompt(spotSaid) { spot = checked([spotSaid], share: 0.5).first ?? "" }
+        if spotSaid.count > 3, !Self.echoesPrompt(spotSaid), spotSaid.range(of: #"(?i)\b(the player|from you|away from you)\b"#, options: .regularExpression) == nil { spot = checked([spotSaid], share: 0.5).first ?? "" }
         asked.append("Where are you in the room? → " + (spot.isEmpty ? "not shown" : spot))
         commit { now in
             if !spot.isEmpty, now.spot.caseInsensitiveCompare(spot) != .orderedSame { filed.append("You are now: " + spot) }
@@ -3708,12 +3743,19 @@ final class StoryEngine {
     /// heard first, so a clear time of day in it wins over the architect's note. After that, a reply
     /// that clearly moved the day on (dusk falling, the first stars) moves the clock forward to
     /// match; one that paints an earlier hour is a slip (`continuitySlips`) and moves nothing.
+    /// The time of day the premise gives ("a stormy night"), from the player's own set-up first.
+    static func premiseDayParts(_ a: Adventure) -> Set<Int> {
+        let own = Continuity.dayParts(in: a.setup.describe + " " + a.setup.place)
+        if !own.isEmpty { return own }
+        return Continuity.dayParts(in: a.storyTime + " " + a.facts.prefix(8).joined(separator: " ") + " " + String(a.bible.prefix(600)))
+    }
+
     private func settleClock(_ a: inout Adventure, reply: String, opening: Bool) {
         if a.clock == nil, let m = Continuity.minutes(in: a.storyTime) { a.clock = m }
         // A time of day the premise gives ("a stormy night") stands over what the opening painted.
         var seededClock = false
         if opening {
-            let told = Continuity.dayParts(in: a.storyTime + " " + a.facts.prefix(8).joined(separator: " ") + " " + clip(a.bible, 600))
+            let told = Self.premiseDayParts(a)
             if let lo = told.min(), let hi = told.max(), hi - lo <= 1 {
                 if a.clock == nil || !told.contains(Continuity.part(of: a.clock!)) { a.clock = Continuity.partStarts[hi] }
                 seededClock = true

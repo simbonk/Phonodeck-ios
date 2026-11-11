@@ -189,7 +189,14 @@ enum Cards {
         let general = a.facts.filter { f in
             !a.cast.contains { f.hasPrefix($0.name + " uses ") || mentions($0, in: f) } && !Continuity.elsewhereFact(f, in: a)
         }
-        let ground = Array(a.facts.prefix(8).filter { f in general.contains(f) && !f.hasPrefix("You") }.prefix(2))
+        // A fact about the room the story opened in (its record, its lamp) is not the world's
+        // ground once the player is somewhere else.
+        let firstPlace: String = a.places.first ?? ""
+        let away = !firstPlace.isEmpty && !a.location.isEmpty && firstPlace.caseInsensitiveCompare(a.location) != .orderedSame
+        let indoors = #"(?i)\b(record|gramophone|music|song|tune|piano|band|radio|fire|fireplace|lamp|candle|bar|room|table|window)s?\b"#
+        let ground = Array(a.facts.prefix(8).filter { f in
+            general.contains(f) && !f.hasPrefix("You") && !(away && f.range(of: indoors, options: .regularExpression) != nil)
+        }.prefix(2))
         p.facts = opening ? Array(general.prefix(5)) : ground
         for f in p.facts {
             p.why.append("Fact: \"\(clip(f, 70))\" (" + (opening ? "opening" : "the world's ground, every reply") + ")")
