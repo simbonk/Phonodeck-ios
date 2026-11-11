@@ -472,7 +472,7 @@ enum Continuity {
     /// must agree before anyone is counted as left behind.
     static func leavesPlace(_ text: String) -> Bool {
         let t = text.lowercased().replacingOccurrences(of: "’", with: "'")
-        let exit = #"\b(let'?s go|let us go|enter(s|ed|ing)?|go(es)? (in|inside|into|out|over to|down to|to the)|head(s|ed|ing)? (out|over|down|into|to)|outside|outdoors|out (into|onto|the door|we go|of the|of here)|steps? out|step(s|ped)? through|walk(s|ed|ing)? (out|to|toward|towards|down|along|away|home|into)|leav(e|es|ing)|left the|street|alley|alleyway|sidewalk|pavement|road|path|shore|beach|harbor|harbour|upstairs|downstairs|next door|another room|hallway|corridor|doorway|drive|drives|ride|rides|boards?|climbs?|follow(s|ed)? (him|her|them) (out|to|into|down|up))\b"#
+        let exit = #"\b(let'?s go|let us go|enter(s|ed|ing)?|go(es)? (in|inside|into|out|over to|down to|to the)|head(s|ed|ing)? (out|over|down|into|to)|outside|outdoors|out (into|onto|the door|we go|of the|of here)|steps? out|step(s|ped)? through|walk(s|ed|ing)? (out|to|toward|towards|down|along|away|home|into)|leav(e|es|ing)|left the|storm(s|ed)? out|go(es)? (directly|straight|back|home)|head(s|ed|ing)? (back|home|straight)|street|alley|alleyway|sidewalk|pavement|road|path|shore|beach|harbor|harbour|upstairs|downstairs|next door|another room|hallway|corridor|doorway|drive|drives|ride|rides|boards?|climbs?|follow(s|ed)? (him|her|them) (out|to|into|down|up))\b"#
         return t.range(of: exit, options: .regularExpression) != nil
     }
 

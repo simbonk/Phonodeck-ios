@@ -673,7 +673,7 @@ final class StoryEngine {
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
         let engineLine: String = grounded
-            ? "Grounded engine (read, fetch, paint, file)" + (gmPlans ? "" : ", reading off")
+            ? "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off")
             : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
         out.append(engineLine + " · " + Self.build)
         if grounded {
@@ -1153,7 +1153,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11e"
+    static let build = "build 2026-11-11f"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1356,7 +1356,8 @@ final class StoryEngine {
         let addressed = read.to.lowercased().split(separator: " ").first.map(String.init) ?? ""
         // Leaving takes two things agreeing: the reading, and words that read like going somewhere
         // (or the player already being on the way).
-        let leaving = !read.going.isEmpty && (Continuity.leavesPlace(input) || a.location.isEmpty)
+        let named = !read.newPlace.isEmpty && read.newPlace.caseInsensitiveCompare(a.location) != .orderedSame
+        let leaving = !read.going.isEmpty && (Continuity.leavesPlace(input) || a.location.isEmpty || named)
         let from = a.location
         // Someone the player turns to who isn't placed yet is in the room with them.
         if !read.to.isEmpty, !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(read.to) == .orderedSame }) {
@@ -1457,7 +1458,11 @@ final class StoryEngine {
         let answer = Self.asks(input) && !own ? read.answer : ""
         var lines: [String] = ["PLAYER: " + clip(input.replacingOccurrences(of: "\n", with: " "), 300)]
         if !read.does.isEmpty { lines.append("THE PLAYER DOES: " + read.does) }
-        lines.append("ANSWER: " + (answer.isEmpty ? "none" : answer))
+        if answer.isEmpty, Self.asks(input) {
+            lines.append("ANSWER: nothing on file, so the person answers plainly with something ordinary that fits the place and the time (never a refusal or a riddle)")
+        } else {
+            lines.append("ANSWER: " + (answer.isEmpty ? "none" : answer))
+        }
         let then = beat.isEmpty ? "the person the player is with responds right away to exactly what the player said and did" : beat
         lines.append("THEN: " + then)
         lines.append("WHO: " + who)
@@ -2226,17 +2231,26 @@ final class StoryEngine {
         if !a.storyTime.isEmpty { prompt += "\nTIME: " + a.storyTime }
         let ground = a.facts.prefix(8).filter { f in !a.cast.contains { Cards.mentions($0, in: f) } && !f.hasPrefix("You") }.prefix(2)
         if !ground.isEmpty { prompt += "\nTHE WORLD: " + ground.joined(separator: " ") }
-        if !placeBeforeTurn.isEmpty { prompt += "\nCOMING FROM: " + placeBeforeTurn }
         prompt += "\nTHE PLACE: " + a.location
+        if !placeBeforeTurn.isEmpty, placeBeforeTurn.caseInsensitiveCompare(a.location) != .orderedSame {
+            // The place just left is somewhere else: none of it is here.
+            let left = (a.placeThings[placeBeforeTurn.lowercased()] ?? []).prefix(5).joined(separator: "; ")
+            prompt += "\nNOT HERE: " + placeBeforeTurn + (left.isEmpty ? "" : " and its things (" + left + ")") + ". The player has left it; describe only " + a.location + "."
+        }
         if !hint.isEmpty { prompt += "\nKNOWN ABOUT IT (keep to this): " + clip(hint, 400) }
         prompt += "\n\n" + Prompts.buildPlace
         let raw = (try? await llm.complete(system: nil, prompt: prompt,
                                            options: .init(maxTokens: 200, temperature: 0.6, repetitionPenalty: 1.1, grammar: JSONGrammar.place))) ?? ""
         let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
         let desc = ((m["desc"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let things: [String] = ((m["things"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let offered: [String] = ((m["things"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { $0.count > 3 && !Self.echoesPrompt($0) && !Self.brokenEntry($0) }
         guard desc.count > 20, !Self.echoesPrompt(desc) else { return "" }
+        // A description of the place just left is not this place.
+        if !placeBeforeTurn.isEmpty, placeBeforeTurn.caseInsensitiveCompare(a.location) != .orderedSame,
+           Continuity.names(place: placeBeforeTurn, in: desc) { return "" }
+        let leftThings = a.placeThings[placeBeforeTurn.lowercased()] ?? []
+        let things = offered.filter { t in !leftThings.contains { Self.similar($0, t) } }
         a.lore[i].desc = clip(desc, 300)
         if !things.isEmpty {
             // Things the story already put here stay; the built ones join them.

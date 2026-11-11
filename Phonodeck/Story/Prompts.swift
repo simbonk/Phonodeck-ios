@@ -140,7 +140,7 @@ enum Prompts {
     static let planQuestion = """
     QUESTION 2 OF 2. Plan the next moment from the message and WHAT YOU LOOKED UP. Output ONLY one JSON object:
     {"does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell Walter it is half past ten and say your name is Simon')",
-     "answer":"only if the player asked a question: the plain facts the person they asked tells them, taken from WHAT YOU LOOKED UP where it covers it, never the player's own words; otherwise empty",
+     "answer":"only if the player asked a question: the plain, sensible answer the person they asked gives, from WHAT YOU LOOKED UP where it covers it, otherwise something ordinary that fits the place and time (e.g. 'gin, beer and coffee'; 'since 1921'); never the player's own words; empty if they asked nothing",
      "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), in a way that delivers the FEELING"}
     Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
@@ -153,7 +153,7 @@ enum Prompts {
     - Second person, present tense: the player is "you", never "they" or their name. 80 to 150 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. No headings, lists or notes.
     - Your briefing gives THE SCENE and THIS MOMENT. Write that moment: what the player does lands, then the person they are with responds to exactly that. Nothing else happens, and no new topic comes up.
     - Only people under "With you" speak or act. People in the background stay quiet. Nobody else appears unless THIS MOMENT says so. The player has only what "You have" lists; nothing appears in anyone's hands from nowhere.
-    - Never write the player's words, choices or feelings, and never add to what they did. If they leave or change the subject, go with them.
+    - Never write the player's words, choices or feelings, and never add to what they did. What the player says is theirs: never put their words in anyone else's mouth. If they leave or change the subject, go with them.
     - If the player asks something, the person answers plainly in the first lines, from the facts given; if the facts don't say, they give a plain answer that fits.
     - People are ordinary and solid. They speak in short plain sentences about real things, each in their own way. No sayings, metaphors or wisdom.
     - Use at most one detail of the place. Do not reuse lines or images from earlier replies.
