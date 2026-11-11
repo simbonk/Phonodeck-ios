@@ -34,6 +34,7 @@ final class AppModel {
     let library: Library
     let engine: StoryEngine
     let chat: ChatEngine
+    let autoPlay: AutoPlay
     let vault: Vault
     var tab: Tab = .phonodeck
     /// Which kind of model the Models tab shows.
@@ -59,6 +60,7 @@ final class AppModel {
         let chat = ChatEngine(llm: llm, narrator: narrator, dictation: dictation, library: library)
         self.engine = engine
         self.chat = chat
+        self.autoPlay = AutoPlay(engine: engine)
         self.vault = Vault()
         if let key = vault.key { library.open(key: key) }
         // The narrator and the microphone are shared: the Chat tab gets them while it is open
