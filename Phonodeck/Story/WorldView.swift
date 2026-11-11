@@ -177,14 +177,18 @@ struct WorldView: View {
         card {
             VStack(alignment: .leading, spacing: 1) {
                 FlashRow(label: "Place", value: f.place.isEmpty ? "On the way somewhere new" : f.place, lines: wide ? nil : 1)
-                FlashRow(label: "You are", value: f.spot ?? "", lines: wide ? nil : 2)
+                FlashRow(label: "You are", value: f.spot ?? "", lines: wide ? nil : 1)
+                FlashRow(label: "You feel", value: f.body ?? "", lines: wide ? nil : 1)
                 FlashRow(label: "Time", value: f.time, lines: wide ? nil : 1)
-                FlashRow(label: "Facing", value: f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"), lines: wide ? nil : 2)
+                FlashRow(label: "Facing", value: f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"), lines: wide ? nil : 1)
                 FlashRow(label: "They feel", value: (f.feelings ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: " · "), lines: wide ? nil : 1)
+                FlashRow(label: "They want", value: (f.wants ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
+                FlashRow(label: "They know", value: (f.knows ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
                 FlashRow(label: "In the room", value: f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 2)
                 FlashRow(label: "You have", value: f.have.joined(separator: "; "), lines: wide ? nil : 1)
                 FlashRow(label: "Around", value: f.around.joined(separator: "; "), lines: wide ? nil : 2)
                 FlashRow(label: "Background", value: f.sound ?? "", lines: wide ? nil : 2)
+                FlashRow(label: "Goal", value: (f.goal ?? []).joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
                 FlashRow(label: "Hanging", value: (f.pending ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 2)
             }
         }

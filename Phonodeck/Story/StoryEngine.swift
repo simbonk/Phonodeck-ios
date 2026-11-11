@@ -1671,6 +1671,28 @@ final class StoryEngine {
             }
             if !looks.isEmpty { lap("lookups") }
         }
+        // Could the player do that? Asked only when the action leans on a thing they must have.
+        let needs = #"(?i)\b(pull out|take out|draw my|unlock|shoot|fire my|light (a|my|the)|use my|with my|from my (pocket|bag|coat))\b"#
+        if !hidden, !playerNarrates, gmPlans, input.range(of: needs, options: .regularExpression) != nil {
+            stage = "Could you do that?"
+            lapFrom = Date()
+            let have: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.joined(separator: "; ")
+            let props: String = Cards.props(a).prefix(8).joined(separator: "; ")
+            let q: String = context + "\n\nTHE PLAYER HAS: " + have + "\nAROUND THEM: " + (props.isEmpty ? "nothing notable" : props) + "\n\n" + Prompts.canDo + "\nThe form:"
+            let raw = (try? await llm.complete(system: nil, prompt: q,
+                                               options: .init(maxTokens: 50, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.yesNo("can", then: "missing", chars: 60)))) ?? ""
+            guard !Task.isCancelled else { adventure = snapshot; return }
+            lap("could you do that")
+            let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+            let can: String = (m["can"] as? String) ?? "yes"
+            let missing: String = ((m["missing"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+            if can == "no", missing.count > 2, !Self.echoesPrompt(missing) {
+                extra.append("THE PLAYER CANNOT DO THAT AS SAID: they have no " + missing + ". Show it not working, plainly and kindly; nothing appears from nowhere.")
+                step("Could you do that? → no, missing: " + missing)
+            } else {
+                step("Could you do that? → yes")
+            }
+        }
         // Read, question 2: the moment, planned from what was looked up.
         if read != nil {
             stage = "What happens next?"
@@ -2255,6 +2277,38 @@ final class StoryEngine {
             }
         }
 
+        // What each person the player is with wants right now, and what they just learned about
+        // the player (only from the player's own words).
+        let mineOnly = Continuity.wordSet(playerSaid + " you your player " + start.playerName)
+        for c in facingNow.prefix(2) {
+            let wm = await ask("What does " + c.name + " want, and what did they learn?", Prompts.rebuildWants(c.name + roleOf(c)),
+                               JSONGrammar.pair("wants", 110, "learned", 100), 90)
+            guard wm != nil else { return }
+            let trim = CharacterSet(charactersIn: " .\n")
+            let wants: String = ((wm?["wants"] as? String) ?? "").trimmingCharacters(in: trim)
+            let learnedSaid: String = ((wm?["learned"] as? String) ?? "").trimmingCharacters(in: trim)
+            var learned: String = ""
+            if learnedSaid.count > 5, !Self.echoesPrompt(learnedSaid), Continuity.grounded(learnedSaid, in: mineOnly, share: 0.5) { learned = learnedSaid }
+            let wantOK = wants.count > 3 && !Self.echoesPrompt(wants)
+            asked.append(c.name + " wants? → " + (wantOK ? wants : "not shown") + (learned.isEmpty ? "" : "; learned: " + learned))
+            commit { now in
+                let key = c.name.lowercased()
+                if wantOK {
+                    if (now.wants[key] ?? "").caseInsensitiveCompare(wants) != .orderedSame { filed.append(c.name + " wants: " + wants) }
+                    now.wants[key] = clip(wants, 120)
+                }
+                var known: [String] = now.knows[key] ?? []
+                var fresh: [String] = learned.isEmpty ? [] : [clip(learned, 110)]
+                if let said = Continuity.selfIntroduction(playerSaid) { fresh.append("your name is " + said) }
+                for f in fresh where !known.contains(where: { Self.similar($0, f) }) {
+                    known.append(f)
+                    filed.append(c.name + " now knows: " + f)
+                }
+                if known.count > 6 { known = Array(known.suffix(6)) }
+                now.knows[key] = known
+            }
+        }
+
         // Where the player is in the place, and how close to whoever they are with.
         let sm = await ask("Where are you in the room?", Prompts.rebuildSpot, JSONGrammar.text("spot", chars: 80), 40)
         guard sm != nil else { return }
@@ -2359,6 +2413,7 @@ final class StoryEngine {
         // Something open is a short sentence about what hasn't happened yet: never a thing, a look
         // or a sound, and never cut off mid-way.
         let hanging = strings(om, "open", cap: 3).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")) }.filter { h in
+            if start.pending.contains(where: { Self.similar($0, h) }) { return true }
             let words = h.split(separator: " ").count
             let quoted = h.range(of: #"(?i)\b(we|our|us|me|my|i|i'm|i'll)\b"#, options: .regularExpression) != nil
             if h.count >= 105 || words < 4 || h.hasSuffix("-") || quoted {
@@ -2373,6 +2428,118 @@ final class StoryEngine {
             for h in hanging where !now.pending.contains(where: { Self.similar($0, h) }) { filed.append("Still hanging: " + h) }
             for p in now.pending where !hanging.contains(where: { Self.similar($0, p) }) { filed.append("Settled: " + p) }
             now.pending = hanging
+        }
+
+        // How the player is, physically.
+        let bodyQ: String = (start.body.isEmpty ? "" : "BEFORE: " + start.body + "\n") + Prompts.rebuildBody
+        let bodyM = await ask("How are you, physically?", bodyQ, JSONGrammar.text("body", chars: 60), 30)
+        guard bodyM != nil else { return }
+        let bodySaid: String = ((bodyM?["body"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+        var body: String = ""
+        if bodySaid.count > 3, !Self.echoesPrompt(bodySaid) { body = checked([bodySaid], share: 0.5).first ?? "" }
+        asked.append("How are you, physically? → " + (body.isEmpty ? "no change" : body))
+        commit { now in
+            guard !body.isEmpty, now.body.caseInsensitiveCompare(body) != .orderedSame else { return }
+            now.body = clip(body, 70)
+            filed.append("You are: " + body)
+        }
+
+        // Is the goal closer? What was reached is kept, so the story knows how far along it is.
+        let goal: String = start.setup.goal
+        if !goal.isEmpty {
+            var gq: String = "THE GOAL: " + clip(goal, 240) + "\n"
+            if !start.progress.isEmpty { gq += "REACHED SO FAR:\n" + start.progress.map { "- " + $0 }.joined(separator: "\n") + "\n" }
+            let gm = await ask("Is the goal closer?", gq + Prompts.rebuildGoal, JSONGrammar.yesNo("closer", then: "how", chars: 120), 60)
+            guard gm != nil else { return }
+            let closer = ((gm?["closer"] as? String) ?? "") == "yes"
+            let howSaid: String = ((gm?["how"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+            var how: String = ""
+            if closer, howSaid.count > 8, !Self.echoesPrompt(howSaid), !start.progress.contains(where: { Self.similar($0, howSaid) }) {
+                how = checked([howSaid], share: 0.5).first ?? ""
+            }
+            asked.append("Is the goal closer? → " + (how.isEmpty ? "not this turn" : "yes: " + how))
+            commit { now in
+                guard !how.isEmpty else { return }
+                now.progress.append(clip(how, 130))
+                if now.progress.count > 8 { now.progress.removeFirst(now.progress.count - 8) }
+                filed.append("Toward the goal: " + how)
+            }
+        }
+
+        // Did the player get an answer? An unanswered question stays hanging, in code.
+        if Self.asks(playerSaid) {
+            let am = await ask("Did you get an answer?", Prompts.rebuildAnswered, JSONGrammar.one("answered", from: ["yes", "no"]), 12)
+            guard am != nil else { return }
+            let answered = ((am?["answered"] as? String) ?? "yes") != "no"
+            asked.append("Did you get an answer? → " + (answered ? "yes" : "no"))
+            commit { now in
+                guard !answered else { return }
+                let line: String = "You asked and got no answer yet: " + clip(playerSaid.replacingOccurrences(of: "\n", with: " "), 80)
+                guard !now.pending.contains(where: { Self.similar($0, line) }) else { return }
+                now.pending = Array((now.pending + [line]).suffix(3))
+                filed.append("Still hanging: " + line)
+            }
+        }
+
+        // Did anyone say their own name? A real one becomes known; a made-up one is put right.
+        let saysName = reply.range(of: #"(?i)\b(name is|name's|call me|they call me)\b"#, options: .regularExpression) != nil
+            || reply.range(of: #"\bI(?:'m|’m| am) [A-Z][a-z]{2,}"#, options: .regularExpression) != nil
+        if saysName, !start.cast.isEmpty {
+            let options: [String] = start.cast.map(\.name) + ["nobody"]
+            let nm = await ask("Did anyone give their name?", Prompts.rebuildName + "\nTHE LIST: " + options.joined(separator: "; "),
+                               JSONGrammar.pickOne("who", from: options, free: "name", chars: 30), 40)
+            guard nm != nil else { return }
+            let who: String = (nm?["who"] as? String) ?? "nobody"
+            let given: String = ((nm?["name"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n\""))
+            let first: String = given.split(separator: " ").first.map(String.init) ?? ""
+            asked.append("Did anyone give their name? → " + (who == "nobody" || first.isEmpty ? "nobody" : who + ", as " + first))
+            commit { now in
+                guard let i = now.lore.firstIndex(where: { $0.kind == .person && !$0.isPlayer && $0.name.caseInsensitiveCompare(who) == .orderedSame }),
+                      first.count > 2, reply.contains(first) else { return }
+                let real: String = now.lore[i].name
+                let low = first.lowercased()
+                if Continuity.wordSet(real).contains(low) {
+                    if !now.lore[i].known { now.lore[i].known = true; filed.append(real + " gave their name") }
+                    return
+                }
+                // A name that belongs to nobody in the story was made up: the story's text is put right.
+                let taken = Continuity.wordSet(now.playerName).contains(low) || now.lore.contains { Continuity.wordSet($0.name).contains(low) }
+                guard !taken, !now.lore[i].byPlayer else { return }
+                if let t = now.transcript.firstIndex(where: { $0.id == lastID }) {
+                    let swap: String = "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b"
+                    now.transcript[t].text = now.transcript[t].text.replacingOccurrences(of: swap, with: Cards.first(real), options: .regularExpression)
+                }
+                now.lore[i].known = true
+                filed.append("Name put right: " + real + " was called \"" + first + "\"")
+            }
+        }
+
+        // Does the moment contradict what is on file? A slip becomes a correction for the next reply.
+        let fileNow: Adventure = adventure ?? start
+        var onFile: [String] = Array(fileNow.facts.filter { !$0.contains(" uses ") }.prefix(3))
+        for c in facingNow.prefix(2) {
+            onFile += Cards.facts(about: c, in: fileNow).filter { !$0.contains(" uses ") }.suffix(2)
+            if !c.desc.isEmpty { onFile.append(c.name + ": " + clip(c.desc, 140)) }
+        }
+        var seenLines: [String] = []
+        for l in onFile where !seenLines.contains(where: { Self.similar($0, l) }) { seenLines.append(l) }
+        onFile = seenLines
+        if !onFile.isEmpty {
+            let cq: String = "ON FILE:\n" + onFile.map { "- " + clip($0, 160) }.joined(separator: "\n") + "\n" + Prompts.rebuildContradiction
+            let xm = await ask("Does anything contradict the file?", cq, JSONGrammar.yesNo("contradicts", then: "line", chars: 160), 70)
+            guard xm != nil else { return }
+            let yes = ((xm?["contradicts"] as? String) ?? "") == "yes"
+            let lineSaid: String = ((xm?["line"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n-"))
+            var hit: String = ""
+            if yes, lineSaid.count > 12 {
+                hit = onFile.first(where: { Self.similar($0, lineSaid) || $0.contains(lineSaid) }) ?? ""
+            }
+            asked.append("Does anything contradict the file? → " + (hit.isEmpty ? "no" : "yes: " + clip(hit, 100)))
+            commit { now in
+                guard !hit.isEmpty else { return }
+                now.fixes.append(Self.checked + "The last reply slipped on this, and it stays true: " + clip(hit, 160))
+                filed.append("Correction for the next reply: " + clip(hit, 100))
+            }
         }
 
         // 6. Anything lasting? Filed under the person it names (the role a nameless story uses
@@ -2607,6 +2774,16 @@ final class StoryEngine {
             return c.name + ": " + x
         }
         f.feelings = feel.isEmpty ? nil : feel
+        let inViewCards: [LoreEntry] = others.filter { $0.here != false }.compactMap { Cards.card(for: $0, in: a) }
+        let want: [String] = inViewCards.compactMap { c in a.wants[c.name.lowercased()].map { c.name + ": " + $0 } }
+        f.wants = want.isEmpty ? nil : want
+        let know: [String] = inViewCards.compactMap { c in
+            guard let k = a.knows[c.name.lowercased()], !k.isEmpty else { return nil }
+            return c.name + ": " + k.joined(separator: "; ")
+        }
+        f.knows = know.isEmpty ? nil : know
+        f.body = a.body.isEmpty ? nil : a.body
+        f.goal = a.progress.isEmpty ? nil : a.progress
         if let looked { f.looked = looked }
         if let asked { f.asked = asked }
         if let steps { f.steps = steps }
