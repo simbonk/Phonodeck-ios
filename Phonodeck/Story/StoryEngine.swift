@@ -1176,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11l"
+    static let build = "build 2026-11-11m"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1789,9 +1789,14 @@ final class StoryEngine {
             lap("someone new")
             let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
             var came: String? = nil
+            let recent: String = a.transcript.suffix(6).map(\.text).joined(separator: " ")
             if (m["new"] as? String) == "yes" {
-                let recent: String = a.transcript.suffix(6).map(\.text).joined(separator: " ")
                 came = addNewcomer(&a, name: (m["name"] as? String) ?? "", role: (m["role"] as? String) ?? "", about: input + " " + recent, engaged: true)
+            }
+            // The player said plainly that someone came in: they get a card even when the
+            // question missed it.
+            if came == nil, let d = Self.describedArrival(input) {
+                came = addNewcomer(&a, name: d.name, role: d.role, about: input + " " + recent, engaged: true)
             }
             if let came {
                 let others: String = a.cast.filter { $0.name != came }.map(\.name).joined(separator: " or ")
@@ -2284,6 +2289,14 @@ final class StoryEngine {
             let missed = !now.location.isEmpty && loc.caseInsensitiveCompare(now.location) != .orderedSame && Continuity.moves(playerSaid)
                 && Continuity.leavesPlace(playerSaid + " " + reply) && Continuity.mentions(place: loc, in: reply)
             guard now.location.isEmpty || missed else { return }
+            // On the way somewhere unnamed, a place already on the map counts only when the
+            // exchange names it; otherwise the small model is reaching for the last name it knows.
+            let knownLoc = (now.lore.filter { $0.kind == .place }.map(\.name) + now.places).contains { $0.caseInsensitiveCompare(loc) == .orderedSame }
+            if now.location.isEmpty, !missed, knownLoc, !now.transcript.isEmpty,
+               !Continuity.names(place: loc, in: playerSaid + " " + reply), !Self.goesTo(loc, in: playerSaid) {
+                refused.append(loc + " (the moment never goes there)")
+                return
+            }
             let from = now.location.isEmpty ? placeBeforeTurn : now.location
             if missed {
                 // Whoever the reply does not show coming along stays where the player left them.
@@ -2388,7 +2401,8 @@ final class StoryEngine {
         var knownWords: Set<String> = Continuity.wordSet(start.playerName + " " + start.lore.map(\.name).joined(separator: " "))
         knownWords.formUnion(["mr", "mrs", "miss", "the", "los", "angeles", "god", "broadway", "hollywood", "paris", "london", "new", "york"])
         var strangerHint = reply.range(of: #"\b(Mr|Mrs|Ms|Miss|Dr)\.? [A-Z]"#, options: .regularExpression) != nil
-            || reply.range(of: #"(?i)\b(a|an|another) (man|woman|stranger|boy|girl|waiter|waitress|guard|clerk|doorman|driver|officer|policeman|musician|singer|pianist)\b"#, options: .regularExpression) != nil
+            || reply.range(of: Self.someoneNew, options: .regularExpression) != nil
+            || playerSaid.range(of: Self.someoneNew, options: .regularExpression) != nil
         if !strangerHint {
             for sentence in PresenceFilter.sentences(reply) {
                 let words = sentence.split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "’" }).map(String.init)
@@ -2498,7 +2512,12 @@ final class StoryEngine {
                 var known: [String] = now.knows[key] ?? []
                 // Only things about the player, not a note that they asked something.
                 let junk = learned.range(of: #"(?i)^(you|the player) (asked|are curious|is curious|have forgotten|has forgotten|want to know|wants to know)"#, options: .regularExpression) != nil
-                var fresh: [String] = learned.isEmpty || junk ? [] : [clip(learned.replacingOccurrences(of: "the player", with: "you"), 110)]
+                var tidy = learned.replacingOccurrences(of: "the player", with: "you")
+                for (from, to) in [(#"\byou is\b"#, "you are"), (#"\byou was\b"#, "you were"), (#"\byou has\b"#, "you have"), (#"\bthemselves\b"#, "yourself"),
+                                   (#"(?i)^you are (sitting|standing|listening|asking|waiting|looking)\b.*"#, "")] {
+                    tidy = tidy.replacingOccurrences(of: from, with: to, options: .regularExpression)
+                }
+                var fresh: [String] = tidy.isEmpty || junk ? [] : [clip(tidy, 110)]
                 if let said = Continuity.selfIntroduction(playerSaid) { fresh.append("your name is " + said) }
                 for f in fresh where !known.contains(where: { Self.similar($0, f) }) {
                     known.append(f)
@@ -2883,6 +2902,21 @@ final class StoryEngine {
 
     /// Whether the message goes to a place by name: a going word, then the place's last word
     /// within a few words ("I returned back into the velvet thorn", "head to the jazz club").
+    /// "A young man with a violin case", "the stranger": someone the story may be bringing in.
+    static let someoneNew = #"(?i)\b(a|an|another|the)\s+(?:[a-z]+\s+){0,2}?(man|woman|stranger|boy|girl|waiter|waitress|guard|clerk|doorman|driver|officer|policeman|musician|singer|pianist|violinist|gentleman|lady|fellow|sailor|couple)\b"#
+
+    /// The newcomer a message brings in by description ("a young man with a violin case comes
+    /// in"): a name for their card ("The young man") and the rest as their role.
+    static func describedArrival(_ input: String) -> (name: String, role: String)? {
+        let pattern = #"(?i)\b(?:a|an|another)\s+((?:[a-z]+\s+){0,2}?(?:man|woman|stranger|boy|girl|waiter|waitress|guard|clerk|doorman|driver|officer|policeman|musician|singer|pianist|violinist|gentleman|lady|fellow|sailor|couple))\b([^.?!]{0,40}?)\s+(?:comes?|walks?|steps?|wanders?|stumbles?|bursts?|hurries?|enters?|arrives?|appears?|shows? up)\b"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: input, range: NSRange(location: 0, length: (input as NSString).length)), m.numberOfRanges > 2 else { return nil }
+        let who = (input as NSString).substring(with: m.range(at: 1)).lowercased()
+        let rest = (input as NSString).substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
+        let role = (who + (rest.isEmpty ? "" : " " + rest)).trimmingCharacters(in: .whitespaces)
+        return ("The " + who, role)
+    }
+
     /// What someone knows about the player: the name always stays, then the newest seven.
     static func keepKnown(_ known: [String]) -> [String] {
         guard known.count > 8 else { return known }
@@ -2933,6 +2967,15 @@ final class StoryEngine {
         for m in re.matches(in: input, range: NSRange(location: 0, length: ns.length)) where m.numberOfRanges > 1 {
             let noun = ns.substring(with: m.range(at: 1)).lowercased()
             if dull.contains(noun) || mine.name.contains(noun) { continue }
+            // "My stool", "my old seat": the seat the player had where the story began, never a
+            // place that only happens to have a stool too. Already there, it is a move to nowhere.
+            let seats: Set<String> = ["stool", "seat", "chair", "booth", "barstool", "spot"]
+            if seats.contains(noun) {
+                guard cue, !home.isEmpty, home.caseInsensitiveCompare(here) != .orderedSame,
+                      let h = places.first(where: { $0.caseInsensitiveCompare(home) == .orderedSame }) else { continue }
+                if best == nil || m.range(at: 1).location > best!.at { best = (h, m.range(at: 1).location) }
+                continue
+            }
             var found: String? = places.first { words(of: $0).name.contains(noun) }
             if found == nil, !mine.rest.contains(noun) {
                 let isHome: (String) -> Bool = { $0.caseInsensitiveCompare(home) == .orderedSame }
