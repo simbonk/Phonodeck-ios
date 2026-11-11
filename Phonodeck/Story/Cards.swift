@@ -171,7 +171,9 @@ enum Cards {
                 if !theirs.isEmpty { line += " Known: " + theirs.map { clip($0, 150) }.joined(separator: " ") }
                 p.with.append(line)
                 p.known += theirs
-                p.why.append("\(name): full card, " + (opening ? "in the opening scene" : "you are facing them") + " (\(theirs.count) fact\(theirs.count == 1 ? "" : "s"))")
+                let reason: String = opening ? "in the opening scene" : "you are facing them"
+                let count: String = theirs.count == 1 ? "1 fact" : "\(theirs.count) facts"
+                p.why.append(name + ": full card, " + reason + " (" + count + ")")
             } else if w.here != false {
                 p.background.append(pr.isEmpty ? name : "\(name) (\(pr))")
                 p.why.append("\(name): name only, at the edge of view")

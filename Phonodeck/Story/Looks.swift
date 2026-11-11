@@ -136,10 +136,14 @@ enum Looks {
             guard let w = others.first(where: { Cards.first($0.name).caseInsensitiveCompare(Cards.first(look.target)) == .orderedSame }) else {
                 return Answer(look: look, lines: ["Not placed anywhere yet."])
             }
-            let spot: String = w.here == false
-                ? "elsewhere: " + (w.leftAt.map { "at " + $0 } ?? Continuity.placed(w.at)) + "; not here, so not seen or heard"
-                : (w.engaged == true ? "here, with you" : "here, in the room")
-            return Answer(look: look, lines: [w.name + " is " + spot + (w.doing.isEmpty ? "." : ", " + Cards.clip(w.doing, 80) + ".")])
+            var spot: String = w.engaged == true ? "here, with you" : "here, in the room"
+            if w.here == false {
+                let at: String = w.leftAt.map { "at " + $0 } ?? Continuity.placed(w.at)
+                spot = "elsewhere: " + at + "; not here, so not seen or heard"
+            }
+            var l: String = w.name + " is " + spot
+            if !w.doing.isEmpty { l += ", " + Cards.clip(w.doing, 80) }
+            return Answer(look: look, lines: [l + "."])
         case .lookAt:
             return Answer(look: look, lines: [card(look.target, in: a)])
         case .remember:
@@ -160,9 +164,13 @@ enum Looks {
                 if !pr.isEmpty { l += ", " + pr }
                 if !e.desc.isEmpty { l += ": " + Cards.clip(e.desc, 220) }
                 if let w = a.whereabouts.first(where: { Cards.card(for: $0, in: a)?.id == e.id }) {
-                    let now: String = w.here == false ? "elsewhere, " + (w.leftAt.map { "at " + $0 } ?? Continuity.placed(w.at)) + " (not here)"
-                        : (w.engaged == true ? "with you" : "in the room")
-                    l += " Now: " + now + (w.doing.isEmpty ? "" : ", " + Cards.clip(w.doing, 80)) + "."
+                    var now: String = w.engaged == true ? "with you" : "in the room"
+                    if w.here == false {
+                        let at: String = w.leftAt.map { "at " + $0 } ?? Continuity.placed(w.at)
+                        now = "elsewhere, " + at + " (not here)"
+                    }
+                    if !w.doing.isEmpty { now += ", " + Cards.clip(w.doing, 80) }
+                    l += " Now: " + now + "."
                 }
                 let theirs = Cards.facts(about: e, in: a).suffix(3).map { Cards.clip($0, 150) }
                 if !theirs.isEmpty { l += " Known: " + theirs.joined(separator: " ") }

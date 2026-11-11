@@ -2009,10 +2009,13 @@ final class StoryEngine {
         }
 
         // 3. What is each person in view doing? One short question each, for the ones the reply shows.
-        let inView: [LoreEntry] = (adventure ?? start).whereabouts.filter { w in
+        let mid: Adventure = adventure ?? start
+        var inView: [LoreEntry] = []
+        for w in mid.whereabouts where w.here != false {
             let f = Cards.first(w.name).lowercased()
-            return w.here != false && f != me && f != "you"
-        }.compactMap { Cards.card(for: $0, in: adventure ?? start) }.filter { Cards.mentions($0, in: reply) }
+            guard f != me, f != "you", let c = Cards.card(for: w, in: mid), Cards.mentions(c, in: reply) else { continue }
+            inView.append(c)
+        }
         for c in inView.prefix(3) {
             let dm = await ask("What is " + c.name + " doing?", Prompts.rebuildDoing(c.name + roleOf(c)), JSONGrammar.text("doing", chars: 80), 40)
             guard dm != nil else { return }
@@ -2074,8 +2077,10 @@ final class StoryEngine {
 
         // 6. Anything lasting? Filed under the person it names (the role a nameless story uses
         // becomes the name).
-        let present = (adventure ?? start).cast.filter { c in
-            (adventure ?? start).whereabouts.contains { $0.here != false && Cards.card(for: $0, in: adventure ?? start)?.id == c.id }
+        let late: Adventure = adventure ?? start
+        var present: [LoreEntry] = []
+        for w in late.whereabouts where w.here != false {
+            if let c = Cards.card(for: w, in: late) { present.append(c) }
         }
         let knownFacts = present.flatMap { Cards.facts(about: $0, in: start).suffix(3) } + start.facts.suffix(3)
         var fq = Prompts.rebuildFacts
