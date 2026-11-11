@@ -113,48 +113,6 @@ enum PlayScripts {
     I ask the woman at the bar if she saw me working.
     I ask the bartender if I have earned a drink.
 
-    # A3 Who comes with me
-    I sit at the bar and say hello to the woman next to me.
-    I ask her name and tell her mine is Sam.
-    I ask her if she would like company walking home.
-    I ask the bartender to lend us an umbrella.
-    We leave together through the flower shop.
-    We walk down the street under the umbrella.
-    I ask her what she is thinking.
-    Who is with me right now?
-    I say goodnight to her at her door.
-    I walk back to the speakeasy alone.
-    I give the bartender his umbrella back.
-    I ask him where she is now.
-
-    # A4 What they know about me
-    I sit at the bar. Evening, both of you.
-    I tell them my name is Sam.
-    I tell them I just got into town this morning on the train from Chicago.
-    I tell them my dream is to open a little bookshop one day.
-    I tell the bartender I am only in town until Friday.
-    I talk with them about the weather for a while.
-    I ask about the record that is playing.
-    I ask the woman what she does for work.
-    I ask the bartender what he is saving for.
-    I ask the woman what my name is and where I came from.
-    I ask the bartender what my dream is and when I leave town.
-    I ask them both how they know each other.
-
-    # A5 Names that are not people
-    I sit at the bar and tell them my name is Sam.
-    I tell them about my brother Tom, who is a sailor in San Diego.
-    Actually, I tell them, my name is not Sam. It is Jack.
-    I ask the bartender what he thinks my name is.
-    I tell them about a girl I knew in Chicago called Rose.
-    I ask the woman if she knows anyone in Chicago.
-    I ask them what they would call me if they had to pick a nickname.
-    I laugh and tell them the truth. I am Sam, and I was only fooling.
-    Who is in this room right now?
-    I look to the door as a young man with a violin case comes in.
-    I ask the young man his name.
-    Who is in this room now?
-
     # A6 Someone walks in
     I sit at the bar and order a coffee.
     I tell them my name is Sam.
@@ -178,6 +136,56 @@ enum PlayScripts {
     I sit back down on my stool.
     Where am I, and who is here?
     I order a drink for both of us.
+
+    # A8 Sitting back down
+    I sit at the bar and order a coffee.
+    I go out to the street to look at the rain.
+    I walk back to the speakeasy.
+    I sit back down on my stool.
+    Where am I?
+    I go down to the cellar with the bartender.
+    I carry a crate back up to the bar.
+    I sit back down on my stool.
+    Where am I, and who is with me?
+    I ask the bartender what time it is.
+
+    # A9 Things left behind
+    I take off my hat and put it on the bar next to me.
+    I order a whiskey and put a dollar beside it.
+    I step out into the flower shop and buy a single red rose.
+    I go out to the street and look at the rain.
+    I walk back to the speakeasy with the rose.
+    Is my hat still on the bar where I left it?
+    I give the rose to the woman at the bar.
+    What am I carrying now?
+    I put my hat back on.
+    What is on the bar in front of me?
+
+
+    # A10 Someone leaves
+    I sit at the bar and say hello to both of them.
+    I ask the woman what time she has to go home.
+    The woman says goodnight, puts on her coat and leaves.
+    Who is here with me now?
+    I ask the bartender where she lives.
+    I talk with the bartender about the rain for half an hour.
+    I ask him if he thinks she will come back tonight.
+    The woman comes back in, soaked, because she forgot her umbrella.
+    I ask her what happened.
+    Who is here with me now?
+
+
+    # A11 A name given late
+    I sit at the bar next to a quiet man in a grey suit.
+    I nod to the man in the grey suit and say it is a rough night.
+    I ask the bartender who the man in the grey suit is.
+    I ask the man in the grey suit what his name is.
+    I tell him my name is Sam.
+    I ask him what he does for work.
+    I ask the bartender if he knew the man's name.
+    I buy the man in the grey suit a drink, and say his name.
+    Who is here with me now?
+    I ask the man what brought him out tonight.
 
     # 04 The hat I left behind
     I take off my hat and my wet coat and hang the coat on the hook by the door.

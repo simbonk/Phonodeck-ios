@@ -1176,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11m"
+    static let build = "build 2026-11-11n"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1422,7 +1422,8 @@ final class StoryEngine {
             }
         }
         // "Upstairs", "back up": the way the player came.
-        let stairs = #"(?i)\b(upstairs|back up|up the stairs|downstairs|back down)\b"#
+        // "Sit back down" is not a staircase: "back up" and "back down" count only after a moving word.
+        let stairs = #"(?i)\b(upstairs|downstairs|up the stairs|down the stairs)\b|\b(go|goes|head|heads|climb|climbs|come|comes|walk|walks|run|runs|hurry|hurries|carry|carries|bring|brings|step|steps)\b(\s+\w+){0,3}?\s+back\s+(up|down)\b"#
         if read.going.isEmpty || read.going == "somewhere new", read.newPlace.isEmpty, !a.location.isEmpty,
            input.range(of: stairs, options: .regularExpression) != nil {
             let here = a.location
@@ -1431,6 +1432,13 @@ final class StoryEngine {
                 read.going = tie.from.caseInsensitiveCompare(here) == .orderedSame ? tie.to : tie.from
                 backInside = true
             }
+        }
+        // "I go out to the street", "we walk to the corner": somewhere new, named by its plain word,
+        // even when the reading said the player stays.
+        if read.going.isEmpty || (read.going == "somewhere new" && read.newPlace.isEmpty), !a.location.isEmpty,
+           let noun = Self.newPlaceWord(input, in: a) {
+            read.going = "somewhere new"
+            read.newPlace = "The " + noun
         }
         let me = a.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
         // "Her" or "him" with no name: when only one person here fits, that is who is meant.
@@ -2033,7 +2041,7 @@ final class StoryEngine {
         var nameFix = ""
         if !hidden, !opening {
             let namey = Continuity.asksName(input) != nil || introduced
-            if let fixed = Self.fixMadeUpName(&a, reply: reply, namey: namey) {
+            if let fixed = Self.fixMadeUpName(&a, reply: reply, namey: namey, playerSaid: input) {
                 reply = fixed.reply
                 nameFix = fixed.note
                 namesThisTurn.append(fixed.name)
@@ -2856,7 +2864,22 @@ final class StoryEngine {
     /// The storyteller sometimes invents a name for the person the player is with ("Sarah," she
     /// replies) instead of the one on their card. When the reply has that person give a name that
     /// belongs to nobody in the story, it is swapped for their real one, and the name counts as said.
-    static func fixMadeUpName(_ a: inout Adventure, reply: String, namey: Bool) -> (reply: String, note: String, name: String)? {
+    /// A card's new name, carried everywhere the old one was used.
+    static func renameCard(_ a: inout Adventure, id: UUID, to name: String) {
+        guard let i = a.lore.firstIndex(where: { $0.id == id }) else { return }
+        let old = a.lore[i].name
+        let oldKey = old.lowercased(), newKey = name.lowercased()
+        if a.lore[i].role.isEmpty { a.lore[i].role = old.replacingOccurrences(of: "The ", with: "the ") }
+        a.lore[i].name = name
+        a.lore[i].known = true
+        for j in a.whereabouts.indices where a.whereabouts[j].name.caseInsensitiveCompare(old) == .orderedSame { a.whereabouts[j].name = name }
+        if let v = a.wants.removeValue(forKey: oldKey) { a.wants[newKey] = v }
+        if let v = a.knows.removeValue(forKey: oldKey) { a.knows[newKey] = v }
+        if let v = a.feelings.removeValue(forKey: oldKey) { a.feelings[newKey] = v }
+        a.facts = a.facts.map { $0.hasPrefix(old + " ") ? name + String($0.dropFirst(old.count)) : $0 }
+    }
+
+    static func fixMadeUpName(_ a: inout Adventure, reply: String, namey: Bool, playerSaid: String = "") -> (reply: String, note: String, name: String)? {
         let me = Cards.first(a.playerName).lowercased()
         let facing: [LoreEntry] = a.whereabouts.filter { $0.here != false && $0.engaged == true && Cards.first($0.name).lowercased() != me }
             .compactMap { Cards.card(for: $0, in: a) }.filter { !$0.isPlayer && !$0.byPlayer }
@@ -2879,6 +2902,12 @@ final class StoryEngine {
             let said = ns.substring(with: m.range(at: 1))
             let low = said.lowercased()
             if known.contains(low) || notNames.contains(low) { continue }
+            // Someone known only by a description ("The young man") who gives a name has told
+            // the player who they are: the card takes the name.
+            if c.name.hasPrefix("The ") {
+                renameCard(&a, id: c.id, to: said)
+                return (reply, c.name + " gave a name: " + said, said)
+            }
             let real = Cards.first(c.name)
             let swap = "\\b" + NSRegularExpression.escapedPattern(for: said) + "\\b"
             let fixed = reply.replacingOccurrences(of: swap, with: real, options: .regularExpression)
@@ -2939,6 +2968,24 @@ final class StoryEngine {
         guard what.count > 8 else { return nil }
         let all = ["them", "everyone", "everybody"].contains(who)
         return ("you said " + what, all)
+    }
+
+    /// The plain word for a new place the message goes to ("the street" in "I go out to the
+    /// street to look at the rain"), when it is not a place on the map or something in this one.
+    static func newPlaceWord(_ input: String, in a: Adventure) -> String? {
+        let pattern = #"(?i)\b(?:go|goes|step|steps|walk|walks|head|heads|run|runs|hurry|hurries|wander|wanders|slip|slips)\s+(?:out\s+|outside\s+|back\s+|over\s+|down\s+|up\s+)?(?:to|into|onto|toward|towards)\s+the\s+([a-z]{4,}(?:\s+(?:shop|store|house|room|hall|street|station|park|market|garden|yard|office|cafe|hotel|lobby|stairs))?)\b"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: input, range: NSRange(location: 0, length: (input as NSString).length)), m.numberOfRanges > 1 else { return nil }
+        let phrase = (input as NSString).substring(with: m.range(at: 1)).lowercased()
+        let noun = String(phrase.split(separator: " ").last ?? "")
+        if Continuity.wordSet(a.setup.place + " " + a.setup.describe + " " + a.setup.world).contains(noun) { return nil }
+        let dull: Set<String> = ["door", "doorway", "window", "bar", "counter", "table", "stool", "booth", "corner", "wall", "gramophone", "record", "fire", "fireplace",
+                                 "piano", "stage", "bartender", "woman", "others", "front", "back", "side", "edge", "middle", "rain"]
+        if dull.contains(noun) { return nil }
+        let here = Continuity.wordSet(a.location + " " + (a.placeThings[a.location.lowercased()] ?? []).joined(separator: " "))
+        if here.contains(noun) { return nil }
+        for p in a.lore.filter({ $0.kind == .place }).map(\.name) + a.places where Continuity.wordSet(p).contains(noun) { return nil }
+        return phrase
     }
 
     /// A place on the map the message goes to by a plain word for it ("back to the bar" for The
