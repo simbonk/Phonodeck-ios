@@ -219,7 +219,7 @@ enum Prompts {
     Did someone in the story say their own name in this moment? {"who":"one choice from the list","name":"the name they said, exactly as the story has it; empty if nobody"}
     """
     static let rebuildContradiction = """
-    Does the story in this moment contradict any line ON FILE? {"contradicts":"yes or no","line":"if yes: the line ON FILE it contradicts, copied; otherwise empty"}
+    Does the story in this moment say something that cannot be true if a line ON FILE is true (a different name, job, place or fact)? Saying the same thing again, or adding to it, is no. {"contradicts":"yes or no","line":"if yes: the line ON FILE, copied; otherwise empty","said":"if yes: the words in THE STORY that clash with it, copied; otherwise empty"}
     """
     /// Asked before the reply, only when the player's action leans on a thing they must have.
     static let canDo = """

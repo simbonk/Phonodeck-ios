@@ -302,7 +302,11 @@ enum Continuity {
             return "Narrate in second person: the player is \"you\", never \"the player\"."
         }
         let first = playerName.split(separator: " ").first.map(String.init) ?? ""
-        if first.count > 1, narration.range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil {
+        // The name as a name ("she hears you say Simon", "the name Simon", "your name is Simon") is
+        // not the narration calling the player by it.
+        let esc = NSRegularExpression.escapedPattern(for: first)
+        let asName = narration.replacingOccurrences(of: #"(?i)\b(say|says|said|saying|name|named|called|hear|hears|heard|repeat|repeats|repeated|introduce|introduces|tell|tells|told|is|it's)\b(\W+\w+){0,3}?\W+"# + esc + "\\b", with: " ", options: .regularExpression)
+        if first.count > 1, asName.range(of: "\\b" + esc + "\\b", options: .regularExpression) != nil {
             return "Narrate in second person: the player is \"you\". The name \(first) belongs only in other characters' dialogue."
         }
         let you = words.filter { ["you", "your", "yours", "yourself", "you're", "you've", "you'll", "you'd"].contains($0) }.count

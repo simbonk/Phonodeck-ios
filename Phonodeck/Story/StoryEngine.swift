@@ -1176,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11n"
+    static let build = "build 2026-11-11o"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1340,18 +1340,32 @@ final class StoryEngine {
         var prompt = context
         let lines: [String] = looked.filter { !$0.lines.isEmpty }.map { "- " + $0.look.text + ": " + clip($0.text, 400) }
         prompt += "\n\nWHAT YOU LOOKED UP (from the app; an answer never contradicts it):\n" + (lines.isEmpty ? "- nothing" : lines.joined(separator: "\n"))
-        prompt += "\n\n" + Prompts.planQuestion + "\nThe form:"
+        let asked = Self.asks(input)
+        prompt += "\n\n" + Prompts.planQuestion
+        if asked { prompt += "\nTHE PLAYER ASKED SOMETHING: \"answer\" must not be empty. Give the real answer, plainly: a reason, a yes or no, a name, a number." }
+        prompt += "\nThe form:"
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 200, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.plan))) ?? ""
+                                             options: .init(maxTokens: 200, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.plan(asked: asked)))) ?? ""
         let m = JSONExtract.object(reply) ?? Self.salvageJSON(reply)
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         read.answer = Self.echoesPrompt(s("answer")) ? "" : clip(s("answer"), 260)
+        // The plan left a question unanswered (a model that ignores grammars, or an answer too
+        // vague to use): one short question asks for the answer alone.
+        if asked, read.answer.count < 6 || Self.vagueAnswer(read.answer) {
+            let q: String = prompt.components(separatedBy: Prompts.planQuestion).first ?? context
+            let ask: String = q + "\n\nQUESTION: The player asked: \"" + clip(input, 300) + "\". What plain, concrete answer does the person they asked give, in one short sentence? Never vague, never a riddle, never the player's own words. {\"answer\":\"one short sentence\"}\nThe form:"
+            let raw = (try? await llm.complete(system: nil, prompt: ask,
+                                               options: .init(maxTokens: 80, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.text("answer", chars: 200)))) ?? ""
+            let am = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+            let got: String = ((am["answer"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if got.count >= 6, !Self.echoesPrompt(got), !Self.vagueAnswer(got) { read.answer = clip(got, 260) }
+        }
         read.beat = Self.echoesPrompt(s("beat")) ? "" : clip(s("beat"), 260)
         read.does = Self.echoesPrompt(s("does")) ? "" : clip(s("does"), 200)
         // The restated action must be the player's own words: one that adds what they didn't say
         // ("You tell her your name is Clara") is dropped, and the message itself is used.
         let castWords: String = a.cast.map { $0.name + " " + $0.role }.joined(separator: " ")
-        let ownText: String = input + " you yourself " + castWords
+        let ownText: String = input + " you yourself ask asks tell tells say says " + castWords
         let own = Continuity.wordSet(ownText)
         // A name the player didn't say this turn is never put in their mouth.
         let myFirst: String = Cards.first(a.playerName).lowercased()
@@ -2558,7 +2572,7 @@ final class StoryEngine {
         let theirs: [Set<String>] = start.cast.map { Continuity.wordSet($0.desc) }
         let mineSaid = Continuity.wordSet(playerSaid)
         let held = checked(strings(cm, "has", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { h in
-            if h.range(of: #"(?i)\b(smell|scent|aroma|odou?r|light|glow|sound|air|warmth|chill|feeling)s?\b"#, options: .regularExpression) != nil {
+            if h.range(of: #"(?i)\b(smell|scent|aroma|odou?r|light|glow|sound|air|warmth|chill|feeling|time|moment|chance|question|idea|plan|thought|memory|patience|courage|nerve|worry)s?\b"#, options: .regularExpression) != nil {
                 refused.append(h + " (not something you carry)")
                 return false
             }
@@ -2754,13 +2768,21 @@ final class StoryEngine {
         onFile = seenLines
         if !onFile.isEmpty {
             let cq: String = "ON FILE:\n" + onFile.map { "- " + clip($0, 160) }.joined(separator: "\n") + "\n" + Prompts.rebuildContradiction
-            let xm = await ask("Does anything contradict the file?", cq, JSONGrammar.yesNo("contradicts", then: "line", chars: 160), 70)
+            let xm = await ask("Does anything contradict the file?", cq, JSONGrammar.yesNo("contradicts", then: "line", 160, and: "said", 120), 110)
             guard xm != nil else { return }
             let yes = ((xm?["contradicts"] as? String) ?? "") == "yes"
             let lineSaid: String = ((xm?["line"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n-"))
             var hit: String = ""
+            let clash: String = ((xm?["said"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n-\""))
             if yes, lineSaid.count > 12 {
                 hit = onFile.first(where: { Self.similar($0, lineSaid) || $0.contains(lineSaid) }) ?? ""
+            }
+            // A slip has to be shown: words really in the story, which don't just say the line on
+            // file again. A "yes" that quotes nothing, or quotes agreement, is no slip.
+            if !hit.isEmpty {
+                let inStory = clash.count > 8 && Continuity.grounded(clash, in: Continuity.wordSet(reply), share: 0.8)
+                let agrees = Self.similar(clash, hit) || Continuity.grounded(clash, in: Continuity.wordSet(hit), share: 0.7)
+                if !inStory || agrees { refused.append("Not a slip (" + (inStory ? "it agrees with the file" : "no words from the story") + "): " + clip(hit, 80)); hit = "" }
             }
             asked.append("Does anything contradict the file? → " + (hit.isEmpty ? "no" : "yes: " + clip(hit, 100)))
             commit { now in
@@ -3693,6 +3715,11 @@ final class StoryEngine {
         // "I'm freaked out. What happened to my crew".
         let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b|\b(how|what|why|who|where|when|which)\s+(happened|happens|is|are|was|were|did|do|does|can|could|should|will|would|has|have)\b"#
         return t.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// An answer that dodges ("it's complicated", "you'll see", "that's a story for another time").
+    static func vagueAnswer(_ s: String) -> Bool {
+        s.range(of: #"(?i)\b(it'?s complicated|you'?ll see|for another (time|night|day)|never you mind|who knows|that depends|nothing (you|for you)|some things|in time|wouldn'?t you like)\b"#, options: .regularExpression) != nil
     }
 
     /// The player writes prose rather than commands.

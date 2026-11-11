@@ -110,16 +110,20 @@ enum JSONGrammar {
 
     /// The second half of the read (see `Prompts.planQuestion`): the moment, planned from what was
     /// looked up.
-    static let plan = [
-        "root ::= \"{\" ws " + [
-            key("does") + " s200",
-            key("answer") + " s240",
-            key("beat") + " s240",
-        ].joined(separator: " \",\" ws ") + " ws \"}\"",
-        capped("s240", 240),
-        capped("s200", 200),
-        common,
-    ].joined(separator: "\n")
+    /// When the player asked something, the answer can't be left empty.
+    static func plan(asked: Bool) -> String {
+        [
+            "root ::= \"{\" ws " + [
+                key("does") + " s200",
+                key("answer") + (asked ? " sans" : " s240"),
+                key("beat") + " s240",
+            ].joined(separator: " \",\" ws ") + " ws \"}\"",
+            capped("s240", 240),
+            capped("s200", 200),
+            #"sans ::= "\"" chr{6,240} "\"""#,
+            common,
+        ].joined(separator: "\n")
+    }
 
     /// One short answer after a reply (see `Prompts.rebuild`): a list of up to `n` strings of at
     /// most `chars` characters, under one key.
