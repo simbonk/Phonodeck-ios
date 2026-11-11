@@ -1,12 +1,10 @@
 import SwiftUI
 
-/// The World button: the web app's Mission, Story and World tabs in one panel.
-/// Mission: the feeling meter, the mission track (or your goal) and what has happened.
-/// Story: the story bible, editable. World: every person, place and thing the story has collected.
+/// The World button: the world as it is this turn, with a live feed of how each turn was worked
+/// out, and the people, place and facts in view.
 struct WorldView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @State private var tab = Tab.world
     @State private var bible = ""
     @State private var editing: LoreEntry?
     /// The bible as the panel shows it (names not said yet are shown as roles), to tell an edit apart.
@@ -14,27 +12,18 @@ struct WorldView: View {
     @State private var myName = ""
     /// The turn the turn guide shows (nil: the latest, following play live).
     @State private var frameAt: Int?
-
-    enum Tab: String, CaseIterable { case mission = "Mission", story = "Story", world = "World" }
+    /// Every question in the turn feed open (otherwise only the one just answered is).
+    @State private var expandAll = false
 
     var body: some View {
         NavigationStack {
             Group {
                 if let a = app.engine.adventure {
                     VStack(spacing: 0) {
-                        Picker("Panel", selection: $tab) {
-                            ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
+                        // The world, as it is this turn (the Mission and Story tabs are gone).
                         ScrollView {
                             VStack(alignment: .leading, spacing: 12) {
-                                switch tab {
-                                case .mission: mission(a)
-                                case .story: story(a)
-                                case .world: world(a)
-                                }
+                                world(a)
                             }
                             .padding()
                             .frame(maxWidth: 760)
@@ -60,159 +49,6 @@ struct WorldView: View {
             .sheet(item: $editing) { e in
                 LoreEditor(entry: e) { app.engine.saveLore($0) } onDelete: { app.engine.deleteLore($0.id) }
             }
-        }
-    }
-
-    // MARK: Mission
-
-    @ViewBuilder
-    private func mission(_ a: Adventure) -> some View {
-        Caps(text: "The feeling")
-        card {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(a.setup.feeling.isEmpty ? "Whatever fits best" : a.setup.feeling).font(.headline).foregroundStyle(Theme.accent)
-                if let f = a.mood.feeling {
-                    HStack(spacing: 3) {
-                        ForEach(0..<10, id: \.self) { k in
-                            Circle().fill(k < f ? Theme.accent : Theme.line).frame(width: 9, height: 9)
-                        }
-                        Text("\(f)/10 last reading" + (a.mood.enjoying.isEmpty ? "" : " · enjoying \(a.mood.enjoying)"))
-                            .font(.caption).foregroundStyle(Theme.dim).padding(.leading, 6)
-                    }
-                } else {
-                    Text("Readings appear as you play.").font(.caption).foregroundStyle(Theme.dim)
-                }
-            }
-        }
-        Text(sessionLine(a))
-            .font(.footnote).foregroundStyle(Theme.dim)
-        if !a.storyTime.isEmpty || !a.whereabouts.isEmpty {
-            Caps(text: "Right now").padding(.top, 8)
-            if !a.storyTime.isEmpty {
-                // The story's clock as one badge, above who is where.
-                Label(a.storyTime, systemImage: "clock")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Theme.accent.opacity(0.14), in: Capsule())
-            }
-            if !a.whereabouts.isEmpty {
-            card {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(a.whereabouts) { w in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(display(w.name, a)).font(.subheadline.bold()).foregroundStyle(Theme.fg)
-                            Text([w.at, w.doing].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(Theme.dim)
-                            if !w.heading.isEmpty { Text("Heading to " + w.heading).font(.caption).foregroundStyle(Theme.accent) }
-                        }
-                    }
-                }
-            }
-            }
-        }
-        if !a.timeline.isEmpty {
-            Caps(text: "Timeline").padding(.top, 8)
-            card {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(a.timeline.enumerated()), id: \.offset) { _, t in
-                        Text(Continuity.unnamed(t, in: a)).font(.caption).foregroundStyle(Theme.fg)
-                    }
-                }
-            }
-        }
-        if a.setup.simulator {
-            Caps(text: "Your goal").padding(.top, 8)
-            card {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(a.setup.goal.isEmpty ? "(open: follow your nose)" : a.setup.goal).foregroundStyle(Theme.fg)
-                    if !a.goalProgress.isEmpty { Text("So far: " + a.goalProgress).font(.caption).foregroundStyle(Theme.dim) }
-                }
-            }
-        } else {
-            Caps(text: "Mission track").padding(.top, 8)
-            if !a.location.isEmpty { Text("Current location: " + a.location).font(.footnote).foregroundStyle(Theme.dim) }
-            if a.beats.isEmpty {
-                Text("Mission steps will appear here.").font(.footnote).foregroundStyle(Theme.dim)
-            } else {
-                let active = a.beats.firstIndex { !$0.done }
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(a.beats.enumerated()), id: \.offset) { k, b in
-                        HStack(alignment: .top, spacing: 12) {
-                            VStack(spacing: 0) {
-                                Circle()
-                                    .fill(b.done ? Theme.accent : Theme.bg)
-                                    .overlay(Circle().stroke(b.done || k == active ? Theme.accent : Theme.dim, lineWidth: 2))
-                                    .shadow(color: k == active ? Theme.accent : .clear, radius: 6)
-                                    .frame(width: 14, height: 14)
-                                    .padding(.top, 3)
-                                if k < a.beats.count - 1 { Rectangle().fill(Theme.line).frame(width: 2).frame(maxHeight: .infinity) }
-                            }
-                            .frame(width: 14)
-                            Text(b.text)
-                                .strikethrough(b.done)
-                                .foregroundStyle(b.done ? Theme.dim : Theme.fg)
-                                .padding(.bottom, 14)
-                            Spacer(minLength: 0)
-                        }
-                    }
-                }
-            }
-        }
-        let visited = a.lore.filter { $0.kind == .place }.map(\.name)
-        if !visited.isEmpty {
-            Caps(text: a.setup.simulator ? "Places" : "On the map").padding(.top, 8)
-            Text(visited.joined(separator: " · ")).foregroundStyle(Theme.fg)
-        }
-        if !a.links.isEmpty {
-            Caps(text: "Routes taken").padding(.top, 8)
-            Text(a.links.suffix(8).map { "\($0.from) → \($0.to)" }.joined(separator: "\n")).font(.callout).foregroundStyle(Theme.fg)
-        }
-        if !a.chapters.isEmpty {
-            Caps(text: "Chapters").padding(.top, 8)
-            ForEach(Array(a.chapters.enumerated()), id: \.offset) { _, c in card { Text(c).font(.callout).foregroundStyle(Theme.fg) } }
-        }
-        if !a.events.isEmpty {
-            Caps(text: a.setup.simulator ? "Moments captured" : "Recent events").padding(.top, 8)
-            card {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(a.events.suffix(10).enumerated()), id: \.offset) { _, e in Text("• " + e).font(.callout).foregroundStyle(Theme.fg) }
-                }
-            }
-        }
-    }
-
-    private func sessionLine(_ a: Adventure) -> String {
-        let kind: String = a.setup.simulator ? "Experience simulator" : "Curated story"
-        let played = Int(a.elapsed / 60)
-        if app.engine.grounded { return kind + " · \(played) minutes played · no time limit" }
-        var s: String = kind + " · \(played) of \(a.minutes) minutes played"
-        if let l = a.left, !a.ended { s += " · about \(l) more turn" + (l == 1 ? "" : "s") }
-        return s
-    }
-
-    // MARK: Story bible
-
-    @ViewBuilder
-    private func story(_ a: Adventure) -> some View {
-        Text("Edit by hand any time. Your changes win over anything the story said before, from your next message on.")
-            .font(.footnote).foregroundStyle(Theme.dim)
-        TextEditor(text: $bible)
-            .font(.callout)
-            .foregroundStyle(Theme.fg)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: 360)
-            .padding(8)
-            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(bible == shownBible ? Theme.line : Theme.accent.opacity(0.6)))
-        // Save appears only once something has been changed.
-        if bible != shownBible {
-            HStack {
-                Button("Save story") { saveBible() }
-                    .buttonStyle(.borderedProminent).tint(Theme.accent).foregroundStyle(Theme.onAccent)
-                Button("Discard changes") { bible = shownBible }
-                    .buttonStyle(.bordered)
-            }
-            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 
@@ -265,64 +101,132 @@ struct WorldView: View {
 
     // MARK: Turn guide
 
-    /// One turn at a time: the world as it stood after that turn, what the storyteller looked up
-    /// before writing it, the short questions asked after it, and what changed. The latest turn
-    /// updates live while its questions are being asked.
+    /// One turn at a time, as a feed you can watch: the world after that turn, then each question
+    /// in the order it was asked. While the questions run, the one just answered shows its answer
+    /// and what it changed, then folds down to one line as the next one comes in. When the turn is
+    /// done everything is folded; "Expand all" opens it up. A new turn slides in.
     @ViewBuilder
     private func turnGuide(_ a: Adventure) -> some View {
         let last = a.frames.count - 1
         let k = min(max(0, frameAt ?? last), last)
         let f = a.frames[k]
-        let live = k == last && !app.engine.rebuildStep.isEmpty
+        let asking = k == last && !app.engine.rebuildStep.isEmpty
+        let thinking = k == last && !app.engine.stage.isEmpty
         HStack(spacing: 10) {
-            Button { frameAt = max(0, k - 1) } label: { Image(systemName: "chevron.left") }
+            Button { withAnimation(.snappy) { frameAt = max(0, k - 1) } } label: { Image(systemName: "chevron.left") }
                 .disabled(k == 0)
             VStack(spacing: 1) {
                 Text(f.turn == 0 ? "Opening" : "Turn \(f.turn)").font(.headline).foregroundStyle(Theme.accent)
-                Text(k == last ? (live ? "updating now" : "latest") : "\(last - k) turn\(last - k == 1 ? "" : "s") ago")
+                    .contentTransition(.numericText())
+                Text(k == last ? (asking ? "updating now" : "latest") : "\(last - k) turn\(last - k == 1 ? "" : "s") ago")
                     .font(.caption).foregroundStyle(Theme.dim)
             }
             .frame(maxWidth: .infinity)
-            Button { frameAt = k + 1 >= last ? nil : k + 1 } label: { Image(systemName: "chevron.right") }
+            Button { withAnimation(.snappy) { frameAt = k + 1 >= last ? nil : k + 1 } } label: { Image(systemName: "chevron.right") }
                 .disabled(k == last)
         }
         .buttonStyle(.bordered)
-        card {
-            VStack(alignment: .leading, spacing: 6) {
-                if live {
-                    Label("Asking: " + Continuity.unnamed(app.engine.rebuildStep, in: a), systemImage: "sparkles")
-                        .font(.caption.bold()).foregroundStyle(Theme.accent)
+        if thinking {
+            // The next turn is being worked out (before the reply): what the storyteller is doing.
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Turn \(f.turn + 1): " + app.engine.stage).font(.caption.bold()).foregroundStyle(Theme.accent)
+            }
+            .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+        VStack(alignment: .leading, spacing: 10) {
+            card {
+                VStack(alignment: .leading, spacing: 6) {
+                    attr("Place", f.place.isEmpty ? "On the way somewhere new" : f.place)
+                    if let s = f.spot, !s.isEmpty { attr("You are", s) }
+                    if !f.time.isEmpty { attr("Time", f.time) }
+                    attr("Facing", f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"))
+                    if let s = f.feelings, !s.isEmpty { attr("How they feel", s.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
+                    if !f.room.isEmpty { attr("In the room", f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
+                    if !f.have.isEmpty { attr("You have", f.have.joined(separator: "; ")) }
+                    if !f.around.isEmpty { attr("Around", f.around.joined(separator: "; ")) }
+                    if let s = f.sound, !s.isEmpty { attr("Background", s) }
+                    if let s = f.pending, !s.isEmpty { attr("Still hanging", s.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
                 }
-                attr("Place", f.place.isEmpty ? "On the way somewhere new" : f.place)
-                attr("Facing", f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"))
-                if let s = f.spot, !s.isEmpty { attr("You are", s) }
-                if let s = f.feelings, !s.isEmpty { attr("How they feel", s.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
-                if !f.room.isEmpty { attr("In the room", f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
-                if !f.have.isEmpty { attr("You have", f.have.joined(separator: "; ")) }
-                if !f.around.isEmpty { attr("Around", f.around.joined(separator: "; ")) }
-                if let s = f.sound, !s.isEmpty { attr("Background", s) }
-                if let s = f.pending, !s.isEmpty { attr("Still hanging", s.joined(separator: "\n")) }
-                if !f.changed.isEmpty {
-                    guideList("What changed", f.changed, a)
+                .animation(.smooth, value: f.asked.count)
+            }
+            HStack {
+                Caps(text: "How the turn was worked out")
+                Spacer()
+                Button(expandAll ? "Fold all" : "Expand all") { withAnimation(.snappy) { expandAll.toggle() } }
+                    .font(.caption.bold())
+            }
+            .padding(.top, 2)
+            if !f.looked.isEmpty {
+                step(icon: "eye", question: "Looked up before the reply", answer: f.looked.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"),
+                     changes: [], open: expandAll, a)
+            }
+            ForEach(Array(f.asked.enumerated()), id: \.offset) { i, line in
+                let parts = line.components(separatedBy: " → ")
+                let q: String = parts.first ?? line
+                let ans: String = parts.dropFirst().joined(separator: " → ")
+                let changes: [String] = (f.steps ?? []).indices.contains(i) ? f.steps![i] : []
+                // The one just answered stays open while the next question runs.
+                let open = expandAll || (asking && i == f.asked.count - 1)
+                step(icon: "checkmark.circle.fill", question: q, answer: ans, changes: changes, open: open, a)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+            }
+            if asking {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(Continuity.unnamed(app.engine.rebuildStep, in: a)).font(.callout.bold()).foregroundStyle(Theme.accent)
+                    Spacer()
                 }
-                if !f.looked.isEmpty {
-                    guideList("Looked up before the reply", f.looked, a)
-                }
-                if !f.asked.isEmpty {
-                    guideList("Asked after the reply", f.asked, a)
-                }
+                .padding(10)
+                .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .id("asking-" + app.engine.rebuildStep)
+            }
+            if !asking, !f.changed.isEmpty {
+                step(icon: "arrow.triangle.2.circlepath", question: "What changed this turn", answer: "",
+                     changes: f.changed.map { Continuity.unnamed($0, in: a) }, open: true, a)
             }
         }
+        .id(f.id)
+        .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .leading).combined(with: .opacity)))
+        .animation(.spring(duration: 0.45), value: f.asked.count)
+        .animation(.spring(duration: 0.45), value: app.engine.rebuildStep)
         .padding(.bottom, 8)
     }
 
-    private func guideList(_ title: String, _ lines: [String], _ a: Adventure) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption.bold()).foregroundStyle(Theme.dim).padding(.top, 4)
-            ForEach(Array(lines.enumerated()), id: \.offset) { _, l in
-                Text("• " + Continuity.unnamed(l, in: a)).font(.caption).foregroundStyle(Theme.fg)
+    /// One question in the feed: folded to a line, or open with its answer and what it changed.
+    private func step(icon: String, question: String, answer: String, changes: [String], open: Bool, _ a: Adventure) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: icon).font(.caption).foregroundStyle(Theme.accent)
+                Text(Continuity.unnamed(question, in: a)).font(open ? .callout.bold() : .caption.bold()).foregroundStyle(Theme.fg)
+                if !open, !answer.isEmpty {
+                    Text(Continuity.unnamed(answer, in: a)).font(.caption).foregroundStyle(Theme.dim).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                if !open, !changes.isEmpty {
+                    Text("\(changes.count) change\(changes.count == 1 ? "" : "s")").font(.caption2.bold()).foregroundStyle(Theme.accent)
+                }
+            }
+            if open {
+                if !answer.isEmpty {
+                    Text(Continuity.unnamed(answer, in: a)).font(.callout).foregroundStyle(Theme.fg)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+                ForEach(Array(changes.enumerated()), id: \.offset) { _, c in
+                    Label(Continuity.unnamed(c, in: a), systemImage: "sparkle").font(.caption).foregroundStyle(Theme.accent)
+                        .transition(.scale(scale: 0.9, anchor: .leading).combined(with: .opacity))
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, open ? 10 : 6)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(open ? Theme.accent.opacity(0.5) : Theme.line))
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.snappy) { expandAll.toggle() } }
     }
 
     // MARK: Attributes
