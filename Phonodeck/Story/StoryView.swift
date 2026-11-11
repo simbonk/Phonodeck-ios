@@ -68,7 +68,7 @@ struct StoryView: View {
                         Text(a.title).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
                     }
                     Spacer(minLength: 6)
-                    if !a.ended {
+                    if !a.ended, !engine.grounded {
                         HStack(spacing: 0) {
                             HStack(spacing: 4) {
                                 Image(systemName: a.ended ? "checkmark.circle" : "timer").font(.subheadline.weight(.semibold))
@@ -94,6 +94,7 @@ struct StoryView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                if !engine.grounded {
                 GeometryReader { g in
                     let f = a.ended ? 1 : max(0, min(1, 1 - Double(left) / Double(max(1, a.minutes))))
                     ZStack(alignment: .leading) {
@@ -102,6 +103,7 @@ struct StoryView: View {
                     }
                 }
                 .frame(height: 3)
+                }
             }
         }
     }

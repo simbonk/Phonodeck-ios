@@ -25,6 +25,10 @@ final class LlamaEngine: @unchecked Sendable {
     /// The chat template stored in the GGUF file (Jinja), if any.
     private let template: String?
     let contextTokens: Int
+    /// The tokens the conversation memory holds after the last call (empty when unknown), and how
+    /// many tokens the last call could reuse from it.
+    private var cached: [llama_token] = []
+    private(set) var reused = 0
 
     private static let backend: Void = { llama_backend_init() }()
 
@@ -124,16 +128,28 @@ final class LlamaEngine: @unchecked Sendable {
     /// fixed shape; a grammar llama.cpp can't parse is skipped rather than failing the call.
     func generate(prompt: [llama_token], maxTokens: Int, temperature: Float, topP: Float,
                   repetitionPenalty: Float?, grammar: String? = nil, onText: (String) -> Bool) throws -> Double {
-        // Each reply starts from a clean conversation memory.
-        llama_memory_clear(llama_get_memory(ctx), true)
+        // The conversation memory keeps what the last call read. A new prompt that starts the same
+        // way (the short questions after a reply all start with the same passage) only reads the
+        // part that differs; anything else starts from a clean memory.
+        let memory = llama_get_memory(ctx)
+        var shared = 0
+        let limit = min(cached.count, prompt.count - 1)
+        while shared < limit, cached[shared] == prompt[shared] { shared += 1 }
+        if shared < 32 || !llama_memory_seq_rm(memory, 0, Int32(shared), -1) {
+            llama_memory_clear(memory, true)
+            shared = 0
+        }
+        cached = []
+        reused = shared
 
-        var i = 0
+        var i = shared
         while i < prompt.count {
             var chunk = Array(prompt[i..<min(i + 512, prompt.count)])
             let r = chunk.withUnsafeMutableBufferPointer { llama_decode(ctx, llama_batch_get_one($0.baseAddress, Int32($0.count))) }
             if r != 0 { throw Failure.decode(r) }
             i += 512
         }
+        var seen = prompt
 
         let chain = llama_sampler_chain_init(llama_sampler_chain_default_params())
         defer { llama_sampler_free(chain) }
@@ -179,8 +195,10 @@ final class LlamaEngine: @unchecked Sendable {
 
             let r = llama_decode(ctx, llama_batch_get_one(&token, 1))
             if r != 0 { throw Failure.decode(r) }
+            seen.append(token)
             position += 1
         }
+        cached = seen
         if !pending.isEmpty { _ = onText(String(decoding: pending, as: UTF8.self)) }
         let seconds = Date().timeIntervalSince(start)
         return seconds > 0 ? Double(produced) / seconds : 0

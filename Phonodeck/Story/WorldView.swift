@@ -12,6 +12,8 @@ struct WorldView: View {
     /// The bible as the panel shows it (names not said yet are shown as roles), to tell an edit apart.
     @State private var shownBible = ""
     @State private var myName = ""
+    /// The turn the turn guide shows (nil: the latest, following play live).
+    @State private var frameAt: Int?
 
     enum Tab: String, CaseIterable { case mission = "Mission", story = "Story", world = "World" }
 
@@ -82,7 +84,7 @@ struct WorldView: View {
                 }
             }
         }
-        Text("\(a.setup.simulator ? "Experience simulator" : "Curated story") · \(Int(a.elapsed / 60)) of \(a.minutes) minutes played" + (a.left.map { a.ended ? "" : " · about \($0) more turn\($0 == 1 ? "" : "s")" } ?? ""))
+        Text(sessionLine(a))
             .font(.footnote).foregroundStyle(Theme.dim)
         if !a.storyTime.isEmpty || !a.whereabouts.isEmpty {
             Caps(text: "Right now").padding(.top, 8)
@@ -179,6 +181,15 @@ struct WorldView: View {
         }
     }
 
+    private func sessionLine(_ a: Adventure) -> String {
+        let kind: String = a.setup.simulator ? "Experience simulator" : "Curated story"
+        let played = Int(a.elapsed / 60)
+        if app.engine.grounded { return kind + " · \(played) minutes played · no time limit" }
+        var s: String = kind + " · \(played) of \(a.minutes) minutes played"
+        if let l = a.left, !a.ended { s += " · about \(l) more turn" + (l == 1 ? "" : "s") }
+        return s
+    }
+
     // MARK: Story bible
 
     @ViewBuilder
@@ -213,6 +224,7 @@ struct WorldView: View {
 
     @ViewBuilder
     private func world(_ a: Adventure) -> some View {
+        if !a.frames.isEmpty { turnGuide(a) }
         attributes(a)
         Button {
             editing = LoreEntry(name: "", kind: .person)
@@ -249,6 +261,65 @@ struct WorldView: View {
     private func display(_ name: String, _ a: Adventure) -> String {
         if let e = a.lore.first(where: { $0.name == name && $0.kind == .person }) { return shown(e, a) }
         return Continuity.unnamed(name, in: a)
+    }
+
+    // MARK: Turn guide
+
+    /// One turn at a time: the world as it stood after that turn, what the storyteller looked up
+    /// before writing it, the short questions asked after it, and what changed. The latest turn
+    /// updates live while its questions are being asked.
+    @ViewBuilder
+    private func turnGuide(_ a: Adventure) -> some View {
+        let last = a.frames.count - 1
+        let k = min(max(0, frameAt ?? last), last)
+        let f = a.frames[k]
+        let live = k == last && !app.engine.rebuildStep.isEmpty
+        HStack(spacing: 10) {
+            Button { frameAt = max(0, k - 1) } label: { Image(systemName: "chevron.left") }
+                .disabled(k == 0)
+            VStack(spacing: 1) {
+                Text(f.turn == 0 ? "Opening" : "Turn \(f.turn)").font(.headline).foregroundStyle(Theme.accent)
+                Text(k == last ? (live ? "updating now" : "latest") : "\(last - k) turn\(last - k == 1 ? "" : "s") ago")
+                    .font(.caption).foregroundStyle(Theme.dim)
+            }
+            .frame(maxWidth: .infinity)
+            Button { frameAt = k + 1 >= last ? nil : k + 1 } label: { Image(systemName: "chevron.right") }
+                .disabled(k == last)
+        }
+        .buttonStyle(.bordered)
+        card {
+            VStack(alignment: .leading, spacing: 6) {
+                if live {
+                    Label("Asking: " + Continuity.unnamed(app.engine.rebuildStep, in: a), systemImage: "sparkles")
+                        .font(.caption.bold()).foregroundStyle(Theme.accent)
+                }
+                attr("Place", f.place.isEmpty ? "On the way somewhere new" : f.place)
+                attr("Facing", f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"))
+                if !f.room.isEmpty { attr("In the room", f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
+                if !f.away.isEmpty { attr("Out of view", f.away.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
+                if !f.have.isEmpty { attr("You have", f.have.joined(separator: "; ")) }
+                if !f.around.isEmpty { attr("Around", f.around.joined(separator: "; ")) }
+                if !f.changed.isEmpty {
+                    guideList("What changed", f.changed, a)
+                }
+                if !f.looked.isEmpty {
+                    guideList("Looked up before the reply", f.looked, a)
+                }
+                if !f.asked.isEmpty {
+                    guideList("Asked after the reply", f.asked, a)
+                }
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func guideList(_ title: String, _ lines: [String], _ a: Adventure) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption.bold()).foregroundStyle(Theme.dim).padding(.top, 4)
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, l in
+                Text("• " + Continuity.unnamed(l, in: a)).font(.caption).foregroundStyle(Theme.fg)
+            }
+        }
     }
 
     // MARK: Attributes

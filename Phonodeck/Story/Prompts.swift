@@ -121,17 +121,27 @@ enum Prompts {
     Each line at most 30 words. Plain words, no prose for the player.
     """
 
-    /// The grounded engine's first step (Read): one short call reads the player's new message into
-    /// fixed choices, so code can settle the scene and fetch the right cards before any prose is written.
-    static let readPlayer = """
-    You read the player's NEW MESSAGE in an interactive audio story and fill in a short form. Output ONLY one JSON object:
+    /// The read, in two short questions that share one opening (so llama.cpp reads it once):
+    /// where things stand and the player's new message, then the question.
+    static let readIntro = "You help run an interactive audio story. Here is where things stand, then the player's new message, then one question for you."
+
+    /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
+    static let lookQuestion = """
+    QUESTION 1 OF 2. Fill in this form about the player's NEW MESSAGE. Output ONLY one JSON object:
     {"to":"the one person the player is speaking to or doing something with in the new message, or \"nobody\"",
      "going":"\"staying\" if the player stays in the place they are in; the name of a place if they go there; \"somewhere new\" if they leave for a place that is not listed",
-     "about":["up to 3 names from CARDS that the new message is about, asks about or reaches for; [] if none"],
-     "does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell Walter it is half past ten and say your name is Simon')",
-     "answer":"only if the player asked a question: the plain facts the person they asked tells them, taken from KNOWN where it covers it, never the player's own words; otherwise empty",
+     "look":["up to 3 lookups you need before writing what happens next; [] if the moment needs nothing more"]}
+    The lookups: "who is here", "where am I", "what I have", "what is around", "look at <a name from CARDS>", "where is <a person>", "remember <a topic from earlier in the story>".
+    Look up only what this moment needs, the way an eye only sees what it looks at: the person the player asks about, the things around them if they look around, their own things if they reach for them, an earlier moment if they bring one back. Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going.
+    """
+
+    /// Read, question 2: the moment, planned from what was looked up.
+    static let planQuestion = """
+    QUESTION 2 OF 2. Plan the next moment from the message and WHAT YOU LOOKED UP. Output ONLY one JSON object:
+    {"does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell Walter it is half past ten and say your name is Simon')",
+     "answer":"only if the player asked a question: the plain facts the person they asked tells them, taken from WHAT YOU LOOKED UP where it covers it, never the player's own words; otherwise empty",
      "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), in a way that delivers the FEELING"}
-    Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going. Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
+    Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
 
     /// The grounded engine's storyteller rules (Paint). Short on purpose: the briefing carries the
@@ -149,17 +159,40 @@ enum Prompts {
     - End on the person turned to the player, leaving room for them to answer. Never a list of options.
     """
 
-    /// The grounded engine's last step (File): after the reply, one small call notes only what the
-    /// moment added. Code keeps the place, who is where and the clock itself, and checks every entry.
-    static let fileTurn = """
-    You keep the books for an audio story. Read the latest moment and note only what it added. Output ONLY one JSON object:
-    {"place":"the short name of the building or area the player is in at the end, 1-4 words",
-     "new_facts":["0 to 2 things this moment established that will still be true tomorrow, each a full sentence that starts with the person's name or 'You': what someone said about their life, work, family or plans, a promise, something given or paid and to whom; nothing in ALREADY KNOWN"],
-     "things":["up to 6 notable things the story showed in the place the player is in, 2-6 words each, e.g. 'a cast-iron stove'"],
-     "carrying":["each thing the player has on them at the end, 2-5 words each; leave out anything they gave away, paid, ate, drank or put down"],
-     "people":[{"name":"a person in this moment","doing":"what they are doing at the end, a few words"}]}
-    Only what the story actually says, never guesses. Write real content about this story; never copy these descriptions. No commentary.
+    /// The rebuild after a reply: short questions about the moment, one at a time, each sharing
+    /// this opening and the moment itself (so llama.cpp reads them once). Code checks every answer
+    /// against the story's own words before it goes on a card.
+    static let rebuildIntro = "You keep the books for an audio story. Read the latest moment, then answer one short question about it, only from what the story says, never guesses. Output ONLY one JSON object."
+
+    static let rebuildPlace = """
+    Where is the player at the end of the moment? {"where":"one choice from the list","name":"only if somewhere new: its short name, 1-4 words; otherwise empty"}
     """
+    static let rebuildPeople = """
+    Who is with the player at the end of the moment, in the same room or spot? {"here":["names from the list; [] if nobody"]}
+    """
+    static func rebuildDoing(_ who: String) -> String {
+        "What is " + who + " doing at the end of the moment, in a few words? {\"doing\":\"a few words\"}"
+    }
+    static let rebuildCarrying = """
+    What does the player have on them at the end of the moment? Leave out anything they gave away, paid, ate, drank or put down; ordering something is not having it. {"has":["2-5 words each"]}
+    """
+    static let rebuildThings = """
+    What notable things did the story show in the place the player is in? {"things":["2-6 words each, e.g. 'a cast-iron stove'"]}
+    """
+    static let rebuildFacts = """
+    What did this moment establish that will still be true tomorrow: what someone said about their life, work, family or plans, a promise, something given or paid and to whom? Each a full sentence that starts with the person's name or 'You'. Not what someone is doing right now, and nothing in ALREADY KNOWN. {"facts":["0 to 2 sentences"]}
+    """
+
+    /// Coming back to a place after a long time away: what ordinary things changed meanwhile.
+    static let awayQuestion = """
+    QUESTION: The player is coming back to this place after the time shown. Who of the people left here is still here, and what ordinary things have changed meanwhile (the crowd, the light, a chore done, a meal over)? Nothing dramatic, nothing new that matters to the story. {"still_here":["names from PEOPLE LEFT HERE"],"changes":["0 to 2 short plain sentences"]}
+    """
+
+    /// Every instruction the grounded engine's short calls see, so an answer that only copies one
+    /// back can be thrown out.
+    static var groundedInstructions: [String] {
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildPeople, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion]
+    }
 
     // MARK: Building the world
 

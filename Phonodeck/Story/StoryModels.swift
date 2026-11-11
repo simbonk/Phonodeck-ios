@@ -319,6 +319,12 @@ struct Adventure: Codable, Identifiable, Hashable {
     var nameless = false
     /// What the last world check after a reply changed and refused, for the World panel.
     var checks: [String] = []
+    /// The turn guide: one snapshot of the world per turn (what was in view, what was looked up,
+    /// what the rebuild asked and what changed), for the World panel.
+    var frames: [WorldFrame] = []
+    /// The player turn when the player was last in each place (by lowercased name), so a return
+    /// after a good while away can catch the place up.
+    var placeSeen: [String: Int] = [:]
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -333,7 +339,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
-             storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks
+             storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks, frames, placeSeen
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -365,6 +371,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         storyTime = v(.storyTime, ""); timeline = v(.timeline, []); whereabouts = v(.whereabouts, []); carrying = v(.carrying, []); things = v(.things, []); placeThings = v(.placeThings, [:]); gmWait = v(.gmWait, 0)
         clock = try? c.decodeIfPresent(Int.self, forKey: .clock)
         nameless = v(.nameless, false); checks = v(.checks, [])
+        frames = v(.frames, [WorldFrame]()); placeSeen = v(.placeSeen, [String: Int]())
     }
 
     func encode(to encoder: Encoder) throws {
@@ -385,6 +392,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(storyTime, forKey: .storyTime); try c.encode(timeline, forKey: .timeline); try c.encode(whereabouts, forKey: .whereabouts); try c.encode(carrying, forKey: .carrying); try c.encode(things, forKey: .things); try c.encode(placeThings, forKey: .placeThings); try c.encode(gmWait, forKey: .gmWait)
         try c.encodeIfPresent(clock, forKey: .clock)
         try c.encode(nameless, forKey: .nameless); try c.encode(checks, forKey: .checks)
+        try c.encode(frames, forKey: .frames); try c.encode(placeSeen, forKey: .placeSeen)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -398,6 +406,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         storyTime = o.storyTime; timeline = o.timeline; whereabouts = o.whereabouts; clock = o.clock
         carrying = o.carrying; things = o.things; placeThings = o.placeThings
         playerName = o.playerName; checks = o.checks
+        frames = o.frames; placeSeen = o.placeSeen
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
@@ -445,4 +454,29 @@ struct Whereabout: Codable, Hashable, Identifiable {
         s += heading.isEmpty ? ". Staying there." : ". Heading to " + heading + " (arrives only when the story shows it)."
         return s
     }
+}
+
+/// One turn of the turn guide: the world as it stood after that turn, what the storyteller
+/// looked up before writing it, the short questions the rebuild asked after, and what changed.
+struct WorldFrame: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var turn: Int
+    var time = ""
+    var place = ""
+    var placeDesc = ""
+    /// "Name: what they are doing", for whoever the player is facing, and for the rest of the room.
+    var with: [String] = []
+    var room: [String] = []
+    /// "Name (at the place)", for people out of view.
+    var away: [String] = []
+    var have: [String] = []
+    var around: [String] = []
+    /// "lookup → answer", before the reply.
+    var looked: [String] = []
+    /// "question → answer", from the rebuild after the reply.
+    var asked: [String] = []
+    /// Notes added this turn (facts learned, what changed while the player was away).
+    var notes: [String] = []
+    /// What changed since the turn before, worked out in code.
+    var changed: [String] = []
 }

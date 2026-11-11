@@ -96,7 +96,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Game Master")
                 } footer: {
-                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen through MLX), which can take up to about a minute a turn. GGUF storytellers skip it: they always answer straight away. Grounded engine: the world stays in the app and each reply gets only the cards your action touches, with one short read before it and a small filing step after.")
+                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen through MLX), which can take up to about a minute a turn. GGUF storytellers skip it: they always answer straight away. Grounded engine: the world stays in the app. Before each reply the storyteller looks up only what your action needs (who is here, what you have, a card, an earlier moment); after it, short questions rebuild the world piece by piece. The World panel's turn guide shows each turn.")
                 }
 
     }
