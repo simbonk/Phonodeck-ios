@@ -1467,17 +1467,17 @@ final class StoryEngine {
         planThoughts = ""
         let played = clockTick(&a, hidden: hidden, paused: Date().timeIntervalSince(turnBegan) + a.gmWait)
         let ticked = Date()
-        if forceFinal { a.left = 0 }
-        if !hidden, let c = a.clock {
-            a.clock = c + max(1, Int((played / 60).rounded()))
-            a.storyTime = Continuity.storyTime(clock: a.clock!, old: a.storyTime)
-        }
+        // No time limit: the story runs until the player finishes it ("Finish the experience now").
+        a.left = forceFinal ? 0 : nil
+        // The story's time does not tick with the real minutes played: it moves only when the
+        // player says so ("two hours later") or the story itself moves it on.
+        _ = played
         if !hidden, let said = Continuity.statedTime(input, near: a.clock) {
             a.clock = said
             a.storyTime = Continuity.storyTime(clock: said, old: a.storyTime)
         }
-        // The last moment the player was in this place, for a catch-up when they come back.
-        if !a.location.isEmpty, let c = a.clock { a.placeSeen[a.location.lowercased()] = c }
+        // The last turn the player was in this place, for a catch-up when they come back.
+        if !a.location.isEmpty { a.placeSeen[a.location.lowercased()] = a.playerTurns }
         let opening = hidden && a.transcript.isEmpty
         let maxOut = opening ? 520 : 300
         let playerNarrates = !hidden && Self.narrates(input)
@@ -1510,16 +1510,17 @@ final class StoryEngine {
         if !hidden, !playerNarrates {
             settle(&a, read: read ?? PlayerRead(), input: input)
             if read == nil { lastRead = (gmPlans ? "no usable reading; " : "reading off; ") + lastRead }
-            // Back in a place after an hour or more: one short question catches it up.
+            // Back in a place after a good while away: one short question catches it up.
             let back = !a.location.isEmpty && a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
-            if back, let c = a.clock, let seen = a.placeSeen[a.location.lowercased()], c - seen >= 60 {
+            if back, let seen = a.placeSeen[a.location.lowercased()], a.playerTurns - seen >= Self.catchUpTurns {
+                let gap = a.playerTurns - seen
                 stage = "Catching up on " + a.location
-                let changes = await catchUp(&a, minutes: c - seen)
+                let changes = await catchUp(&a, turns: gap)
                 guard !Task.isCancelled else { adventure = snapshot; return }
                 if !changes.isEmpty {
                     extra.append("SINCE YOU WERE LAST HERE: " + changes.joined(separator: " "))
                     catchUpNotes = changes.map { "While you were away: " + $0 }
-                    lastRead += "; caught up on " + a.location + " after \(c - seen) minutes away"
+                    lastRead += "; caught up on " + a.location + " after \(gap) turns away"
                 }
             }
         }
@@ -2119,7 +2120,7 @@ final class StoryEngine {
             now.facts = facts
         }
         guard var now = adventure, now.id == start.id else { return }
-        if !now.location.isEmpty, let c = now.clock { now.placeSeen[now.location.lowercased()] = c }
+        if !now.location.isEmpty { now.placeSeen[now.location.lowercased()] = now.playerTurns }
         now.checks = Self.worldChanges(from: start, to: now, refused: refused, named: namesThisTurn)
         adventure = now
         library.save(now)
@@ -2132,10 +2133,13 @@ final class StoryEngine {
         adventure = a
     }
 
-    /// Coming back to a place after an hour or more away: one short question catches it up (who of
+    /// How many turns away from a place before coming back to it asks what changed meanwhile.
+    static let catchUpTurns = 5
+
+    /// Coming back to a place after a good while away: one short question catches it up (who of
     /// the people left there is still there, and what ordinary things changed). Returns the changes,
     /// for the briefing and the turn guide.
-    private func catchUp(_ a: inout Adventure, minutes gap: Int) async -> [String] {
+    private func catchUp(_ a: inout Adventure, turns gap: Int) async -> [String] {
         let key = a.location.lowercased()
         let left = a.whereabouts.filter { $0.here != false && Cards.first($0.name).lowercased() != Cards.first(a.playerName).lowercased() }.map(\.name)
         var prompt = "You keep an audio story's world consistent."
@@ -2145,8 +2149,7 @@ final class StoryEngine {
         let things = a.placeThings[key] ?? []
         if !things.isEmpty { prompt += "\nTHINGS HERE: " + things.prefix(6).joined(separator: "; ") }
         prompt += "\nPEOPLE LEFT HERE: " + (left.isEmpty ? "(nobody)" : left.joined(separator: "; "))
-        let hours = gap >= 120 ? "\(gap / 60) hours" : "about an hour"
-        prompt += "\nTIME AWAY: " + hours + (a.storyTime.isEmpty ? "" : "; it is now " + a.storyTime)
+        prompt += "\nTIME AWAY: the player has been elsewhere for \(gap) turns of the story"
         prompt += "\n\n" + Prompts.awayQuestion
         let raw = (try? await llm.complete(system: nil, prompt: prompt,
                                            options: .init(maxTokens: 120, temperature: 0.4, repetitionPenalty: 1.1, grammar: JSONGrammar.away(people: left)))) ?? ""

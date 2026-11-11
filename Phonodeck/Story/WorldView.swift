@@ -84,7 +84,7 @@ struct WorldView: View {
                 }
             }
         }
-        Text("\(a.setup.simulator ? "Experience simulator" : "Curated story") · \(Int(a.elapsed / 60)) of \(a.minutes) minutes played" + (a.left.map { a.ended ? "" : " · about \($0) more turn\($0 == 1 ? "" : "s")" } ?? ""))
+        Text(sessionLine(a))
             .font(.footnote).foregroundStyle(Theme.dim)
         if !a.storyTime.isEmpty || !a.whereabouts.isEmpty {
             Caps(text: "Right now").padding(.top, 8)
@@ -179,6 +179,15 @@ struct WorldView: View {
                 }
             }
         }
+    }
+
+    private func sessionLine(_ a: Adventure) -> String {
+        let kind: String = a.setup.simulator ? "Experience simulator" : "Curated story"
+        let played = Int(a.elapsed / 60)
+        if app.engine.grounded { return kind + " · \(played) minutes played · no time limit" }
+        var s: String = kind + " · \(played) of \(a.minutes) minutes played"
+        if let l = a.left, !a.ended { s += " · about \(l) more turn" + (l == 1 ? "" : "s") }
+        return s
     }
 
     // MARK: Story bible
@@ -285,7 +294,6 @@ struct WorldView: View {
                         .font(.caption.bold()).foregroundStyle(Theme.accent)
                 }
                 attr("Place", f.place.isEmpty ? "On the way somewhere new" : f.place)
-                if !f.time.isEmpty { attr("Time", f.time) }
                 attr("Facing", f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"))
                 if !f.room.isEmpty { attr("In the room", f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
                 if !f.away.isEmpty { attr("Out of view", f.away.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }

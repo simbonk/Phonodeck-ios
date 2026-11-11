@@ -322,8 +322,8 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// The turn guide: one snapshot of the world per turn (what was in view, what was looked up,
     /// what the rebuild asked and what changed), for the World panel.
     var frames: [WorldFrame] = []
-    /// The story clock when the player was last in each place (by lowercased name), so a return
-    /// after a long time away can catch the place up.
+    /// The player turn when the player was last in each place (by lowercased name), so a return
+    /// after a good while away can catch the place up.
     var placeSeen: [String: Int] = [:]
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
