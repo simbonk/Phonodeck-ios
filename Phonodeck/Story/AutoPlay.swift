@@ -85,6 +85,76 @@ enum PlayScripts {
     static let starters: [PlayScript] = parse(starterText)
 
     static let starterText = """
+    # A1 Back to the bar
+    I sit at the bar and order a coffee.
+    I tell them my name is Sam and I am a salesman from Chicago.
+    I step out into the flower shop at the front for some air.
+    I look at the flowers for a minute.
+    I go back to the bar and take my old stool.
+    Who is here with me?
+    I ask the bartender if he remembers my name and where I am from.
+    I go out to the street to look at the rain.
+    I walk back to the speakeasy.
+    I sit back down on my stool. Where am I?
+    I ask the woman at the bar what she is working on.
+    I ask them both what they know about me.
+
+    # A2 Down to the cellar and up
+    I sit at the bar and offer to help the bartender.
+    I ask him what is down in the cellar.
+    I follow him down to the cellar.
+    I pick up a crate of bottles.
+    I carry the crate upstairs.
+    I put the crate down behind the bar.
+    Where am I, and who is with me?
+    I go back down to the cellar alone to get a bag of ice.
+    I bring the ice up to the bar.
+    I sit back down on my stool.
+    I ask the woman at the bar if she saw me working.
+    I ask the bartender if I have earned a drink.
+
+    # A3 Who comes with me
+    I sit at the bar and say hello to the woman next to me.
+    I ask her name and tell her mine is Sam.
+    I ask her if she would like company walking home.
+    I ask the bartender to lend us an umbrella.
+    We leave together through the flower shop.
+    We walk down the street under the umbrella.
+    I ask her what she is thinking.
+    Who is with me right now?
+    I say goodnight to her at her door.
+    I walk back to the speakeasy alone.
+    I give the bartender his umbrella back.
+    I ask him where she is now.
+
+    # A4 What they know about me
+    I sit at the bar. Evening, both of you.
+    I tell them my name is Sam.
+    I tell them I just got into town this morning on the train from Chicago.
+    I tell them my dream is to open a little bookshop one day.
+    I tell the bartender I am only in town until Friday.
+    I talk with them about the weather for a while.
+    I ask about the record that is playing.
+    I ask the woman what she does for work.
+    I ask the bartender what he is saving for.
+    I ask the woman what my name is and where I came from.
+    I ask the bartender what my dream is and when I leave town.
+    I ask them both how they know each other.
+
+    # A5 Names that are not people
+    I sit at the bar and tell them my name is Sam.
+    I tell them about my brother Tom, who is a sailor in San Diego.
+    Actually, I tell them, my name is not Sam. It is Jack.
+    I ask the bartender what he thinks my name is.
+    I tell them about a girl I knew in Chicago called Rose.
+    I ask the woman if she knows anyone in Chicago.
+    I ask them what they would call me if they had to pick a nickname.
+    I laugh and tell them the truth. I am Sam, and I was only fooling.
+    Who is in this room right now?
+    I look to the door as a young man with a violin case comes in.
+    I ask the young man his name.
+    Who is in this room now?
+
     # 01 Names all round
     I shake the rain off my coat and take a stool at the bar.
     Evening. Could I get something warm to drink?
@@ -779,6 +849,7 @@ final class AutoPlay {
                 }
                 if let e = engine.error { notes.append("Turn \(i + 1) error: " + e) }
                 if (engine.adventure?.transcript.count ?? 0) <= before {
+                    if Task.isCancelled { break }
                     notes.append("Turn \(i + 1) got no reply: " + line)
                     continue
                 }
