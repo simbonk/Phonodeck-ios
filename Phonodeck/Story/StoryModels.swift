@@ -325,6 +325,9 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// The player turn when the player was last in each place (by lowercased name), so a return
     /// after a good while away can catch the place up.
     var placeSeen: [String: Int] = [:]
+    /// The story clock when the player was last in each place, so a return knows how long it has
+    /// been and whether the time of day has changed.
+    var placeClock: [String: Int] = [:]
     /// What is still hanging: a drink ordered and not yet come, a question not yet answered,
     /// something someone said they would do. Rewritten by the rebuild each turn.
     var pending: [String] = []
@@ -357,7 +360,7 @@ struct Adventure: Codable, Identifiable, Hashable {
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
              storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks, frames, placeSeen,
-             pending, feelings, spot, ambience, wants, knows, body, progress
+             pending, feelings, spot, ambience, wants, knows, body, progress, placeClock
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -392,6 +395,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         frames = v(.frames, [WorldFrame]()); placeSeen = v(.placeSeen, [String: Int]())
         pending = v(.pending, [String]()); feelings = v(.feelings, [String: String]()); spot = v(.spot, ""); ambience = v(.ambience, [String: String]())
         wants = v(.wants, [String: String]()); knows = v(.knows, [String: [String]]()); body = v(.body, ""); progress = v(.progress, [String]())
+        placeClock = v(.placeClock, [String: Int]())
     }
 
     func encode(to encoder: Encoder) throws {
@@ -415,6 +419,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(frames, forKey: .frames); try c.encode(placeSeen, forKey: .placeSeen)
         try c.encode(pending, forKey: .pending); try c.encode(feelings, forKey: .feelings); try c.encode(spot, forKey: .spot); try c.encode(ambience, forKey: .ambience)
         try c.encode(wants, forKey: .wants); try c.encode(knows, forKey: .knows); try c.encode(body, forKey: .body); try c.encode(progress, forKey: .progress)
+        try c.encode(placeClock, forKey: .placeClock)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -430,7 +435,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         playerName = o.playerName; checks = o.checks
         frames = o.frames; placeSeen = o.placeSeen
         pending = o.pending; feelings = o.feelings; spot = o.spot; ambience = o.ambience
-        wants = o.wants; knows = o.knows; body = o.body; progress = o.progress
+        wants = o.wants; knows = o.knows; body = o.body; progress = o.progress; placeClock = o.placeClock
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.

@@ -1565,7 +1565,10 @@ final class StoryEngine {
             catchUpNotes.append("Time skipped: " + Self.span(skip) + ", now " + Continuity.clockText(c + skip))
         }
         // The last turn the player was in this place, for a catch-up when they come back.
-        if !a.location.isEmpty { a.placeSeen[a.location.lowercased()] = a.playerTurns }
+        if !a.location.isEmpty {
+            a.placeSeen[a.location.lowercased()] = a.playerTurns
+            if let c = a.clock { a.placeClock[a.location.lowercased()] = c }
+        }
         let opening = hidden && a.transcript.isEmpty
         let maxOut = opening ? 520 : 300
         let playerNarrates = !hidden && Self.narrates(input)
@@ -1633,11 +1636,15 @@ final class StoryEngine {
             }
             // Back in a place after a good while away: one short question catches it up.
             let back = !a.location.isEmpty && a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
-            if back, let seen = a.placeSeen[a.location.lowercased()], a.playerTurns - seen >= Self.catchUpTurns {
+            // "A good while" is five turns, or an hour of the story's own time.
+            let seenClock: Int? = a.placeClock[a.location.lowercased()]
+            var awayMinutes = 0
+            if let c = a.clock, let then = seenClock { awayMinutes = max(0, c - then) }
+            if back, let seen = a.placeSeen[a.location.lowercased()], a.playerTurns - seen >= Self.catchUpTurns || awayMinutes >= 60 {
                 let gap = a.playerTurns - seen
                 stage = "Catching up on " + a.location
                 lapFrom = Date()
-                let changes = await catchUp(&a, turns: gap)
+                let changes = await catchUp(&a, turns: gap, minutes: awayMinutes, then: seenClock)
                 guard !Task.isCancelled else { adventure = snapshot; return }
                 lap("catching up")
                 if !changes.isEmpty {
@@ -2645,7 +2652,10 @@ final class StoryEngine {
             now.facts = facts
         }
         guard var now = adventure, now.id == start.id else { return }
-        if !now.location.isEmpty { now.placeSeen[now.location.lowercased()] = now.playerTurns }
+        if !now.location.isEmpty {
+            now.placeSeen[now.location.lowercased()] = now.playerTurns
+            if let c = now.clock { now.placeClock[now.location.lowercased()] = c }
+        }
         now.checks = Self.worldChanges(from: start, to: now, refused: refused, named: namesThisTurn)
         adventure = now
         library.save(now)
@@ -2811,8 +2821,20 @@ final class StoryEngine {
     /// Coming back to a place after a good while away: one short question catches it up (who of
     /// the people left there is still there, and what ordinary things changed). Returns the changes,
     /// for the briefing and the turn guide.
-    private func catchUp(_ a: inout Adventure, turns gap: Int) async -> [String] {
+    private func catchUp(_ a: inout Adventure, turns gap: Int, minutes: Int = 0, then: Int? = nil) async -> [String] {
         let key = a.location.lowercased()
+        // The time of day then and now: when it has changed, the place's old light and sounds go.
+        var timeLine = ""
+        var turned = ""
+        if let c = a.clock, let then, minutes > 0 {
+            let was: String = Continuity.parts[Continuity.part(of: then)]
+            let now: String = Continuity.parts[Continuity.part(of: c)]
+            timeLine = "; about " + Self.span(minutes) + " of the story's time. It was " + was + " then; it is " + now + " now (" + Continuity.clockText(c) + ")"
+            if was != now || minutes >= 720 {
+                a.ambience[key] = nil
+                turned = "It was " + was + " when you were last here; it is " + now + " now, and the light and the crowd have changed with it."
+            }
+        }
         let left = a.whereabouts.filter { $0.here != false && Cards.first($0.name).lowercased() != Cards.first(a.playerName).lowercased() }.map(\.name)
         var prompt = "You keep an audio story's world consistent."
         let desc: String = Cards.placeCard(a)?.desc ?? ""
@@ -2821,14 +2843,14 @@ final class StoryEngine {
         let things = a.placeThings[key] ?? []
         if !things.isEmpty { prompt += "\nTHINGS HERE: " + things.prefix(6).joined(separator: "; ") }
         prompt += "\nPEOPLE LEFT HERE: " + (left.isEmpty ? "(nobody)" : left.joined(separator: "; "))
-        prompt += "\nTIME AWAY: the player has been elsewhere for \(gap) turns of the story"
+        prompt += "\nTIME AWAY: the player has been elsewhere for \(gap) turns of the story" + timeLine
         prompt += "\n\n" + Prompts.awayQuestion
         let raw = (try? await llm.complete(system: nil, prompt: prompt,
                                            options: .init(maxTokens: 120, temperature: 0.4, repetitionPenalty: 1.1, grammar: JSONGrammar.away(people: left)))) ?? ""
         let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
-        guard !m.isEmpty else { return [] }
+        guard !m.isEmpty else { return turned.isEmpty ? [] : [turned] }
         let still = ((m["still_here"] as? [Any]) ?? []).compactMap { $0 as? String }
-        var out: [String] = []
+        var out: [String] = turned.isEmpty ? [] : [turned]
         for i in a.whereabouts.indices where left.contains(a.whereabouts[i].name) {
             if !still.contains(where: { $0.caseInsensitiveCompare(a.whereabouts[i].name) == .orderedSame }) {
                 a.whereabouts[i].here = false
