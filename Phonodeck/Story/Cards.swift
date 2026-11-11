@@ -140,8 +140,9 @@ enum Cards {
         // The place.
         if !a.location.isEmpty {
             let card = placeCard(a)
-            p.place = a.location + (card.map { $0.desc.isEmpty ? "" : ": " + clip($0.desc, 260) } ?? "")
-            p.why.append("Place card: " + a.location + (card == nil || card?.desc.isEmpty == true ? " (no description yet)" : ""))
+            let desc: String = card?.desc ?? ""
+            p.place = desc.isEmpty ? a.location : a.location + ": " + clip(desc, 260)
+            p.why.append(desc.isEmpty ? "Place card: \(a.location) (no description yet)" : "Place card: \(a.location)")
             if let card { fetched.append(card) }
         } else {
             p.why.append("Place: not named yet (the player is on the move)")
@@ -163,7 +164,10 @@ enum Cards {
             let spot = Continuity.placed(w.at) + (w.doing.isEmpty ? "" : ", " + w.doing)
             let named = c.map { mentions($0, in: input) } ?? input.lowercased().contains(first(w.name).lowercased())
             if w.here != false, opening || !dealing || w.engaged == true || named {
-                var line = name + (c.map { $0.role.isEmpty ? "" : " (\($0.role))" } ?? "") + (pr.isEmpty ? "" : ", " + pr)
+                let role: String = c?.role ?? ""
+                var line: String = name
+                if !role.isEmpty { line += " (\(role))" }
+                if !pr.isEmpty { line += ", " + pr }
                 if let c, !c.desc.isEmpty { line += ": " + clip(c.desc, 240) }
                 line += " Now: " + clip(spot, 140) + "."
                 let theirs = c.map { Array(facts(about: $0, in: a).suffix(4)) } ?? []
@@ -174,7 +178,8 @@ enum Cards {
                 let reason = opening ? "in the opening scene" : w.engaged == true ? "you are dealing with them" : named ? "your message names them" : "in the room with you"
                 p.why.append("\(name): full card, \(reason) (\(theirs.count) fact\(theirs.count == 1 ? "" : "s"))")
             } else if w.here != false {
-                p.background.append(name + (pr.isEmpty ? "" : " (" + pr + ")") + ": " + clip(spot, 100))
+                let tag: String = pr.isEmpty ? "" : " (\(pr))"
+                p.background.append("\(name)\(tag): \(clip(spot, 100))")
                 p.why.append("\(name): one line, in the background")
             } else if named {
                 p.away.append("\(name) is \(Continuity.placed(w.at)), not here: they can be talked about, not seen or heard.")
@@ -194,7 +199,8 @@ enum Cards {
                 guard !fetched.contains(where: { $0.id == e.id }) else { continue }
                 fetched.append(e)
                 let theirs = Array((e.kind == .person ? facts(about: e, in: a) : a.facts.filter { Continuity.names(place: e.name, in: $0) }).suffix(2))
-                var line = e.name + (e.kind == .person && !e.role.isEmpty ? " (\(e.role))" : " (\(e.kind.rawValue))")
+                let kind: String = e.kind == .person && !e.role.isEmpty ? e.role : e.kind.rawValue
+                var line: String = "\(e.name) (\(kind))"
                 if !e.desc.isEmpty { line += ": " + clip(e.desc, 220) }
                 if !theirs.isEmpty { line += " Known: " + theirs.map { clip($0, 150) }.joined(separator: " ") }
                 if e.kind == .person, let spot = a.whereabouts.first(where: { card(for: $0, in: a)?.id == e.id }), spot.here == false {
@@ -221,7 +227,8 @@ enum Cards {
         p.facts = opening ? Array(general.prefix(5)) : Array(hits.suffix(3))
         for f in p.facts {
             let shared = keywords(f).intersection(kw).sorted().prefix(2).joined(separator: ", ")
-            p.why.append("Fact: \"\(clip(f, 70))\"" + (opening ? " (opening)" : " (shares: \(shared))"))
+            let reason: String = opening ? "opening" : "shares: " + shared
+            p.why.append("Fact: \"\(clip(f, 70))\" (\(reason))")
         }
         p.known += p.facts
 
@@ -239,7 +246,10 @@ enum Cards {
     static func briefing(_ a: Adventure, pick p: Pick, memories: [String], extra: [String], notes: [String], moment: String) -> String {
         var l: [String] = ["THE SCENE (the reply must agree with every line)"]
         if !p.place.isEmpty { l.append("- Place: " + p.place) }
-        if !a.storyTime.isEmpty { l.append("- Time: " + a.storyTime + (a.clock.map { ". " + Continuity.skyHint($0) } ?? "")) }
+        if !a.storyTime.isEmpty {
+            let sky: String = a.clock.map { ". " + Continuity.skyHint($0) } ?? ""
+            l.append("- Time: \(a.storyTime)\(sky)")
+        }
         if !p.with.isEmpty {
             l.append("- With you (only they speak and act):")
             l += p.with.map { "  - " + $0 }
@@ -248,7 +258,8 @@ enum Cards {
         }
         if !p.background.isEmpty { l.append("- In the background (there and quiet; they don't join in): " + p.background.joined(separator: "; ")) }
         l += p.away.map { "- " + $0 }
-        l.append("- You have (nothing else): " + (a.carrying.isEmpty ? "nothing in particular" : a.carrying.prefix(6).joined(separator: "; ")))
+        let held: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.prefix(6).joined(separator: "; ")
+        l.append("- You have (nothing else): " + held)
         if !p.props.isEmpty { l.append("- Around you (use one only if the moment calls for it): " + p.props.joined(separator: "; ")) }
         if !p.about.isEmpty { l += ["", "ALSO RELEVANT"] + p.about.map { "- " + $0 } }
         if !p.facts.isEmpty { l += ["", "FACTS (always true)"] + p.facts.map { "- " + $0 } }

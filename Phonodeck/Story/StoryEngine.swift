@@ -653,8 +653,10 @@ final class StoryEngine {
         var out = ["# " + a.title, ""]
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
-        out.append((grounded ? "Grounded engine (read, fetch, paint, file)" + (gmPlans ? "" : ", reading off")
-                    : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")) + " · " + Self.build)
+        let engineLine: String = grounded
+            ? "Grounded engine (read, fetch, paint, file)" + (gmPlans ? "" : ", reading off")
+            : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
+        out.append(engineLine + " · " + Self.build)
         if grounded {
             out += ["", "## Premise (the storyteller's only standing view of the story)", Cards.premise(a)]
         } else {
@@ -666,8 +668,11 @@ final class StoryEngine {
             let w = a.whereabouts.first { Cards.card(for: $0, in: a)?.id == p.id }
             let state = w.map { $0.here == false ? "elsewhere" : $0.engaged == true ? "with you" : "in the room" } ?? "not placed"
             let facts = Cards.facts(about: p, in: a).count
-            out.append("- \(p.name)" + (p.role.isEmpty ? "" : " (\(p.role))") + (names && !p.known && !p.byPlayer ? " [name not said yet]" : "")
-                       + ": " + state + (w.map { ", " + Continuity.placed($0.at) } ?? "") + (facts > 0 ? " · \(facts) fact\(facts == 1 ? "" : "s") on file" : ""))
+            let role: String = p.role.isEmpty ? "" : " (\(p.role))"
+            let hidden: String = names && !p.known && !p.byPlayer ? " [name not said yet]" : ""
+            let spot: String = w.map { ", " + Continuity.placed($0.at) } ?? ""
+            let filed: String = facts == 0 ? "" : facts == 1 ? " · 1 fact on file" : " · \(facts) facts on file"
+            out.append("- \(p.name)\(role)\(hidden): \(state)\(spot)\(filed)")
         }
         let placeCards = a.lore.filter { $0.kind == .place }.map(\.name)
         if !placeCards.isEmpty { out.append("- Place cards: " + placeCards.joined(separator: ", ")) }
@@ -1618,8 +1623,10 @@ final class StoryEngine {
             if read == nil, !playerNarrates {
                 before.append("READ: " + (gmPlans ? "nothing usable came back; code settled the scene alone" : "off (planning is off)"))
             } else if let r = read {
-                var l = "READ: to " + (r.to.isEmpty ? "nobody" : r.to) + " · " + (r.going.isEmpty ? "staying" : "going: " + r.going)
-                    + " · about: " + (r.about.isEmpty ? "nothing in particular" : r.about.joined(separator: ", "))
+                let to: String = r.to.isEmpty ? "nobody" : r.to
+                let going: String = r.going.isEmpty ? "staying" : "going: " + r.going
+                let about: String = r.about.isEmpty ? "nothing in particular" : r.about.joined(separator: ", ")
+                var l = "READ: to \(to) · \(going) · about: \(about)"
                 if !r.does.isEmpty { l += "\n  does: " + r.does }
                 if !r.answer.isEmpty { l += "\n  answer: " + r.answer }
                 if !r.beat.isEmpty { l += "\n  next: " + r.beat }
@@ -1629,12 +1636,16 @@ final class StoryEngine {
             }
             if !lastRead.isEmpty { before.append("SETTLED IN CODE: " + lastRead) }
         }
-        before.append("FETCHED:\n" + pick.why.map { "  - " + $0 }.joined(separator: "\n")
-                      + (memories.isEmpty ? "" : "\n" + memories.map { "  - Older moment: " + clip($0, 120) }.joined(separator: "\n")))
-        if !notes.isEmpty || !extra.isEmpty { before.append("NOTES: " + (extra.map { clip($0, 90) } + notes.map { clip($0, 90) }).joined(separator: " | ")) }
+        var fetchedLines: [String] = pick.why.map { "  - " + $0 }
+        fetchedLines += memories.map { "  - Older moment: " + clip($0, 120) }
+        before.append("FETCHED:\n" + fetchedLines.joined(separator: "\n"))
+        let noteLines: [String] = extra.map { clip($0, 90) } + notes.map { clip($0, 90) }
+        if !noteLines.isEmpty { before.append("NOTES: " + noteLines.joined(separator: " | ")) }
         let turnTokens = kept.reduce(0) { $0 + Self.tokens($1.text) + 8 }
-        before.append("PROMPT: about \(Self.tokens(system) + Self.tokens(lead) + turnTokens) of \(LLMService.contextBudget) tokens"
-                      + " (rules and premise \(Self.tokens(system)), scene and cards \(Self.tokens(lead)), last \(kept.count) turns \(turnTokens)); \(maxOut) kept for the reply")
+        let systemTokens: Int = Self.tokens(system)
+        let leadTokens: Int = Self.tokens(lead)
+        let total: Int = systemTokens + leadTokens + turnTokens
+        before.append("PROMPT: about \(total) of \(LLMService.contextBudget) tokens (rules and premise \(systemTokens), scene and cards \(leadTokens), last \(kept.count) turns \(turnTokens)); \(maxOut) kept for the reply")
         if let f = presence, !f.dropped.isEmpty {
             var why: [String] = f.caught.map { "\($0.name) is \(Continuity.placed($0.at)), not with the player" }
             if f.echoes > 0 { why.append("\(f.echoes) sentence\(f.echoes == 1 ? "" : "s") copied from earlier replies") }
