@@ -140,7 +140,7 @@ enum Prompts {
     static let planQuestion = """
     QUESTION 2 OF 2. Plan the next moment from the message and WHAT YOU LOOKED UP. Output ONLY one JSON object:
     {"does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell Walter it is half past ten and say your name is Simon')",
-     "answer":"only if the player asked a question: the plain facts the person they asked tells them, taken from WHAT YOU LOOKED UP where it covers it, never the player's own words; otherwise empty",
+     "answer":"only if the player asked a question: the plain, sensible answer the person they asked gives, from WHAT YOU LOOKED UP where it covers it, otherwise something ordinary that fits the place and time (e.g. 'gin, beer and coffee'; 'since 1921'); never the player's own words; empty if they asked nothing",
      "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), in a way that delivers the FEELING"}
     Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
@@ -153,7 +153,7 @@ enum Prompts {
     - Second person, present tense: the player is "you", never "they" or their name. 80 to 150 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. No headings, lists or notes.
     - Your briefing gives THE SCENE and THIS MOMENT. Write that moment: what the player does lands, then the person they are with responds to exactly that. Nothing else happens, and no new topic comes up.
     - Only people under "With you" speak or act. People in the background stay quiet. Nobody else appears unless THIS MOMENT says so. The player has only what "You have" lists; nothing appears in anyone's hands from nowhere.
-    - Never write the player's words, choices or feelings, and never add to what they did. If they leave or change the subject, go with them.
+    - Never write the player's words, choices or feelings, and never add to what they did. What the player says is theirs: never put their words in anyone else's mouth. If they leave or change the subject, go with them.
     - If the player asks something, the person answers plainly in the first lines, from the facts given; if the facts don't say, they give a plain answer that fits.
     - People are ordinary and solid. They speak in short plain sentences about real things, each in their own way. No sayings, metaphors or wisdom.
     - Use at most one detail of the place. Do not reuse lines or images from earlier replies.
@@ -168,6 +168,10 @@ enum Prompts {
     static let rebuildPlace = """
     Where is the player at the end of the moment? {"where":"one choice from the list","name":"only if somewhere new: its short name, 1-4 words; otherwise empty"}
     """
+    /// How much story time the moment took, picked from `StoryEngine.timeSteps`.
+    static let rebuildTime = """
+    About how much time passed in the story during this moment, from the player's words to the end of the reply? A few words across a bar is a moment; walking to another room or building nearby is a few minutes; a meal or a long talk is half an hour or more; sleeping is overnight. {"passed":"one choice from the list"}
+    """
     static let rebuildPeople = """
     Who is with the player at the end of the moment, in the same room or spot? {"here":["names from the list; [] if nobody"]}
     """
@@ -179,6 +183,18 @@ enum Prompts {
     """
     static let rebuildThings = """
     What notable things did the story show in the place the player is in? {"things":["2-6 words each, e.g. 'a cast-iron stove'"]}
+    """
+    static func rebuildFeeling(_ who: String) -> String {
+        "How does " + who + " feel about the player at the end of the moment, in one to three words? {\"feels\":\"1-3 words, e.g. 'warming up', 'wary', 'amused', 'annoyed'\"}"
+    }
+    static let rebuildSpot = """
+    Where exactly is the player in the place at the end of the moment, and how close to whoever they are with? Only what the story shows. {"spot":"a few words, e.g. 'on a stool at the bar, across from the bartender'"}
+    """
+    static let rebuildSound = """
+    What is the background of this place like at the end of the moment: its sounds and light, in one short line? Only what the story shows; empty if it shows nothing. {"background":"one short line, e.g. 'the band playing low, rain on the windows', or empty"}
+    """
+    static let rebuildPending = """
+    What is still hanging at the end of the moment: something ordered that has not come, a question not yet answered, something someone said they would do? Keep anything in STILL HANGING that the moment did not settle; leave out what it settled. {"open":["0 to 3 short lines"]}
     """
     static let rebuildFacts = """
     What did this moment establish that will still be true tomorrow: what someone said about their life, work, family or plans, a promise, something given or paid and to whom? Each a full sentence that starts with the person's name or 'You'. Not what someone is doing right now, and nothing in ALREADY KNOWN. {"facts":["0 to 2 sentences"]}
@@ -197,7 +213,7 @@ enum Prompts {
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
     static var groundedInstructions: [String] {
-        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildPeople, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
     }
 
     // MARK: Building the world
@@ -222,6 +238,30 @@ enum Prompts {
      "secrets":["2-4 hidden truths the player has not discovered"],
      "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}]}
     Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. "with_player" is true only for people in the same room or spot as the player when the story opens. "scene" and "things" describe only the opening place, and everything in them must fit the bible. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's "pronouns" and "desc" must match how the bible refers to them: decide everyone's gender before writing the bible and keep it.
+    """
+
+    /// The grounded engine's architect: only what the opening needs. No hidden plot, secrets or
+    /// paced roadmap (there is no time limit), and a short premise instead of a long bible; the
+    /// world is built as the player goes.
+    static let architectGrounded = """
+    You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text, with the keys in exactly this order:
+    {"title":"a short title",
+     "bible":"60-100 words, written to the player as 'you': what this story is, the era and setting, who the player is and why they are here",
+     "location":"the opening place's short name, 1-4 words, the first of places",
+     "places":[{"name":"","desc":"one line"}],
+     "player":{"name":"the player character's name","desc":"one line: who they are here"},
+     "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"for a person: their job, one concrete fact of their life (family, money, a worry today) and how they talk; otherwise two telling details","wants":"for a person: one specific, practical thing they want"}],
+     "facts":["4-8 short, concrete facts that must stay true all story: each person's pronouns and look, what the player is wearing and has with them, the season and weather, anything the player ruled out"],
+     "time":"when the story opens: time of day, day and season, e.g. 'Early morning, late summer'",
+     "timeline":["0-2 things that already happened, each with exactly when"],
+     "people":[{"name":"","where":"exactly where they are when the story opens","doing":"what they are doing","with_player":true}],
+     "scene":"one or two plain sentences, written to the player as 'you': the exact spot in the opening place where you are, who is with you and what is going on",
+     "things":["3-6 notable things in that spot, 2-6 words each"]}
+    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story. "places" lists 1-3 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most one important item or group. "known" is true only for people the player already knows at the start. Everyone in "people" is in the opening place; "with_player" is true only for people the player is dealing with at the start. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's pronouns and desc must match how the bible refers to them.
+    """
+
+    static let architectSimulatorGrounded = """
+    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist, and nothing scripted. "places" lists only the opening place. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
 
     static let architectSimulator = """

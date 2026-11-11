@@ -159,6 +159,15 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// One choice from a fixed list, under one key.
+    static func one(_ k: String, from options: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + key(k) + " opt ws \"}\"",
+            choice("opt", options),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// Building a place the player arrives in (see `Prompts.buildPlace`).
     static let place = [
         "root ::= \"{\" ws " + key("desc") + " s300 \",\" ws " + key("things") + " items ws \"}\"",

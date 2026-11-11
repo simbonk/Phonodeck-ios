@@ -295,9 +295,13 @@ struct WorldView: View {
                 }
                 attr("Place", f.place.isEmpty ? "On the way somewhere new" : f.place)
                 attr("Facing", f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"))
+                if let s = f.spot, !s.isEmpty { attr("You are", s) }
+                if let s = f.feelings, !s.isEmpty { attr("How they feel", s.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
                 if !f.room.isEmpty { attr("In the room", f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
                 if !f.have.isEmpty { attr("You have", f.have.joined(separator: "; ")) }
                 if !f.around.isEmpty { attr("Around", f.around.joined(separator: "; ")) }
+                if let s = f.sound, !s.isEmpty { attr("Background", s) }
+                if let s = f.pending, !s.isEmpty { attr("Still hanging", s.joined(separator: "\n")) }
                 if !f.changed.isEmpty {
                     guideList("What changed", f.changed, a)
                 }
