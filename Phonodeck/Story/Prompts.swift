@@ -130,6 +130,7 @@ enum Prompts {
     QUESTION 1 OF 2. Fill in this form about the player's NEW MESSAGE. Output ONLY one JSON object:
     {"to":"the one person the player is speaking to or doing something with in the new message, or \"nobody\"",
      "going":"\"staying\" if the player stays in the place they are in; the name of a place if they go there; \"somewhere new\" if they leave for a place that is not listed",
+     "new_place":"only if going somewhere new: the place's short name from the message, 1-4 words (e.g. 'your hotel room', 'the train station'); otherwise empty",
      "look":["up to 3 lookups you need before writing what happens next; [] if the moment needs nothing more"]}
     The lookups: "who is here", "where am I", "what I have", "what is around", "look at <a name from CARDS>", "where is <a person>", "remember <a topic from earlier in the story>".
     Look up only what this moment needs, the way an eye only sees what it looks at: the person the player asks about, the things around them if they look around, their own things if they reach for them, an earlier moment if they bring one back. Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going.
@@ -183,6 +184,11 @@ enum Prompts {
     What did this moment establish that will still be true tomorrow: what someone said about their life, work, family or plans, a promise, something given or paid and to whom? Each a full sentence that starts with the person's name or 'You'. Not what someone is doing right now, and nothing in ALREADY KNOWN. {"facts":["0 to 2 sentences"]}
     """
 
+    /// A place the player arrives in, built before the reply so the reply can bring it to life.
+    static let buildPlace = """
+    QUESTION: The player is arriving in this place right now. Build it so it comes to life, true to the story's time and world. {"desc":"two or three concrete sentences: what kind of place it is, the light, the sounds, the smell, how it feels to step in","things":["3 to 5 notable things in it, 2-6 words each, e.g. 'a narrow iron bed'"]}
+    """
+
     /// Coming back to a place after a long time away: what ordinary things changed meanwhile.
     static let awayQuestion = """
     QUESTION: The player is coming back to this place after the time shown. Who of the people left here is still here, and what ordinary things have changed meanwhile (the crowd, the light, a chore done, a meal over)? Nothing dramatic, nothing new that matters to the story. {"still_here":["names from PEOPLE LEFT HERE"],"changes":["0 to 2 short plain sentences"]}
@@ -191,7 +197,7 @@ enum Prompts {
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
     static var groundedInstructions: [String] {
-        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildPeople, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion]
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildPeople, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
     }
 
     // MARK: Building the world

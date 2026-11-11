@@ -296,7 +296,6 @@ struct WorldView: View {
                 attr("Place", f.place.isEmpty ? "On the way somewhere new" : f.place)
                 attr("Facing", f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"))
                 if !f.room.isEmpty { attr("In the room", f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
-                if !f.away.isEmpty { attr("Out of view", f.away.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
                 if !f.have.isEmpty { attr("You have", f.have.joined(separator: "; ")) }
                 if !f.around.isEmpty { attr("Around", f.around.joined(separator: "; ")) }
                 if !f.changed.isEmpty {
@@ -370,27 +369,26 @@ struct WorldView: View {
                 if !around.isEmpty { attr("Props here", around.joined(separator: "; ")) }
                 let here = a.whereabouts.filter { $0.here != false }.map { display($0.name, a) + ($0.engaged == true ? " (with you)" : "") }
                 attr("People here", here.isEmpty ? "Nobody but you" : here.joined(separator: ", "))
-                let away = a.whereabouts.filter { $0.here == false }.map { w in display(w.name, a) + (w.leftAt.map { " (at " + $0 + ")" } ?? "") }
-                if !away.isEmpty { attr("Elsewhere", away.joined(separator: ", ")) }
             }
         }
-        if !a.cast.isEmpty {
-            Caps(text: "People").padding(.top, 8)
-            ForEach(a.cast) { p in
+        // Only what is in view this turn: people and places out of view drop away here, and stay in
+        // the earlier turns of the turn guide (and in the store, where a lookup still finds them).
+        let inView = a.cast.filter { p in a.whereabouts.contains { $0.name == p.name && $0.here != false } }
+        if !inView.isEmpty {
+            Caps(text: "People here").padding(.top, 8)
+            ForEach(inView) { p in
                 Button { editing = p } label: { card { person(p, a) } }.buttonStyle(.plain)
             }
         }
         // Every place the player has been keeps its own card: what is there and who was left there.
-        let visited = a.places.filter { !$0.isEmpty }
-        if !visited.isEmpty {
-            Caps(text: "Places").padding(.top, 8)
-            ForEach(visited, id: \.self) { place in
-                card { placeCard(place, a) }
-            }
+        if !a.location.isEmpty {
+            Caps(text: "This place").padding(.top, 8)
+            card { placeCard(a.location, a) }
         }
-        let facts = a.facts.filter { !Continuity.elsewhereFact($0, in: a) }
+        let away = a.cast.filter { p in !inView.contains { $0.id == p.id } }
+        let facts = a.facts.filter { f in !Continuity.elsewhereFact(f, in: a) && !away.contains { Cards.mentions($0, in: f) } }
         if !facts.isEmpty {
-            Caps(text: "Facts").padding(.top, 8)
+            Caps(text: "Facts in view").padding(.top, 8)
             card {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(facts.enumerated()), id: \.offset) { _, f in
