@@ -224,6 +224,30 @@ enum Prompts {
     Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. "with_player" is true only for people in the same room or spot as the player when the story opens. "scene" and "things" describe only the opening place, and everything in them must fit the bible. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's "pronouns" and "desc" must match how the bible refers to them: decide everyone's gender before writing the bible and keep it.
     """
 
+    /// The grounded engine's architect: only what the opening needs. No hidden plot, secrets or
+    /// paced roadmap (there is no time limit), and a short premise instead of a long bible; the
+    /// world is built as the player goes.
+    static let architectGrounded = """
+    You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text, with the keys in exactly this order:
+    {"title":"a short title",
+     "bible":"60-100 words, written to the player as 'you': what this story is, the era and setting, who the player is and why they are here",
+     "location":"the opening place's short name, 1-4 words, the first of places",
+     "places":[{"name":"","desc":"one line"}],
+     "player":{"name":"the player character's name","desc":"one line: who they are here"},
+     "lore":[{"name":"","type":"person|item|faction","pronouns":"for a person: she/her, he/him or they/them","role":"for a person: how the player first knows them, e.g. the old fisherman","known":false,"desc":"for a person: their job, one concrete fact of their life (family, money, a worry today) and how they talk; otherwise two telling details","wants":"for a person: one specific, practical thing they want"}],
+     "facts":["4-8 short, concrete facts that must stay true all story: each person's pronouns and look, what the player is wearing and has with them, the season and weather, anything the player ruled out"],
+     "time":"when the story opens: time of day, day and season, e.g. 'Early morning, late summer'",
+     "timeline":["0-2 things that already happened, each with exactly when"],
+     "people":[{"name":"","where":"exactly where they are when the story opens","doing":"what they are doing","with_player":true}],
+     "scene":"one or two plain sentences, written to the player as 'you': the exact spot in the opening place where you are, who is with you and what is going on",
+     "things":["3-6 notable things in that spot, 2-6 words each"]}
+    Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story. "places" lists 1-3 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most one important item or group. "known" is true only for people the player already knows at the start. Everyone in "people" is in the opening place; "with_player" is true only for people the player is dealing with at the start. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's pronouns and desc must match how the bible refers to them.
+    """
+
+    static let architectSimulatorGrounded = """
+    This is an EXPERIENCE with no plot: no threat, villain, mystery or twist, and nothing scripted. "places" lists only the opening place. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
+    """
+
     static let architectSimulator = """
     This is an EXPERIENCE with no plot: no threat, villain, mystery or twist, and nothing scripted. These rules override the ones above: "places" lists only the opening place. "beats" is [] and "roadmap" is []. "secrets" holds one private backstory for each person, written "Name: ..." (where they come from, what shaped them, what they hope for, in 1-2 sentences), which they share only when the player asks about their life. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """

@@ -17,7 +17,7 @@ final class Forge {
         let why: String
     }
 
-    static let stages: [Stage] = [
+    static let classicStages: [Stage] = [
         Stage(title: "Reading your wishes", keys: [], why: ""),
         Stage(title: "Building the story", keys: ["title", "bible"], why: "A story bible, written for you alone."),
         Stage(title: "Mapping the world", keys: ["location", "places", "beats"], why: "Places to wander, and your first steps."),
@@ -26,6 +26,20 @@ final class Forge {
         Stage(title: "Crafting the Director", keys: ["roadmap"], why: "A plan paced to your time."),
         Stage(title: "Raising the curtain", keys: [], why: "Your opening scene is being written."),
     ]
+
+    /// The grounded engine's build: no hidden plot, no paced roadmap, a short premise. The world
+    /// is built as you go.
+    static let groundedStages: [Stage] = [
+        Stage(title: "Reading your wishes", keys: [], why: ""),
+        Stage(title: "Building the story", keys: ["title", "bible"], why: "What this story is, in a few lines."),
+        Stage(title: "Mapping the world", keys: ["location", "places"], why: "Where you begin."),
+        Stage(title: "Establishing characters and lore", keys: ["player", "lore"], why: "A world that remembers everyone you meet."),
+        Stage(title: "Setting the scene", keys: ["facts", "time", "timeline", "people", "scene", "things"], why: "Who is where, and what is around you."),
+        Stage(title: "Raising the curtain", keys: [], why: "Your opening scene is being written."),
+    ]
+
+    let stages: [Stage]
+    private let grounded: Bool
 
     /// The long first wait cycles through these.
     static let waitingLines = [
@@ -49,28 +63,30 @@ final class Forge {
     private var raw = ""
     private let lines: [String]
 
-    init(name: String, curated: Bool) {
+    init(name: String, curated: Bool, grounded: Bool = false) {
         self.name = name
+        self.grounded = grounded
+        stages = grounded ? Self.groundedStages : Self.classicStages
         var l = Self.waitingLines
         if curated { l.insert("This world was curated for you. Next time, try building one yourself.", at: 3) }
         lines = l
     }
 
-    var fraction: Double { (Double(at) + 0.5) / Double(Self.stages.count) }
+    var fraction: Double { (Double(at) + 0.5) / Double(self.stages.count) }
 
     func line(at date: Date) -> String {
         if at == 0 {
             let i = Int(date.timeIntervalSince(started) / 4) % lines.count
             return lines[i]
         }
-        return Self.stages[at].why
+        return self.stages[at].why
     }
 
     /// A piece of the architect's streamed reply.
     func feed(_ piece: String) {
         raw += piece
         var reached = 1
-        for (i, s) in Self.stages.enumerated() where !s.keys.isEmpty {
+        for (i, s) in self.stages.enumerated() where !s.keys.isEmpty {
             if s.keys.contains(where: { raw.contains("\"\($0)\"") }) { reached = max(reached, i) }
         }
         reach(reached)
@@ -79,14 +95,14 @@ final class Forge {
 
     func reach(_ k: Int) {
         guard k > target else { return }
-        target = min(k, Self.stages.count - 1)
+        target = min(k, self.stages.count - 1)
         step()
     }
 
     /// The story is ready: walk the remaining stages quickly, then fade.
     func close() {
         closing = true
-        target = Self.stages.count - 1
+        target = self.stages.count - 1
         step()
     }
 
@@ -108,7 +124,7 @@ final class Forge {
             }
             guard let self else { return }
             self.stepper = nil
-            if self.closing && self.at == Self.stages.count - 1 {
+            if self.closing && self.at == self.stages.count - 1 {
                 try? await Task.sleep(for: .seconds(1.2))
                 withAnimation(.easeOut(duration: 0.6)) { self.finished = true }
             }
@@ -120,7 +136,7 @@ final class Forge {
         func section(_ key: String) -> String? {
             guard let r = raw.range(of: "\"\(key)\"") else { return nil }
             let rest = raw[r.upperBound...]
-            let allKeys = Self.stages.flatMap(\.keys)
+            let allKeys = self.stages.flatMap(\.keys)
             var end = rest.endIndex
             for k in allKeys where k != key {
                 if let n = rest.range(of: "\"\(k)\""), n.lowerBound < end { end = n.lowerBound }
@@ -142,8 +158,12 @@ final class Forge {
             .compactMap { $0 }.joined(separator: " · ")
         finds[3] = [firstString("player").map { "You are " + $0 }, plural(people - 1, "character with a life of their own", "characters with lives of their own")]
             .compactMap { $0 }.joined(separator: " · ")
-        finds[4] = plural(secrets, "secret kept from you", "secrets kept from you") ?? ""
-        finds[5] = plural(count("roadmap", "goal"), "act planned", "acts planned") ?? ""
+        if grounded {
+            finds[4] = firstString("time") ?? ""
+        } else {
+            finds[4] = plural(secrets, "secret kept from you", "secrets kept from you") ?? ""
+            finds[5] = plural(count("roadmap", "goal"), "act planned", "acts planned") ?? ""
+        }
     }
 }
 
@@ -179,7 +199,7 @@ struct ForgeView: View {
 
     private var steps: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(Forge.stages.enumerated()), id: \.offset) { i, s in
+            ForEach(Array(forge.stages.enumerated()), id: \.offset) { i, s in
                 let done = i < forge.at, now = i == forge.at
                 HStack(alignment: .top, spacing: 14) {
                     VStack(spacing: 0) {
@@ -189,7 +209,7 @@ struct ForgeView: View {
                             .frame(width: 14, height: 14)
                             .padding(.top, 5)
                             .modifier(Ping(active: now))
-                        if i < Forge.stages.count - 1 {
+                        if i < forge.stages.count - 1 {
                             Rectangle().fill(done ? Theme.accent.opacity(0.55) : Theme.line).frame(width: 2).frame(maxHeight: .infinity)
                         }
                     }

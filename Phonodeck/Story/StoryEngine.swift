@@ -326,7 +326,9 @@ final class StoryEngine {
         busy = true
         building = true
         error = nil
-        let forge = Forge(name: e.title.isEmpty ? (source.map { $0.report?.title ?? $0.title } ?? "Your world") : e.title, curated: CuratedExperiences.all.contains { $0.id == e.id })
+        let built = grounded
+        let forge = Forge(name: e.title.isEmpty ? (source.map { $0.report?.title ?? $0.title } ?? "Your world") : e.title,
+                          curated: CuratedExperiences.all.contains { $0.id == e.id }, grounded: built)
         self.forge = forge
         ComputerSounds.shared.startHum()
         currentTask = Task {
@@ -343,14 +345,19 @@ final class StoryEngine {
             var a = Adventure(setup: e, title: e.title.isEmpty ? "Untitled" : e.title, minutes: max(5, e.minutes))
             a.playerName = player.name
             a.nameless = true
-            var request = (e.simulator ? Prompts.architect + "\n" + Prompts.architectSimulator : Prompts.architect)
+            // The grounded engine asks only for what the opening needs: no secrets, beats or roadmap.
+            let base = built ? Prompts.architectGrounded : Prompts.architect
+            let sim = built ? Prompts.architectSimulatorGrounded : Prompts.architectSimulator
+            var request = e.simulator ? base + "\n" + sim : base
             if source != nil { request += "\n" + Prompts.continuation }
             request += "\n" + Prompts.architectNameless(playerNamed: !player.name.isEmpty)
             var prompt = "PLAYER'S ANSWERS\n" + e.answers(player: player)
                 + "\n\nFEELING TO ACHIEVE: " + (e.feeling.isEmpty ? "surprise me" : e.feeling)
                 + "\nPLAY MODE: " + (e.simulator ? "experience (no plot)" : "story")
-                + "\nSESSION LENGTH: \(a.minutes) minutes (about \(max(3, a.minutes * 60 / 90)) player replies)."
-                + (a.isShort ? "\nThis is a SHORT story: a small cast, 2-3 places, 3 acts, one clear goal." : "")
+            if !built {
+                prompt += "\nSESSION LENGTH: \(a.minutes) minutes (about \(max(3, a.minutes * 60 / 90)) player replies)."
+                if a.isShort { prompt += "\nThis is a SHORT story: a small cast, 2-3 places, 3 acts, one clear goal." }
+            }
             var ending: Ending?
             if let src = source {
                 stage = "Reading how the last part ended"
@@ -396,7 +403,7 @@ final class StoryEngine {
                 carryOver(from: src, into: &a, link: link)
                 if let ending, !link.lowercased().contains("later") { startAtEnding(ending, into: &a) }
             }
-            forge.reach(Forge.stages.count - 1)
+            forge.reach(forge.stages.count - 1)
             adventure = a
             undoSnapshot = nil
             refreshVocabulary()
@@ -545,7 +552,7 @@ final class StoryEngine {
             guard let g = r["goal"] as? String else { return nil }
             return Act(from: (r["from"] as? NSNumber)?.doubleValue ?? 0, to: (r["to"] as? NSNumber)?.doubleValue ?? Double(a.minutes), goal: g)
         }
-        if a.roadmap.isEmpty && !e.simulator {
+        if a.roadmap.isEmpty && !e.simulator && !grounded {
             let m = Double(a.minutes)
             a.roadmap = [
                 Act(from: 0, to: m * 0.35, goal: "Set up the world, the goal and the first obstacle."),
@@ -1146,7 +1153,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11d"
+    static let build = "build 2026-11-11e"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
