@@ -147,6 +147,12 @@ struct CuratorView: View {
             .background(Theme.bg)
             .safeAreaInset(edge: .bottom) { navBar }
             .toolbar(.hidden, for: .navigationBar)
+            // While the name is being asked for, the page behind goes dark and soft, so its own
+            // "Build my world" button can't be mistaken for the one in the dialog.
+            .blur(radius: naming ? 6 : 0)
+            .overlay { if naming { Color.black.opacity(0.72).ignoresSafeArea().transition(.opacity) } }
+            .allowsHitTesting(!naming)
+            .animation(.easeOut(duration: 0.2), value: naming)
         }
         .onAppear(perform: setUp)
         .onChange(of: i) { _, _ in message = ""; armIdle() }

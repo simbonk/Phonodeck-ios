@@ -178,6 +178,16 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// A yes or no under one key, then two short texts under their own keys.
+    static func yesNo(_ k: String, then k2: String, _ c2: Int, and k3: String, _ c3: Int) -> String {
+        [
+            "root ::= \"{\" ws " + key(k) + " yn \",\" ws " + key(k2) + " sa \",\" ws " + key(k3) + " sb ws \"}\"",
+            choice("yn", ["yes", "no"]),
+            capped("sa", c2), capped("sb", c3),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// Two short texts, each under its own key.
     static func pair(_ k1: String, _ c1: Int, _ k2: String, _ c2: Int) -> String {
         [
