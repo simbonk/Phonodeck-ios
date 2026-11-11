@@ -135,6 +135,14 @@ final class StoryEngine {
         adventure = nil
     }
 
+    /// Closes the story without keeping it (the auto-play test runs keep only the export).
+    func discard() {
+        stopAll()
+        handsFree = false
+        if let a = adventure { library.delete(a) }
+        adventure = nil
+    }
+
     func stopAll() {
         currentTask?.cancel()
         interruptedTurn = nil
@@ -728,6 +736,19 @@ final class StoryEngine {
         }
     }
 
+    /// For the auto-play test runs: waits until the turn (or the world being built) and the
+    /// questions after it have all finished. False when the turn took longer than `limit` seconds.
+    func waitUntilIdle(limit: Double) async -> Bool {
+        var waited = 0.0
+        while busy || building, waited < limit, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(500))
+            waited += 0.5
+        }
+        if busy || building || Task.isCancelled { return false }
+        if let job = memoryJob { await job.value }
+        return !Task.isCancelled
+    }
+
     /// Back in the foreground: a reply that was cut off by leaving the app is written again.
     func resumeAfterBackground() {
         guard let t = interruptedTurn, adventure != nil, !busy else { return }
@@ -1153,7 +1174,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11i"
+    static let build = "build 2026-11-11j"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
