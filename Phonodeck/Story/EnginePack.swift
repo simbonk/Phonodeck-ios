@@ -105,6 +105,8 @@ final class EnginePack: @unchecked Sendable {
         let url: URL
         let fileVersion: String
         let notes: String
+        /// The address it was downloaded from.
+        let source: String
         let prompts: Int
         let changed: Int
         let saved: Date
@@ -119,6 +121,7 @@ final class EnginePack: @unchecked Sendable {
     }
 
     private static func file(_ n: Int) -> URL { folder.appendingPathComponent("V\(n).js") }
+    private static func sourceFile(_ n: Int) -> URL { folder.appendingPathComponent("V\(n).source") }
 
     static func versions() -> [Version] {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
@@ -134,7 +137,8 @@ final class EnginePack: @unchecked Sendable {
             var changed = p.prompts.filter { k, v in builtIn[k].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) != v } ?? false }.count
             if let t = p.testScripts, t.trimmingCharacters(in: .whitespacesAndNewlines) != PlayScripts.starterText.trimmingCharacters(in: .whitespacesAndNewlines) { changed += 1 }
             let saved = (try? FileManager.default.attributesOfItem(atPath: u.path)[.modificationDate] as? Date) ?? Date()
-            return Version(number: n, url: u, fileVersion: p.version, notes: p.error.map { "Doesn't run: " + $0 } ?? p.notes,
+            let from = (try? String(contentsOf: sourceFile(n), encoding: .utf8)) ?? ""
+            return Version(number: n, url: u, fileVersion: p.version, notes: p.error.map { "Doesn't run: " + $0 } ?? p.notes, source: from,
                            prompts: p.prompts.count + (p.testScripts == nil ? 0 : 1), changed: changed, saved: saved)
         }
     }
@@ -196,6 +200,7 @@ final class EnginePack: @unchecked Sendable {
         }
         let n = (newest?.number ?? 0) + 1
         do { try text.write(to: file(n), atomically: true, encoding: .utf8) } catch { return "Couldn't save it: " + error.localizedDescription }
+        try? url.absoluteString.write(to: sourceFile(n), atomically: true, encoding: .utf8)
         return "Saved as V\(n) (file version " + p.version + "). Tap it below to use it."
             + (unknown.isEmpty ? "" : " Not used, names this app doesn't know: " + unknown.joined(separator: ", ") + ".")
     }
@@ -246,7 +251,7 @@ struct EnginePackView: View {
                 row(title: "Built into the app", detail: StoryEngine.build, number: 0)
                 ForEach(versions) { v in
                     row(title: "V\(v.number)  ·  file version \(v.fileVersion)",
-                        detail: "\(v.changed) of \(v.prompts) parts differ from built-in · " + v.saved.formatted(date: .abbreviated, time: .shortened)
+                        detail: (v.source.isEmpty ? "" : "From " + v.source.replacingOccurrences(of: "https://", with: "") + "\n") + "\(v.changed) of \(v.prompts) parts differ from built-in · " + v.saved.formatted(date: .abbreviated, time: .shortened)
                             + (v.notes.isEmpty ? "" : "\n" + v.notes),
                         number: v.number)
                 }
