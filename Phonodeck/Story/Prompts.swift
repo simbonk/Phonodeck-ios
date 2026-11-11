@@ -168,6 +168,10 @@ enum Prompts {
     static let rebuildPlace = """
     Where is the player at the end of the moment? {"where":"one choice from the list","name":"only if somewhere new: its short name, 1-4 words; otherwise empty"}
     """
+    /// How much story time the moment took, picked from `StoryEngine.timeSteps`.
+    static let rebuildTime = """
+    About how much time passed in the story during this moment, from the player's words to the end of the reply? A few words across a bar is a moment; walking to another room or building nearby is a few minutes; a meal or a long talk is half an hour or more; sleeping is overnight. {"passed":"one choice from the list"}
+    """
     static let rebuildPeople = """
     Who is with the player at the end of the moment, in the same room or spot? {"here":["names from the list; [] if nobody"]}
     """
@@ -197,7 +201,7 @@ enum Prompts {
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
     static var groundedInstructions: [String] {
-        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildPeople, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
     }
 
     // MARK: Building the world

@@ -2092,6 +2092,28 @@ final class StoryEngine {
             if desc.count > 20 { now.lore[i].desc = clip(desc, 240); filed.append("Place card described: " + now.location) }
         }
 
+        // How long the moment took: the story clock moves by it (unless the player set the time).
+        if start.clock != nil, !playerSaid.isEmpty, Continuity.statedTime(playerSaid, near: start.clock) == nil {
+            let steps = Self.timeSteps
+            let tm = await ask("How long did that take?", Prompts.rebuildTime + "\nTHE LIST: " + steps.map(\.0).joined(separator: "; "),
+                               JSONGrammar.one("passed", from: steps.map(\.0)), 20)
+            let said = (tm?["passed"] as? String) ?? ""
+            if var minutes = steps.first(where: { $0.0 == said })?.1 {
+                // Hours only pass when the words say so; going somewhere takes at least a few minutes.
+                let longWords = #"(?i)\b(hours?|sleep|slept|asleep|bed|night|morning|nap|wait(ed|ing)?|later|rest|all day)\b"#
+                if minutes >= 60, (playerSaid + " " + reply).range(of: longWords, options: .regularExpression) == nil { minutes = 30 }
+                let moved = !placeBeforeTurn.isEmpty && (adventure?.location ?? "").caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
+                if moved, minutes < 5 { minutes = 5 }
+                asked.append("How long did that take? → " + said)
+                commit { now in
+                    guard let c = now.clock else { return }
+                    now.clock = c + minutes
+                    now.storyTime = Continuity.storyTime(clock: c + minutes, old: now.storyTime)
+                    filed.append("Clock: +" + Self.span(minutes) + ", now " + Continuity.clockText(c + minutes))
+                }
+            }
+        }
+
         // 2. Who is with the player at the end? Someone counts as arriving or leaving only when the
         // reply itself shows them.
         let cast = start.cast
@@ -2298,6 +2320,17 @@ final class StoryEngine {
             a.things = merged
         }
         return a.location + (things.isEmpty ? "" : " (" + things.prefix(5).joined(separator: "; ") + ")")
+    }
+
+    /// The time a moment can take, as the rebuild's time question offers it, in story minutes.
+    static let timeSteps: [(String, Int)] = [
+        ("a moment", 1), ("a few minutes", 5), ("a quarter of an hour", 15), ("half an hour", 30),
+        ("an hour", 60), ("a few hours", 180), ("overnight", 480),
+    ]
+
+    /// "15 min", "3 h".
+    static func span(_ minutes: Int) -> String {
+        minutes < 60 ? "\(minutes) min" : (minutes % 60 == 0 ? "\(minutes / 60) h" : "\(minutes / 60) h \(minutes % 60) min")
     }
 
     /// How many turns away from a place before coming back to it asks what changed meanwhile.
