@@ -1153,7 +1153,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11g"
+    static let build = "build 2026-11-11h"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1328,9 +1328,12 @@ final class StoryEngine {
         // The restated action must be the player's own words: one that adds what they didn't say
         // ("You tell her your name is Clara") is dropped, and the message itself is used.
         let castWords: String = a.cast.map { $0.name + " " + $0.role }.joined(separator: " ")
-        let ownText: String = input + " you yourself " + a.playerName + " " + castWords
+        let ownText: String = input + " you yourself " + castWords
         let own = Continuity.wordSet(ownText)
-        if !read.does.isEmpty, !Continuity.grounded(read.does, in: own, share: 0.5) {
+        // A name the player didn't say this turn is never put in their mouth.
+        let myFirst: String = Cards.first(a.playerName).lowercased()
+        let namesMe = myFirst.count > 1 && Continuity.wordSet(read.does).contains(myFirst) && !Continuity.wordSet(input).contains(myFirst)
+        if !read.does.isEmpty, namesMe || !Continuity.grounded(read.does, in: own, share: 0.65) {
             read.dropped = "does not match the message: " + read.does
             read.does = ""
         }
@@ -1570,20 +1573,30 @@ final class StoryEngine {
         namesThisTurn = []
         var introduced = hidden ? false : learnPlayerName(&a, input: input)
         // "I walk over to introduce myself": the player gives the name the story already knows.
-        if !hidden, a.nameless, !a.playerName.isEmpty,
-           input.range(of: #"(?i)\bintroduc(e|es|ing) (myself|me)\b"#, options: .regularExpression) != nil { introduced = true }
+        // With no name known yet, the person they turn to still gives theirs.
+        if !hidden, a.nameless,
+           input.range(of: #"(?i)\bintroduc(e|es|ed|ing) (myself|me)\b"#, options: .regularExpression) != nil { introduced = true }
 
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
         pendingInput = nil
         adventure = a
         streaming = ""
         thinkingSince = Date()
+        // The turn guide moves to the new turn the moment the player speaks, and shows each step
+        // worked out before the reply as it is settled.
+        var pre: [String] = []
+        func step(_ line: String) {
+            pre.append(line)
+            Self.updateFrame(&a, looked: [], asked: [], notes: catchUpNotes, steps: [], pre: pre)
+            adventure?.frames = a.frames
+        }
+        if !hidden { step("You said → " + clip(input.replacingOccurrences(of: "\n", with: " "), 140)) }
 
         // 1. Look. One short call: who the player turns to, where they go, and what to look up.
         var read: PlayerRead? = nil
         let context = readContext(a, input: input)
         if !hidden, !playerNarrates, gmPlans {
-            stage = "Looking around"
+            stage = "Who are you talking to?"
             lapFrom = Date()
             read = await lookPlayer(a, input: input, context: context)
             guard !Task.isCancelled else { adventure = snapshot; return }
@@ -1599,6 +1612,10 @@ final class StoryEngine {
         if !hidden, !playerNarrates {
             settle(&a, read: read ?? PlayerRead(), input: input)
             if read == nil { lastRead = (gmPlans ? "no usable reading; " : "reading off; ") + lastRead }
+            let facingNow: [String] = a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
+            step("Who are you talking to? → " + (facingNow.isEmpty ? "nobody in particular" : facingNow.joined(separator: ", ")))
+            let movedNow = a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
+            step("Are you going anywhere? → " + (movedNow ? (a.location.isEmpty ? "somewhere new" : a.location) : "staying"))
             // Arriving somewhere with no description yet: the place is built before the reply, so
             // the reply can bring it to life.
             let arrived = !a.location.isEmpty && a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
@@ -1611,6 +1628,7 @@ final class StoryEngine {
                 if !built.isEmpty {
                     catchUpNotes.append("Built: " + built)
                     lastRead += "; built " + a.location
+                    step("What is this place like? → " + built)
                 }
             }
             // Back in a place after a good while away: one short question catches it up.
@@ -1626,6 +1644,7 @@ final class StoryEngine {
                     extra.append("SINCE YOU WERE LAST HERE: " + changes.joined(separator: " "))
                     catchUpNotes += changes.map { "While you were away: " + $0 }
                     lastRead += "; caught up on " + a.location + " after \(gap) turns away"
+                    step("What changed while you were away? → " + changes.joined(separator: " "))
                 }
             }
         }
@@ -1648,16 +1667,43 @@ final class StoryEngine {
                     if ans.lines.isEmpty { ans.lines = ["Nothing earlier on that."] }
                 }
                 looked.append(ans)
+                step(l.text.prefix(1).uppercased() + String(l.text.dropFirst()) + "? → " + clip(ans.text.isEmpty ? "nothing" : ans.text, 160))
             }
             if !looks.isEmpty { lap("lookups") }
         }
+        // Could the player do that? Asked only when the action leans on a thing they must have.
+        let needs = #"(?i)\b(pull out|take out|draw my|unlock|shoot|fire my|light (a|my|the)|use my|with my|from my (pocket|bag|coat))\b"#
+        if !hidden, !playerNarrates, gmPlans, input.range(of: needs, options: .regularExpression) != nil {
+            stage = "Could you do that?"
+            lapFrom = Date()
+            let have: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.joined(separator: "; ")
+            let props: String = Cards.props(a).prefix(8).joined(separator: "; ")
+            let q: String = context + "\n\nTHE PLAYER HAS: " + have + "\nAROUND THEM: " + (props.isEmpty ? "nothing notable" : props) + "\n\n" + Prompts.canDo + "\nThe form:"
+            let raw = (try? await llm.complete(system: nil, prompt: q,
+                                               options: .init(maxTokens: 50, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.yesNo("can", then: "missing", chars: 60)))) ?? ""
+            guard !Task.isCancelled else { adventure = snapshot; return }
+            lap("could you do that")
+            let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+            let can: String = (m["can"] as? String) ?? "yes"
+            let missing: String = ((m["missing"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+            if can == "no", missing.count > 2, !Self.echoesPrompt(missing) {
+                extra.append("THE PLAYER CANNOT DO THAT AS SAID: they have no " + missing + ". Show it not working, plainly and kindly; nothing appears from nowhere.")
+                step("Could you do that? → no, missing: " + missing)
+            } else {
+                step("Could you do that? → yes")
+            }
+        }
         // Read, question 2: the moment, planned from what was looked up.
         if read != nil {
-            stage = "Planning the moment"
+            stage = "What happens next?"
             lapFrom = Date()
             await planPlayer(a, input: input, context: context, looked: looked, into: &read!)
             guard !Task.isCancelled else { adventure = snapshot; return }
             lap("plan")
+            if let r = read {
+                if !r.answer.isEmpty { step("What's the answer? → " + r.answer) }
+                if !r.beat.isEmpty { step("What happens next? → " + r.beat) }
+            }
         }
         if !hidden, !playerNarrates {
             moment = momentText(a, read: read ?? PlayerRead(), input: input)
@@ -1846,6 +1892,16 @@ final class StoryEngine {
         }
         if let now = adventure, now.id == a.id { a.takeMemory(from: now) }
         if opening { checkPronouns(&a, texts: [a.bible, reply]) }
+        // A name the storyteller made up for the person the player is with is put right in code.
+        var nameFix = ""
+        if !hidden, !opening {
+            let namey = Continuity.asksName(input) != nil || introduced
+            if let fixed = Self.fixMadeUpName(&a, reply: reply, namey: namey) {
+                reply = fixed.reply
+                nameFix = fixed.note
+                namesThisTurn.append(fixed.name)
+            }
+        }
         settleClock(&a, reply: reply, opening: opening)
         if !opening {
             a.fixes.removeAll { $0.hasPrefix(Self.checked) }
@@ -1859,6 +1915,7 @@ final class StoryEngine {
         lap(redrawn ? "rest of the reply (written twice)" : "rest of the reply")
         // Behind the scenes, for the story export: short, and every step shown.
         var before: [String] = []
+        if !nameFix.isEmpty { before.append("NAME CHECK: " + nameFix) }
         if !hidden {
             if read == nil, !playerNarrates {
                 before.append("READ: " + (gmPlans ? "nothing usable came back; code settled the scene alone" : "off (planning is off)"))
@@ -2220,6 +2277,38 @@ final class StoryEngine {
             }
         }
 
+        // What each person the player is with wants right now, and what they just learned about
+        // the player (only from the player's own words).
+        let mineOnly = Continuity.wordSet(playerSaid + " you your player " + start.playerName)
+        for c in facingNow.prefix(2) {
+            let wm = await ask("What does " + c.name + " want, and what did they learn?", Prompts.rebuildWants(c.name + roleOf(c)),
+                               JSONGrammar.pair("wants", 110, "learned", 100), 90)
+            guard wm != nil else { return }
+            let trim = CharacterSet(charactersIn: " .\n")
+            let wants: String = ((wm?["wants"] as? String) ?? "").trimmingCharacters(in: trim)
+            let learnedSaid: String = ((wm?["learned"] as? String) ?? "").trimmingCharacters(in: trim)
+            var learned: String = ""
+            if learnedSaid.count > 5, !Self.echoesPrompt(learnedSaid), Continuity.grounded(learnedSaid, in: mineOnly, share: 0.5) { learned = learnedSaid }
+            let wantOK = wants.count > 3 && !Self.echoesPrompt(wants)
+            asked.append(c.name + " wants? → " + (wantOK ? wants : "not shown") + (learned.isEmpty ? "" : "; learned: " + learned))
+            commit { now in
+                let key = c.name.lowercased()
+                if wantOK {
+                    if (now.wants[key] ?? "").caseInsensitiveCompare(wants) != .orderedSame { filed.append(c.name + " wants: " + wants) }
+                    now.wants[key] = clip(wants, 120)
+                }
+                var known: [String] = now.knows[key] ?? []
+                var fresh: [String] = learned.isEmpty ? [] : [clip(learned, 110)]
+                if let said = Continuity.selfIntroduction(playerSaid) { fresh.append("your name is " + said) }
+                for f in fresh where !known.contains(where: { Self.similar($0, f) }) {
+                    known.append(f)
+                    filed.append(c.name + " now knows: " + f)
+                }
+                if known.count > 6 { known = Array(known.suffix(6)) }
+                now.knows[key] = known
+            }
+        }
+
         // Where the player is in the place, and how close to whoever they are with.
         let sm = await ask("Where are you in the room?", Prompts.rebuildSpot, JSONGrammar.text("spot", chars: 80), 40)
         guard sm != nil else { return }
@@ -2277,6 +2366,16 @@ final class StoryEngine {
         let tm = await ask("What is around?", Prompts.rebuildThings, JSONGrammar.strings("things", max: 6, chars: 60), 120)
         guard tm != nil else { return }
         let around = checked(strings(tm, "things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
+            // The light, the air and the room itself are the background, and clothes are their wearer's.
+            if e.range(of: #"(?i)\b(light|lamplight|glow|air|smell|scent|aroma|warmth|silence|darkness|shadows?|room|backroom|music|sound)\b"#, options: .regularExpression) != nil {
+                refused.append(e + " (background, not a thing)")
+                return false
+            }
+            let w: Set<String> = Continuity.wordSet(e).filter { $0.count > 2 }
+            if w.count >= 2, theirs.contains(where: { w.intersection($0).count >= 2 }) {
+                refused.append(e + " (someone's own)")
+                return false
+            }
             if Continuity.grounded(e, in: inReply) { return true }
             refused.append(e)
             return false
@@ -2314,8 +2413,10 @@ final class StoryEngine {
         // Something open is a short sentence about what hasn't happened yet: never a thing, a look
         // or a sound, and never cut off mid-way.
         let hanging = strings(om, "open", cap: 3).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")) }.filter { h in
+            if start.pending.contains(where: { Self.similar($0, h) }) { return true }
             let words = h.split(separator: " ").count
-            if h.count >= 105 || words < 4 || h.hasSuffix("-") {
+            let quoted = h.range(of: #"(?i)\b(we|our|us|me|my|i|i'm|i'll)\b"#, options: .regularExpression) != nil
+            if h.count >= 105 || words < 4 || h.hasSuffix("-") || quoted {
                 refused.append(h + " (not an open thread)")
                 return false
             }
@@ -2327,6 +2428,118 @@ final class StoryEngine {
             for h in hanging where !now.pending.contains(where: { Self.similar($0, h) }) { filed.append("Still hanging: " + h) }
             for p in now.pending where !hanging.contains(where: { Self.similar($0, p) }) { filed.append("Settled: " + p) }
             now.pending = hanging
+        }
+
+        // How the player is, physically.
+        let bodyQ: String = (start.body.isEmpty ? "" : "BEFORE: " + start.body + "\n") + Prompts.rebuildBody
+        let bodyM = await ask("How are you, physically?", bodyQ, JSONGrammar.text("body", chars: 60), 30)
+        guard bodyM != nil else { return }
+        let bodySaid: String = ((bodyM?["body"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+        var body: String = ""
+        if bodySaid.count > 3, !Self.echoesPrompt(bodySaid) { body = checked([bodySaid], share: 0.5).first ?? "" }
+        asked.append("How are you, physically? → " + (body.isEmpty ? "no change" : body))
+        commit { now in
+            guard !body.isEmpty, now.body.caseInsensitiveCompare(body) != .orderedSame else { return }
+            now.body = clip(body, 70)
+            filed.append("You are: " + body)
+        }
+
+        // Is the goal closer? What was reached is kept, so the story knows how far along it is.
+        let goal: String = start.setup.goal
+        if !goal.isEmpty {
+            var gq: String = "THE GOAL: " + clip(goal, 240) + "\n"
+            if !start.progress.isEmpty { gq += "REACHED SO FAR:\n" + start.progress.map { "- " + $0 }.joined(separator: "\n") + "\n" }
+            let gm = await ask("Is the goal closer?", gq + Prompts.rebuildGoal, JSONGrammar.yesNo("closer", then: "how", chars: 120), 60)
+            guard gm != nil else { return }
+            let closer = ((gm?["closer"] as? String) ?? "") == "yes"
+            let howSaid: String = ((gm?["how"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+            var how: String = ""
+            if closer, howSaid.count > 8, !Self.echoesPrompt(howSaid), !start.progress.contains(where: { Self.similar($0, howSaid) }) {
+                how = checked([howSaid], share: 0.5).first ?? ""
+            }
+            asked.append("Is the goal closer? → " + (how.isEmpty ? "not this turn" : "yes: " + how))
+            commit { now in
+                guard !how.isEmpty else { return }
+                now.progress.append(clip(how, 130))
+                if now.progress.count > 8 { now.progress.removeFirst(now.progress.count - 8) }
+                filed.append("Toward the goal: " + how)
+            }
+        }
+
+        // Did the player get an answer? An unanswered question stays hanging, in code.
+        if Self.asks(playerSaid) {
+            let am = await ask("Did you get an answer?", Prompts.rebuildAnswered, JSONGrammar.one("answered", from: ["yes", "no"]), 12)
+            guard am != nil else { return }
+            let answered = ((am?["answered"] as? String) ?? "yes") != "no"
+            asked.append("Did you get an answer? → " + (answered ? "yes" : "no"))
+            commit { now in
+                guard !answered else { return }
+                let line: String = "You asked and got no answer yet: " + clip(playerSaid.replacingOccurrences(of: "\n", with: " "), 80)
+                guard !now.pending.contains(where: { Self.similar($0, line) }) else { return }
+                now.pending = Array((now.pending + [line]).suffix(3))
+                filed.append("Still hanging: " + line)
+            }
+        }
+
+        // Did anyone say their own name? A real one becomes known; a made-up one is put right.
+        let saysName = reply.range(of: #"(?i)\b(name is|name's|call me|they call me)\b"#, options: .regularExpression) != nil
+            || reply.range(of: #"\bI(?:'m|’m| am) [A-Z][a-z]{2,}"#, options: .regularExpression) != nil
+        if saysName, !start.cast.isEmpty {
+            let options: [String] = start.cast.map(\.name) + ["nobody"]
+            let nm = await ask("Did anyone give their name?", Prompts.rebuildName + "\nTHE LIST: " + options.joined(separator: "; "),
+                               JSONGrammar.pickOne("who", from: options, free: "name", chars: 30), 40)
+            guard nm != nil else { return }
+            let who: String = (nm?["who"] as? String) ?? "nobody"
+            let given: String = ((nm?["name"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n\""))
+            let first: String = given.split(separator: " ").first.map(String.init) ?? ""
+            asked.append("Did anyone give their name? → " + (who == "nobody" || first.isEmpty ? "nobody" : who + ", as " + first))
+            commit { now in
+                guard let i = now.lore.firstIndex(where: { $0.kind == .person && !$0.isPlayer && $0.name.caseInsensitiveCompare(who) == .orderedSame }),
+                      first.count > 2, reply.contains(first) else { return }
+                let real: String = now.lore[i].name
+                let low = first.lowercased()
+                if Continuity.wordSet(real).contains(low) {
+                    if !now.lore[i].known { now.lore[i].known = true; filed.append(real + " gave their name") }
+                    return
+                }
+                // A name that belongs to nobody in the story was made up: the story's text is put right.
+                let taken = Continuity.wordSet(now.playerName).contains(low) || now.lore.contains { Continuity.wordSet($0.name).contains(low) }
+                guard !taken, !now.lore[i].byPlayer else { return }
+                if let t = now.transcript.firstIndex(where: { $0.id == lastID }) {
+                    let swap: String = "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b"
+                    now.transcript[t].text = now.transcript[t].text.replacingOccurrences(of: swap, with: Cards.first(real), options: .regularExpression)
+                }
+                now.lore[i].known = true
+                filed.append("Name put right: " + real + " was called \"" + first + "\"")
+            }
+        }
+
+        // Does the moment contradict what is on file? A slip becomes a correction for the next reply.
+        let fileNow: Adventure = adventure ?? start
+        var onFile: [String] = Array(fileNow.facts.filter { !$0.contains(" uses ") }.prefix(3))
+        for c in facingNow.prefix(2) {
+            onFile += Cards.facts(about: c, in: fileNow).filter { !$0.contains(" uses ") }.suffix(2)
+            if !c.desc.isEmpty { onFile.append(c.name + ": " + clip(c.desc, 140)) }
+        }
+        var seenLines: [String] = []
+        for l in onFile where !seenLines.contains(where: { Self.similar($0, l) }) { seenLines.append(l) }
+        onFile = seenLines
+        if !onFile.isEmpty {
+            let cq: String = "ON FILE:\n" + onFile.map { "- " + clip($0, 160) }.joined(separator: "\n") + "\n" + Prompts.rebuildContradiction
+            let xm = await ask("Does anything contradict the file?", cq, JSONGrammar.yesNo("contradicts", then: "line", chars: 160), 70)
+            guard xm != nil else { return }
+            let yes = ((xm?["contradicts"] as? String) ?? "") == "yes"
+            let lineSaid: String = ((xm?["line"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n-"))
+            var hit: String = ""
+            if yes, lineSaid.count > 12 {
+                hit = onFile.first(where: { Self.similar($0, lineSaid) || $0.contains(lineSaid) }) ?? ""
+            }
+            asked.append("Does anything contradict the file? → " + (hit.isEmpty ? "no" : "yes: " + clip(hit, 100)))
+            commit { now in
+                guard !hit.isEmpty else { return }
+                now.fixes.append(Self.checked + "The last reply slipped on this, and it stays true: " + clip(hit, 160))
+                filed.append("Correction for the next reply: " + clip(hit, 100))
+            }
         }
 
         // 6. Anything lasting? Filed under the person it names (the role a nameless story uses
@@ -2382,11 +2595,46 @@ final class StoryEngine {
     /// Updates the turn guide's snapshot with what was looked up before the reply.
     private func recordFrame(looked: [String]) {
         guard var a = adventure else { return }
-        Self.updateFrame(&a, looked: looked, asked: [], notes: catchUpNotes)
+        Self.updateFrame(&a, looked: looked, asked: [], notes: catchUpNotes, steps: [])
         adventure = a
     }
 
     /// "my hotel room" as a place name: "Your hotel room".
+    /// The storyteller sometimes invents a name for the person the player is with ("Sarah," she
+    /// replies) instead of the one on their card. When the reply has that person give a name that
+    /// belongs to nobody in the story, it is swapped for their real one, and the name counts as said.
+    static func fixMadeUpName(_ a: inout Adventure, reply: String, namey: Bool) -> (reply: String, note: String, name: String)? {
+        let me = Cards.first(a.playerName).lowercased()
+        let facing: [LoreEntry] = a.whereabouts.filter { $0.here != false && $0.engaged == true && Cards.first($0.name).lowercased() != me }
+            .compactMap { Cards.card(for: $0, in: a) }.filter { !$0.isPlayer && !$0.byPlayer }
+        guard facing.count == 1, let c = facing.first else { return nil }
+        var known: Set<String> = Continuity.wordSet(a.playerName)
+        for e in a.lore { known.formUnion(Continuity.wordSet(e.name)) }
+        let notNames: Set<String> = ["yes", "no", "well", "sure", "hello", "fine", "okay", "good", "please", "thanks", "sorry", "maybe", "perhaps",
+                                     "indeed", "always", "never", "soon", "here", "there", "tomorrow", "tonight", "listen", "look", "wait", "come",
+                                     "stay", "nothing", "everything", "really", "right", "true", "exactly", "welcome", "cheers", "not", "just",
+                                     "tired", "glad", "happy", "afraid", "certain", "new", "from", "going", "trying", "waiting", "working"]
+        var patterns: [String] = [#"(?:[Mm]y name is|[Mm]y name's|[Nn]ame's|[Cc]all me|[Tt]hey call me)\s+([A-Z][a-z]{2,})"#]
+        if namey {
+            patterns.append(#"["“]([A-Z][a-z]{2,})[,.!]?["”],?\s+(?:she|he|they)\s+(?:replies|says|answers|offers|tells|murmurs|whispers)"#)
+            patterns.append(#"\bI(?:'m|’m| am)\s+([A-Z][a-z]{2,})[,.!"”]"#)
+        }
+        let ns = reply as NSString
+        for p in patterns {
+            guard let re = try? NSRegularExpression(pattern: p),
+                  let m = re.firstMatch(in: reply, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges > 1 else { continue }
+            let said = ns.substring(with: m.range(at: 1))
+            let low = said.lowercased()
+            if known.contains(low) || notNames.contains(low) { continue }
+            let real = Cards.first(c.name)
+            let swap = "\\b" + NSRegularExpression.escapedPattern(for: said) + "\\b"
+            let fixed = reply.replacingOccurrences(of: swap, with: real, options: .regularExpression)
+            if let i = a.lore.firstIndex(where: { $0.id == c.id }) { a.lore[i].known = true }
+            return (fixed, "the storyteller called " + c.name + " \"" + said + "\"; put right in code", c.name)
+        }
+        return nil
+    }
+
     /// Whether the message goes to a place by name: a going word, then the place's last word
     /// within a few words ("I returned back into the velvet thorn", "head to the jazz club").
     static func goesTo(_ place: String, in input: String) -> Bool {
@@ -2499,7 +2747,7 @@ final class StoryEngine {
 
     /// Updates the turn guide's snapshot for the current turn (or starts it): the world as it
     /// stands, and what changed since the turn before.
-    static func updateFrame(_ a: inout Adventure, looked: [String]? = nil, asked: [String]? = nil, notes: [String]? = nil, steps: [[String]]? = nil) {
+    static func updateFrame(_ a: inout Adventure, looked: [String]? = nil, asked: [String]? = nil, notes: [String]? = nil, steps: [[String]]? = nil, pre: [String]? = nil) {
         let turn = a.playerTurns
         var f: WorldFrame
         if let last = a.frames.last, last.turn == turn { f = a.frames.removeLast() } else { f = WorldFrame(turn: turn) }
@@ -2526,9 +2774,20 @@ final class StoryEngine {
             return c.name + ": " + x
         }
         f.feelings = feel.isEmpty ? nil : feel
+        let inViewCards: [LoreEntry] = others.filter { $0.here != false }.compactMap { Cards.card(for: $0, in: a) }
+        let want: [String] = inViewCards.compactMap { c in a.wants[c.name.lowercased()].map { c.name + ": " + $0 } }
+        f.wants = want.isEmpty ? nil : want
+        let know: [String] = inViewCards.compactMap { c in
+            guard let k = a.knows[c.name.lowercased()], !k.isEmpty else { return nil }
+            return c.name + ": " + k.joined(separator: "; ")
+        }
+        f.knows = know.isEmpty ? nil : know
+        f.body = a.body.isEmpty ? nil : a.body
+        f.goal = a.progress.isEmpty ? nil : a.progress
         if let looked { f.looked = looked }
         if let asked { f.asked = asked }
         if let steps { f.steps = steps }
+        if let pre { f.pre = pre }
         if let notes { f.notes = notes }
         f.changed = frameDiff(a.frames.last, f) + f.notes
         a.frames.append(f)

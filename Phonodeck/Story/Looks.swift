@@ -173,6 +173,8 @@ enum Looks {
                     l += " Now: " + now + "."
                 }
                 if let feels = a.feelings[e.name.lowercased()] { l += " Feels about you: " + feels + "." }
+                if let wants = a.wants[e.name.lowercased()] { l += " Wants: " + wants + "." }
+                if let knows = a.knows[e.name.lowercased()], !knows.isEmpty { l += " Knows about you: " + knows.suffix(4).joined(separator: "; ") + "." }
                 let theirs = Cards.facts(about: e, in: a).suffix(3).map { Cards.clip($0, 150) }
                 if !theirs.isEmpty { l += " Known: " + theirs.joined(separator: " ") }
                 return l

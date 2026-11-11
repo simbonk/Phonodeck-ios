@@ -223,6 +223,15 @@ enum Cards {
             return c.name + " " + x
         }
         if !feel.isEmpty { l.append("- How they feel about you now (it carries into how they speak): " + feel.joined(separator: "; ")) }
+        let facingCards: [LoreEntry] = a.whereabouts.filter { $0.here != false && $0.engaged == true && first($0.name).lowercased() != me }.compactMap { card(for: $0, in: a) }
+        let want: [String] = facingCards.compactMap { c in a.wants[c.name.lowercased()].map { c.name + " wants " + $0 } }
+        if !want.isEmpty { l.append("- What they want right now, and why (what they say and do comes from it): " + want.joined(separator: "; ")) }
+        for c in facingCards {
+            guard let k = a.knows[c.name.lowercased()], !k.isEmpty else { continue }
+            l.append("- What " + c.name + " knows about you (they remember it; nothing more): " + k.suffix(4).joined(separator: "; "))
+        }
+        if !a.body.isEmpty { l.append("- How you are: " + a.body) }
+        if !a.progress.isEmpty { l.append("- Toward what the player came for, so far: " + a.progress.suffix(3).joined(separator: " ")) }
         if !p.background.isEmpty { l.append("- Also in the room (quiet; they don't join in): " + p.background.joined(separator: ", ")) }
         l += p.away.map { "- " + $0 }
         let held: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.prefix(6).joined(separator: "; ")

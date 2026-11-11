@@ -139,9 +139,9 @@ enum Prompts {
     /// Read, question 2: the moment, planned from what was looked up.
     static let planQuestion = """
     QUESTION 2 OF 2. Plan the next moment from the message and WHAT YOU LOOKED UP. Output ONLY one JSON object:
-    {"does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell Walter it is half past ten and say your name is Simon')",
+    {"does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell the bartender it is half past ten and order a coffee')",
      "answer":"only if the player asked a question: the plain, sensible answer the person they asked gives, from WHAT YOU LOOKED UP where it covers it, otherwise something ordinary that fits the place and time (e.g. 'gin, beer and coffee'; 'since 1921'); never the player's own words; empty if they asked nothing",
-     "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), in a way that delivers the FEELING"}
+     "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), true to what that person wants and why, in a way that delivers the FEELING"}
     Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
 
@@ -153,7 +153,7 @@ enum Prompts {
     - Second person, present tense: the player is "you", never "they" or their name. 80 to 150 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. No headings, lists or notes.
     - Your briefing gives THE SCENE and THIS MOMENT. Write that moment: what the player does lands, then the person they are with responds to exactly that. Nothing else happens, and no new topic comes up.
     - Only people under "With you" speak or act. People in the background stay quiet. Nobody else appears unless THIS MOMENT says so. The player has only what "You have" lists; nothing appears in anyone's hands from nowhere.
-    - Never write the player's words, choices or feelings, and never add to what they did. What the player says is theirs: never put their words in anyone else's mouth. If they leave or change the subject, go with them.
+    - Never write the player's words, choices or feelings, and never add to what they did. What the player says is theirs: never put their words in anyone else's mouth. Everyone has a reason for what they say and do (their want, on the scene card): let it show in small ways, never explained out loud. If they leave or change the subject, go with them.
     - If the player asks something, the person answers plainly in the first lines, from the facts given; if the facts don't say, they give a plain answer that fits.
     - People are ordinary and solid. They speak in short plain sentences about real things, each in their own way. No sayings, metaphors or wisdom.
     - Use at most one detail of the place. Do not reuse lines or images from earlier replies.
@@ -196,6 +196,28 @@ enum Prompts {
     static let rebuildPending = """
     What is still hanging at the end of the moment: something ordered that has not come, a question not yet answered, something someone said they would do? Each is a short plain sentence about what hasn't happened yet, e.g. 'Your drink has not come yet', 'She asked where you are from', 'He said he would find the key'. Never a thing, a look, a sound or a mood. Keep anything in STILL HANGING that the moment did not settle; leave out what it settled. [] if nothing is open. {"open":["0 to 3 short sentences"]}
     """
+    static func rebuildWants(_ who: String) -> String {
+        "What does " + who + " want right now, and why (the reason behind what they say and do, true to who they are)? And what did " + who + " learn about the player in this moment, only from what the player said or showed? {\"wants\":\"what they want, because of what, e.g. 'to show you her sketches, because nobody has asked to see them'\",\"learned\":\"one short line, e.g. 'you are new in town', or empty\"}"
+    }
+    static let rebuildBody = """
+    How is the player, physically, at the end of the moment (wet or dry, warm or cold, tired, hurt, how much they have drunk)? Only what the story shows. {"body":"a few words, e.g. 'soaked and cold, one drink in'"}
+    """
+    static let rebuildGoal = """
+    Did this moment bring the player closer to THE GOAL with something new, not already in REACHED SO FAR? {"closer":"yes or no","how":"if yes: one short sentence saying what was reached; otherwise empty"}
+    """
+    static let rebuildAnswered = """
+    The player asked a question. Did the story answer it in this moment? {"answered":"yes or no"}
+    """
+    static let rebuildName = """
+    Did someone in the story say their own name in this moment? {"who":"one choice from the list","name":"the name they said, exactly as the story has it; empty if nobody"}
+    """
+    static let rebuildContradiction = """
+    Does the story in this moment contradict any line ON FILE? {"contradicts":"yes or no","line":"if yes: the line ON FILE it contradicts, copied; otherwise empty"}
+    """
+    /// Asked before the reply, only when the player's action leans on a thing they must have.
+    static let canDo = """
+    QUESTION: Can the player do what the new message says, with what they have and what is around them? Anything an ordinary person could do there is a yes. {"can":"yes or no","missing":"if no: the thing they would need and don't have, 1-4 words; otherwise empty"}
+    """
     static let rebuildFacts = """
     What did this moment establish that will still be true tomorrow: what someone said about their life, work, family or plans, a promise, something given or paid and to whom? Each a full sentence that starts with the person's name or 'You'. Not what someone is doing right now, and nothing in ALREADY KNOWN. {"facts":["0 to 2 sentences"]}
     """
@@ -213,7 +235,7 @@ enum Prompts {
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
     static var groundedInstructions: [String] {
-        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildBody, rebuildGoal, rebuildAnswered, rebuildName, rebuildContradiction, canDo, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
     }
 
     // MARK: Building the world

@@ -334,6 +334,14 @@ struct Adventure: Codable, Identifiable, Hashable {
     var spot = ""
     /// The background of each place (its sounds and light), by lowercased place name.
     var ambience: [String: String] = [:]
+    /// What each person wants right now, in a few words, by lowercased card name.
+    var wants: [String: String] = [:]
+    /// What each person knows about the player (only what the player said or showed them).
+    var knows: [String: [String]] = [:]
+    /// How the player is, physically ("soaked and cold, one drink in").
+    var body = ""
+    /// What has been reached toward the goal so far, one short sentence each.
+    var progress: [String] = []
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -349,7 +357,7 @@ struct Adventure: Codable, Identifiable, Hashable {
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
              storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks, frames, placeSeen,
-             pending, feelings, spot, ambience
+             pending, feelings, spot, ambience, wants, knows, body, progress
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -383,6 +391,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         nameless = v(.nameless, false); checks = v(.checks, [])
         frames = v(.frames, [WorldFrame]()); placeSeen = v(.placeSeen, [String: Int]())
         pending = v(.pending, [String]()); feelings = v(.feelings, [String: String]()); spot = v(.spot, ""); ambience = v(.ambience, [String: String]())
+        wants = v(.wants, [String: String]()); knows = v(.knows, [String: [String]]()); body = v(.body, ""); progress = v(.progress, [String]())
     }
 
     func encode(to encoder: Encoder) throws {
@@ -405,6 +414,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(nameless, forKey: .nameless); try c.encode(checks, forKey: .checks)
         try c.encode(frames, forKey: .frames); try c.encode(placeSeen, forKey: .placeSeen)
         try c.encode(pending, forKey: .pending); try c.encode(feelings, forKey: .feelings); try c.encode(spot, forKey: .spot); try c.encode(ambience, forKey: .ambience)
+        try c.encode(wants, forKey: .wants); try c.encode(knows, forKey: .knows); try c.encode(body, forKey: .body); try c.encode(progress, forKey: .progress)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -420,6 +430,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         playerName = o.playerName; checks = o.checks
         frames = o.frames; placeSeen = o.placeSeen
         pending = o.pending; feelings = o.feelings; spot = o.spot; ambience = o.ambience
+        wants = o.wants; knows = o.knows; body = o.body; progress = o.progress
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
@@ -500,4 +511,12 @@ struct WorldFrame: Codable, Hashable, Identifiable {
     var feelings: [String]?
     /// What each rebuild question changed, in the order of `asked`.
     var steps: [[String]]?
+    /// "step → result", for what was worked out after the player spoke and before the reply.
+    var pre: [String]?
+    /// What the people in view want ("Name: ..."), what they know about the player, how the
+    /// player is physically, and what has been reached toward the goal.
+    var wants: [String]?
+    var knows: [String]?
+    var body: String?
+    var goal: [String]?
 }

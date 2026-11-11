@@ -168,6 +168,25 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// A yes or no under one key, then a short text under another.
+    static func yesNo(_ k: String, then k2: String, chars: Int) -> String {
+        [
+            "root ::= \"{\" ws " + key(k) + " yn \",\" ws " + key(k2) + " s ws \"}\"",
+            choice("yn", ["yes", "no"]),
+            capped("s", chars),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// Two short texts, each under its own key.
+    static func pair(_ k1: String, _ c1: Int, _ k2: String, _ c2: Int) -> String {
+        [
+            "root ::= \"{\" ws " + key(k1) + " sa \",\" ws " + key(k2) + " sb ws \"}\"",
+            capped("sa", c1), capped("sb", c2),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// Building a place the player arrives in (see `Prompts.buildPlace`).
     static let place = [
         "root ::= \"{\" ws " + key("desc") + " s300 \",\" ws " + key("things") + " items ws \"}\"",

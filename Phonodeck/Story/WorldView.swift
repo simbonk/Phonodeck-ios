@@ -14,6 +14,10 @@ struct WorldView: View {
     @State private var frameAt: Int?
     /// Every question in the turn feed open (otherwise only the one just answered is).
     @State private var expandAll = false
+    /// The world card's rows shown in full (otherwise clipped to a line or two, to fit one screen).
+    @State private var wide = false
+    /// The name as the panel last showed it, to tell the player's own edit apart.
+    @State private var shownName = ""
 
     var body: some View {
         NavigationStack {
@@ -35,7 +39,15 @@ struct WorldView: View {
                         shownBible = Continuity.unnamed(a.bible, in: a)
                         bible = shownBible
                         myName = a.playerName
+                        shownName = a.playerName
                     }
+                    // A name said in the story while the panel is open shows up here too.
+                    .onChange(of: a.playerName) { _, n in
+                        if myName == shownName { myName = n }
+                        shownName = n
+                    }
+                    // The guide follows play: a new turn brings it back to the latest.
+                    .onChange(of: a.frames.count) { _, _ in withAnimation(.snappy) { frameAt = nil } }
                 }
             }
             .background(Theme.bg)
@@ -43,7 +55,7 @@ struct WorldView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { saveBible(); app.engine.setPlayerName(myName); dismiss() }
+                    Button("Done") { saveBible(); if myName != shownName { app.engine.setPlayerName(myName) }; dismiss() }
                 }
             }
             .sheet(item: $editing) { e in
@@ -101,132 +113,153 @@ struct WorldView: View {
 
     // MARK: Turn guide
 
-    /// One turn at a time, as a feed you can watch: the world after that turn, then each question
-    /// in the order it was asked. While the questions run, the one just answered shows its answer
-    /// and what it changed, then folds down to one line as the next one comes in. When the turn is
-    /// done everything is folded; "Expand all" opens it up. A new turn slides in.
+    /// One turn at a time, on one screen: a one-line ticker of the question being asked (each
+    /// answer flicks through it and out of the way), and under it the world card, whose rows
+    /// flash as an answer changes them. It follows play live from the moment the player speaks:
+    /// first what is worked out before the reply, then the questions asked after it. Every step
+    /// is kept, and "Steps" unfolds them.
     @ViewBuilder
     private func turnGuide(_ a: Adventure) -> some View {
         let last = a.frames.count - 1
         let k = min(max(0, frameAt ?? last), last)
         let f = a.frames[k]
-        let asking = k == last && !app.engine.rebuildStep.isEmpty
-        let thinking = k == last && !app.engine.stage.isEmpty
-        HStack(spacing: 10) {
+        let live = k == last
+        let asking: String = live ? (app.engine.rebuildStep.isEmpty ? app.engine.stage : app.engine.rebuildStep) : ""
+        let pre: [String] = f.pre ?? []
+        let all: [String] = pre + f.asked
+        let lastChanges: Int = f.asked.isEmpty ? 0 : ((f.steps ?? []).last?.count ?? 0)
+        let busy = live && !asking.isEmpty
+        HStack(spacing: 8) {
             Button { withAnimation(.snappy) { frameAt = max(0, k - 1) } } label: { Image(systemName: "chevron.left") }
                 .disabled(k == 0)
-            VStack(spacing: 1) {
+            HStack(spacing: 6) {
                 Text(f.turn == 0 ? "Opening" : "Turn \(f.turn)").font(.headline).foregroundStyle(Theme.accent)
                     .contentTransition(.numericText())
-                Text(k == last ? (asking ? "updating now" : "latest") : "\(last - k) turn\(last - k == 1 ? "" : "s") ago")
-                    .font(.caption).foregroundStyle(Theme.dim)
+                Text(live ? (busy ? "live" : "latest") : "\(last - k) back")
+                    .font(.caption2.bold()).foregroundStyle(busy ? Theme.bg : Theme.dim)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(busy ? Theme.accent : Theme.line.opacity(0.5), in: Capsule())
             }
             .frame(maxWidth: .infinity)
             Button { withAnimation(.snappy) { frameAt = k + 1 >= last ? nil : k + 1 } } label: { Image(systemName: "chevron.right") }
                 .disabled(k == last)
         }
         .buttonStyle(.bordered)
-        if thinking {
-            // The next turn is being worked out (before the reply): what the storyteller is doing.
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Turn \(f.turn + 1): " + app.engine.stage).font(.caption.bold()).foregroundStyle(Theme.accent)
+        .controlSize(.small)
+
+        // The ticker: the answer that just landed, then the question being asked now.
+        VStack(alignment: .leading, spacing: 3) {
+            if let done = all.last {
+                tickerLine(done, changes: lastChanges, a)
+                    .id("done-\(f.turn)-\(all.count)")
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                            removal: .move(edge: .top).combined(with: .opacity)))
+            }
+            if !asking.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text(Continuity.unnamed(asking, in: a)).font(.footnote.bold()).foregroundStyle(Theme.accent).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .id("asking-" + asking)
+                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                        removal: .move(edge: .top).combined(with: .opacity)))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 38, alignment: .topLeading)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Theme.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+        .clipped()
+        .animation(.spring(duration: 0.35), value: all.count)
+        .animation(.spring(duration: 0.35), value: asking)
+
+        // The world this turn. A row lights up when its value changes.
+        card {
+            VStack(alignment: .leading, spacing: 1) {
+                FlashRow(label: "Place", value: f.place.isEmpty ? "On the way somewhere new" : f.place, lines: wide ? nil : 1)
+                FlashRow(label: "You are", value: f.spot ?? "", lines: wide ? nil : 1)
+                FlashRow(label: "You feel", value: f.body ?? "", lines: wide ? nil : 1)
+                FlashRow(label: "Time", value: f.time, lines: wide ? nil : 1)
+                FlashRow(label: "Facing", value: f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"), lines: wide ? nil : 1)
+                FlashRow(label: "They feel", value: (f.feelings ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: " · "), lines: wide ? nil : 1)
+                FlashRow(label: "They want", value: (f.wants ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
+                FlashRow(label: "They know", value: (f.knows ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
+                FlashRow(label: "In the room", value: f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 2)
+                FlashRow(label: "You have", value: f.have.joined(separator: "; "), lines: wide ? nil : 1)
+                FlashRow(label: "Around", value: f.around.joined(separator: "; "), lines: wide ? nil : 2)
+                FlashRow(label: "Background", value: f.sound ?? "", lines: wide ? nil : 2)
+                FlashRow(label: "Goal", value: (f.goal ?? []).joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
+                FlashRow(label: "Hanging", value: (f.pending ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 2)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.snappy) { wide.toggle() } }
+
+        // Every step of the turn, folded away until asked for.
+        Button {
+            withAnimation(.snappy) { expandAll.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: expandAll ? "chevron.down" : "chevron.right").font(.caption2.bold())
+                Text("Steps this turn (\(all.count))").font(.caption.bold())
+                Spacer()
+                let n = f.changed.count
+                if n > 0 { Text("\(n) change\(n == 1 ? "" : "s")").font(.caption2.bold()) }
+            }
+            .foregroundStyle(Theme.accent)
+        }
+        .buttonStyle(.plain)
+        if expandAll {
+            VStack(alignment: .leading, spacing: 4) {
+                if !pre.isEmpty { Text("After you spoke").font(.caption2.bold()).foregroundStyle(Theme.dim) }
+                ForEach(Array(pre.enumerated()), id: \.offset) { _, line in
+                    step(line, changes: [], a)
+                }
+                if !f.asked.isEmpty { Text("After the reply").font(.caption2.bold()).foregroundStyle(Theme.dim).padding(.top, 2) }
+                ForEach(Array(f.asked.enumerated()), id: \.offset) { i, line in
+                    step(line, changes: (f.steps ?? []).indices.contains(i) ? f.steps![i] : [], a)
+                }
+                if !f.changed.isEmpty {
+                    Text("What changed").font(.caption2.bold()).foregroundStyle(Theme.dim).padding(.top, 2)
+                    ForEach(Array(f.changed.enumerated()), id: \.offset) { _, c in
+                        Label(Continuity.unnamed(c, in: a), systemImage: "sparkle").font(.caption).foregroundStyle(Theme.fg)
+                    }
+                }
             }
             .transition(.opacity.combined(with: .move(edge: .top)))
+            .padding(.bottom, 6)
         }
-        VStack(alignment: .leading, spacing: 10) {
-            card {
-                VStack(alignment: .leading, spacing: 6) {
-                    attr("Place", f.place.isEmpty ? "On the way somewhere new" : f.place)
-                    if let s = f.spot, !s.isEmpty { attr("You are", s) }
-                    if !f.time.isEmpty { attr("Time", f.time) }
-                    attr("Facing", f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"))
-                    if let s = f.feelings, !s.isEmpty { attr("How they feel", s.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
-                    if !f.room.isEmpty { attr("In the room", f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
-                    if !f.have.isEmpty { attr("You have", f.have.joined(separator: "; ")) }
-                    if !f.around.isEmpty { attr("Around", f.around.joined(separator: "; ")) }
-                    if let s = f.sound, !s.isEmpty { attr("Background", s) }
-                    if let s = f.pending, !s.isEmpty { attr("Still hanging", s.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n")) }
-                }
-                .animation(.smooth, value: f.asked.count)
-            }
-            HStack {
-                Caps(text: "How the turn was worked out")
-                Spacer()
-                Button(expandAll ? "Fold all" : "Expand all") { withAnimation(.snappy) { expandAll.toggle() } }
-                    .font(.caption.bold())
-            }
-            .padding(.top, 2)
-            if !f.looked.isEmpty {
-                step(icon: "eye", question: "Looked up before the reply", answer: f.looked.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"),
-                     changes: [], open: expandAll, a)
-            }
-            ForEach(Array(f.asked.enumerated()), id: \.offset) { i, line in
-                let parts = line.components(separatedBy: " → ")
-                let q: String = parts.first ?? line
-                let ans: String = parts.dropFirst().joined(separator: " → ")
-                let changes: [String] = (f.steps ?? []).indices.contains(i) ? f.steps![i] : []
-                // The one just answered stays open while the next question runs.
-                let open = expandAll || (asking && i == f.asked.count - 1)
-                step(icon: "checkmark.circle.fill", question: q, answer: ans, changes: changes, open: open, a)
-                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
-            }
-            if asking {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(Continuity.unnamed(app.engine.rebuildStep, in: a)).font(.callout.bold()).foregroundStyle(Theme.accent)
-                    Spacer()
-                }
-                .padding(10)
-                .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .id("asking-" + app.engine.rebuildStep)
-            }
-            if !asking, !f.changed.isEmpty {
-                step(icon: "arrow.triangle.2.circlepath", question: "What changed this turn", answer: "",
-                     changes: f.changed.map { Continuity.unnamed($0, in: a) }, open: true, a)
-            }
-        }
-        .id(f.id)
-        .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .move(edge: .leading).combined(with: .opacity)))
-        .animation(.spring(duration: 0.45), value: f.asked.count)
-        .animation(.spring(duration: 0.45), value: app.engine.rebuildStep)
-        .padding(.bottom, 8)
     }
 
-    /// One question in the feed: folded to a line, or open with its answer and what it changed.
-    private func step(icon: String, question: String, answer: String, changes: [String], open: Bool, _ a: Adventure) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: icon).font(.caption).foregroundStyle(Theme.accent)
-                Text(Continuity.unnamed(question, in: a)).font(open ? .callout.bold() : .caption.bold()).foregroundStyle(Theme.fg)
-                if !open, !answer.isEmpty {
-                    Text(Continuity.unnamed(answer, in: a)).font(.caption).foregroundStyle(Theme.dim).lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if !open, !changes.isEmpty {
-                    Text("\(changes.count) change\(changes.count == 1 ? "" : "s")").font(.caption2.bold()).foregroundStyle(Theme.accent)
-                }
-            }
-            if open {
-                if !answer.isEmpty {
-                    Text(Continuity.unnamed(answer, in: a)).font(.callout).foregroundStyle(Theme.fg)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-                ForEach(Array(changes.enumerated()), id: \.offset) { _, c in
-                    Label(Continuity.unnamed(c, in: a), systemImage: "sparkle").font(.caption).foregroundStyle(Theme.accent)
-                        .transition(.scale(scale: 0.9, anchor: .leading).combined(with: .opacity))
-                }
+    /// The ticker's line for a finished step: the question, its answer, and how much it changed.
+    private func tickerLine(_ line: String, changes: Int, _ a: Adventure) -> some View {
+        let parts = line.components(separatedBy: " → ")
+        let q: String = parts.first ?? line
+        let ans: String = parts.dropFirst().joined(separator: " → ")
+        return HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Image(systemName: "checkmark").font(.caption2.bold()).foregroundStyle(Theme.dim)
+            Text(Continuity.unnamed(q, in: a)).font(.caption.bold()).foregroundStyle(Theme.dim).lineLimit(1).layoutPriority(1)
+            Text(Continuity.unnamed(ans, in: a)).font(.caption).foregroundStyle(Theme.fg).lineLimit(1)
+            Spacer(minLength: 0)
+            if changes > 0 { Text("+\(changes)").font(.caption2.bold()).foregroundStyle(Theme.accent) }
+        }
+    }
+
+    /// One step in the unfolded list: the question, its answer, and what it changed.
+    private func step(_ line: String, changes: [String], _ a: Adventure) -> some View {
+        let parts = line.components(separatedBy: " → ")
+        let q: String = parts.first ?? line
+        let ans: String = parts.dropFirst().joined(separator: " → ")
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(Continuity.unnamed(q, in: a)).font(.caption.bold()).foregroundStyle(Theme.dim)
+            if !ans.isEmpty { Text(Continuity.unnamed(ans, in: a)).font(.caption).foregroundStyle(Theme.fg) }
+            ForEach(Array(changes.enumerated()), id: \.offset) { _, c in
+                Label(Continuity.unnamed(c, in: a), systemImage: "sparkle").font(.caption2).foregroundStyle(Theme.accent)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, open ? 10 : 6)
-        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(open ? Theme.accent.opacity(0.5) : Theme.line))
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.snappy) { expandAll.toggle() } }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 6))
     }
 
     // MARK: Attributes
@@ -265,20 +298,6 @@ struct WorldView: View {
                 }
             }
         }
-        // The scene: where you are and what is around you. Moving to a new room or going outside
-        // redraws it; the last place's things stay behind with it.
-        Caps(text: "The scene").padding(.top, 8)
-        card {
-            VStack(alignment: .leading, spacing: 6) {
-                attr("Place", a.location.isEmpty ? "On the way somewhere new" : a.location)
-                if !a.storyTime.isEmpty { attr("Time", a.storyTime) }
-                if !a.scene.isEmpty { attr("What's happening", Continuity.unnamed(a.scene, in: a)) }
-                let around = a.location.isEmpty ? [] : (a.placeThings[a.location.lowercased()] ?? a.things)
-                if !around.isEmpty { attr("Props here", around.joined(separator: "; ")) }
-                let here = a.whereabouts.filter { $0.here != false }.map { display($0.name, a) + ($0.engaged == true ? " (with you)" : "") }
-                attr("People here", here.isEmpty ? "Nobody but you" : here.joined(separator: ", "))
-            }
-        }
         // Only what is in view this turn: people and places out of view drop away here, and stay in
         // the earlier turns of the turn guide (and in the store, where a lookup still finds them).
         let inView = a.cast.filter { p in a.whereabouts.contains { $0.name == p.name && $0.here != false } }
@@ -301,16 +320,6 @@ struct WorldView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(facts.enumerated()), id: \.offset) { _, f in
                         Text("• " + Continuity.unnamed(f, in: a)).font(.callout).foregroundStyle(Theme.fg)
-                    }
-                }
-            }
-        }
-        if !a.checks.isEmpty {
-            Caps(text: "Last world check").padding(.top, 8)
-            card {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(a.checks.enumerated()), id: \.offset) { _, c in
-                        Text(Continuity.unnamed(c, in: a)).font(.caption).foregroundStyle(c.hasPrefix("Kept off") ? Theme.dim : Theme.fg)
                     }
                 }
             }
@@ -456,5 +465,45 @@ struct LoreEditor: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+/// One row of the turn guide's world card. It lights up when its value changes, then settles.
+private struct FlashRow: View {
+    let label: String
+    let value: String
+    /// How many lines the value may take (nil: all of them).
+    var lines: Int?
+    @State private var lit = false
+    @State private var beat = 0
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label).font(.caption2.bold()).foregroundStyle(lit ? Theme.accent : Theme.dim).frame(width: 74, alignment: .leading)
+            Text(value.isEmpty ? "–" : value)
+                .font(.footnote)
+                .foregroundStyle(value.isEmpty ? Theme.dim : Theme.fg)
+                .lineLimit(lines)
+                .contentTransition(.opacity)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(Theme.accent.opacity(lit ? 0.22 : 0), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 2).fill(Theme.accent).frame(width: 3).opacity(lit ? 1 : 0)
+        }
+        .scaleEffect(lit ? 1.015 : 1, anchor: .leading)
+        .animation(.easeOut(duration: 0.2), value: value)
+        .onChange(of: value) { _, _ in
+            beat += 1
+            let mine = beat
+            withAnimation(.easeOut(duration: 0.15)) { lit = true }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.6))
+                // A newer change keeps the row lit for its own full beat.
+                if mine == beat { withAnimation(.easeInOut(duration: 0.9)) { lit = false } }
+            }
+        }
     }
 }
