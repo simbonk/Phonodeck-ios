@@ -1364,13 +1364,13 @@ final class StoryEngine {
         let low = read.answer.lowercased()
         let own = ["i ", "i'll ", "i'd ", "i'm ", "yes, i", "my "].contains { low.hasPrefix($0) }
         let answer = Self.asks(input) && !own ? read.answer : ""
-        return [
-            "PLAYER: " + clip(input.replacingOccurrences(of: "\n", with: " "), 300),
-        ] + (read.does.isEmpty ? [] : ["THE PLAYER DOES: " + read.does]) + [
-            "ANSWER: " + (answer.isEmpty ? "none" : answer),
-            "THEN: " + (beat.isEmpty ? "the person the player is with responds right away to exactly what the player said and did" : beat),
-            "WHO: " + who,
-        ].joined(separator: "\n")
+        var lines: [String] = ["PLAYER: " + clip(input.replacingOccurrences(of: "\n", with: " "), 300)]
+        if !read.does.isEmpty { lines.append("THE PLAYER DOES: " + read.does) }
+        lines.append("ANSWER: " + (answer.isEmpty ? "none" : answer))
+        let then = beat.isEmpty ? "the person the player is with responds right away to exactly what the player said and did" : beat
+        lines.append("THEN: " + then)
+        lines.append("WHO: " + who)
+        return lines.joined(separator: "\n")
     }
 
     /// One planning call; keeps only the plan lines, in case the model wanders into the story itself.
