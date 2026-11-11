@@ -203,6 +203,10 @@ enum Cards {
     static func briefing(_ a: Adventure, pick p: Pick, looked: [String], extra: [String], notes: [String], moment: String) -> String {
         var l: [String] = ["THE SCENE (the reply must agree with every line)"]
         if !p.place.isEmpty { l.append("- Place: " + p.place) }
+        if !a.spot.isEmpty { l.append("- Where you are in it: " + a.spot) }
+        if let sound = a.ambience[a.location.lowercased()], !a.location.isEmpty, !sound.isEmpty {
+            l.append("- The background (keep it, don't reinvent it): " + sound)
+        }
         if !a.storyTime.isEmpty {
             let sky: String = a.clock.map { ". " + Continuity.skyHint($0) } ?? ""
             l.append("- Time: \(a.storyTime)\(sky)")
@@ -213,11 +217,18 @@ enum Cards {
         } else if !a.whereabouts.isEmpty {
             l.append("- With you: nobody in particular.")
         }
+        let me = first(a.playerName).lowercased()
+        let feel: [String] = a.whereabouts.filter { $0.here != false && $0.engaged == true && first($0.name).lowercased() != me }.compactMap { w in
+            guard let c = card(for: w, in: a), let x = a.feelings[c.name.lowercased()] else { return nil }
+            return c.name + " " + x
+        }
+        if !feel.isEmpty { l.append("- How they feel about you now (it carries into how they speak): " + feel.joined(separator: "; ")) }
         if !p.background.isEmpty { l.append("- Also in the room (quiet; they don't join in): " + p.background.joined(separator: ", ")) }
         l += p.away.map { "- " + $0 }
         let held: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.prefix(6).joined(separator: "; ")
         l.append("- You have (nothing else): " + held)
         if !p.props.isEmpty { l.append("- Around you (use one only if the moment calls for it): " + p.props.joined(separator: "; ")) }
+        if !a.pending.isEmpty { l += ["", "STILL HANGING (follow through when it fits; don't drop these)"] + a.pending.map { "- " + $0 } }
         if !p.facts.isEmpty { l += ["", "FACTS (always true)"] + p.facts.map { "- " + $0 } }
         if !looked.isEmpty { l += ["", "LOOKED UP (from the app; the reply agrees with every line)"] + looked.map { "- " + $0 } }
         if !extra.isEmpty { l += [""] + extra.map { "- " + $0 } }

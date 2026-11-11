@@ -184,6 +184,18 @@ enum Prompts {
     static let rebuildThings = """
     What notable things did the story show in the place the player is in? {"things":["2-6 words each, e.g. 'a cast-iron stove'"]}
     """
+    static func rebuildFeeling(_ who: String) -> String {
+        "How does " + who + " feel about the player at the end of the moment, in one to three words? {\"feels\":\"1-3 words, e.g. 'warming up', 'wary', 'amused', 'annoyed'\"}"
+    }
+    static let rebuildSpot = """
+    Where exactly is the player in the place at the end of the moment, and how close to whoever they are with? Only what the story shows. {"spot":"a few words, e.g. 'on a stool at the bar, across from the bartender'"}
+    """
+    static let rebuildSound = """
+    What is the background of this place like at the end of the moment: its sounds and light, in one short line? Only what the story shows; empty if it shows nothing. {"background":"one short line, e.g. 'the band playing low, rain on the windows', or empty"}
+    """
+    static let rebuildPending = """
+    What is still hanging at the end of the moment: something ordered that has not come, a question not yet answered, something someone said they would do? Keep anything in STILL HANGING that the moment did not settle; leave out what it settled. {"open":["0 to 3 short lines"]}
+    """
     static let rebuildFacts = """
     What did this moment establish that will still be true tomorrow: what someone said about their life, work, family or plans, a promise, something given or paid and to whom? Each a full sentence that starts with the person's name or 'You'. Not what someone is doing right now, and nothing in ALREADY KNOWN. {"facts":["0 to 2 sentences"]}
     """
@@ -201,7 +213,7 @@ enum Prompts {
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
     static var groundedInstructions: [String] {
-        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
     }
 
     // MARK: Building the world

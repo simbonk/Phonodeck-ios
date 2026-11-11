@@ -325,6 +325,15 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// The player turn when the player was last in each place (by lowercased name), so a return
     /// after a good while away can catch the place up.
     var placeSeen: [String: Int] = [:]
+    /// What is still hanging: a drink ordered and not yet come, a question not yet answered,
+    /// something someone said they would do. Rewritten by the rebuild each turn.
+    var pending: [String] = []
+    /// How each person feels about the player now, in a word or two, by lowercased card name.
+    var feelings: [String: String] = [:]
+    /// Where the player is in the place ("on a stool at the bar, across from the bartender").
+    var spot = ""
+    /// The background of each place (its sounds and light), by lowercased place name.
+    var ambience: [String: String] = [:]
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -339,7 +348,8 @@ struct Adventure: Codable, Identifiable, Hashable {
         case id, created, updated, setup, title, bible, location, playerName, lore, cast, beats, roadmap, secrets, events, chapters,
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
-             storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks, frames, placeSeen
+             storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks, frames, placeSeen,
+             pending, feelings, spot, ambience
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -372,6 +382,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         clock = try? c.decodeIfPresent(Int.self, forKey: .clock)
         nameless = v(.nameless, false); checks = v(.checks, [])
         frames = v(.frames, [WorldFrame]()); placeSeen = v(.placeSeen, [String: Int]())
+        pending = v(.pending, [String]()); feelings = v(.feelings, [String: String]()); spot = v(.spot, ""); ambience = v(.ambience, [String: String]())
     }
 
     func encode(to encoder: Encoder) throws {
@@ -393,6 +404,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encodeIfPresent(clock, forKey: .clock)
         try c.encode(nameless, forKey: .nameless); try c.encode(checks, forKey: .checks)
         try c.encode(frames, forKey: .frames); try c.encode(placeSeen, forKey: .placeSeen)
+        try c.encode(pending, forKey: .pending); try c.encode(feelings, forKey: .feelings); try c.encode(spot, forKey: .spot); try c.encode(ambience, forKey: .ambience)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -407,6 +419,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         carrying = o.carrying; things = o.things; placeThings = o.placeThings
         playerName = o.playerName; checks = o.checks
         frames = o.frames; placeSeen = o.placeSeen
+        pending = o.pending; feelings = o.feelings; spot = o.spot; ambience = o.ambience
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
@@ -479,4 +492,10 @@ struct WorldFrame: Codable, Hashable, Identifiable {
     var notes: [String] = []
     /// What changed since the turn before, worked out in code.
     var changed: [String] = []
+    /// Where the player is in the room, the background, what is still hanging, and how the people
+    /// in view feel about the player ("Name: wary"). Optional so older saves still open.
+    var spot: String?
+    var sound: String?
+    var pending: [String]?
+    var feelings: [String]?
 }

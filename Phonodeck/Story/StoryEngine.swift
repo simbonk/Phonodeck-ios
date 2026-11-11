@@ -2170,6 +2170,33 @@ final class StoryEngine {
             }
         }
 
+        // How the people the player is with feel about them now: a word or two each.
+        let facingNow: [LoreEntry] = mid.whereabouts.filter { $0.here != false && $0.engaged == true }.compactMap { Cards.card(for: $0, in: mid) }
+        for c in facingNow.prefix(2) {
+            let fm = await ask("How does " + c.name + " feel about you?", Prompts.rebuildFeeling(c.name + roleOf(c)), JSONGrammar.text("feels", chars: 30), 20)
+            guard fm != nil else { return }
+            let feels = ((fm?["feels"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+            guard feels.count > 2, !Self.echoesPrompt(feels), feels.split(separator: " ").count <= 4 else { continue }
+            asked.append(c.name + " feels? → " + feels)
+            commit { now in
+                let key = c.name.lowercased()
+                if let was = now.feelings[key], was.caseInsensitiveCompare(feels) != .orderedSame { filed.append(c.name + " now feels " + feels + " (was " + was + ")") }
+                now.feelings[key] = feels.lowercased()
+            }
+        }
+
+        // Where the player is in the place, and how close to whoever they are with.
+        let sm = await ask("Where are you in the room?", Prompts.rebuildSpot, JSONGrammar.text("spot", chars: 80), 40)
+        guard sm != nil else { return }
+        let spotSaid = ((sm?["spot"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+        var spot: String = ""
+        if spotSaid.count > 3, !Self.echoesPrompt(spotSaid) { spot = checked([spotSaid], share: 0.5).first ?? "" }
+        asked.append("Where are you in the room? → " + (spot.isEmpty ? "not shown" : spot))
+        commit { now in
+            if !spot.isEmpty { now.spot = clip(spot, 90) }
+            else if now.location.caseInsensitiveCompare(start.location) != .orderedSame { now.spot = "" }
+        }
+
         // 4. What does the player have? New things are added; a thing leaves only when the moment
         // shows it going. Only what this reply shows counts (ordering a drink is not having it).
         let had = start.carrying.isEmpty ? "(nothing listed)" : start.carrying.joined(separator: "; ")
@@ -2215,6 +2242,34 @@ final class StoryEngine {
             if !key.isEmpty { now.placeThings[key] = merged }
             let added = around.filter { n in !had.contains { Self.similar($0, n) } }
             if !added.isEmpty { filed.append("Props here: " + added.joined(separator: "; ")) }
+        }
+
+        // The background of the place: its sounds and light, kept with the place.
+        let bm = await ask("What's the background like?", Prompts.rebuildSound, JSONGrammar.text("background", chars: 100), 50)
+        guard bm != nil else { return }
+        let soundSaid = ((bm?["background"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+        var sound: String = ""
+        if soundSaid.count > 5, !Self.echoesPrompt(soundSaid) { sound = checked([soundSaid], share: 0.5).first ?? "" }
+        asked.append("What's the background like? → " + (sound.isEmpty ? "nothing new" : sound))
+        commit { now in
+            guard !sound.isEmpty, !now.location.isEmpty else { return }
+            now.ambience[now.location.lowercased()] = clip(sound, 110)
+        }
+
+        // What is still hanging: kept until the story settles it.
+        var pq = Prompts.rebuildPending
+        if !start.pending.isEmpty { pq = "STILL HANGING:\n" + start.pending.map { "- " + $0 }.joined(separator: "\n") + "\n" + pq }
+        let om = await ask("What's still hanging?", pq, JSONGrammar.strings("open", max: 3, chars: 80), 100)
+        guard om != nil else { return }
+        let hanging = strings(om, "open", cap: 3).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 90) }.filter { h in
+            if start.pending.contains(where: { Self.similar($0, h) }) { return true }
+            return !checked([h], share: 0.5).isEmpty
+        }
+        asked.append("What's still hanging? → " + (hanging.isEmpty ? "nothing" : hanging.joined(separator: "; ")))
+        commit { now in
+            for h in hanging where !now.pending.contains(where: { Self.similar($0, h) }) { filed.append("Still hanging: " + h) }
+            for p in now.pending where !hanging.contains(where: { Self.similar($0, p) }) { filed.append("Settled: " + p) }
+            now.pending = hanging
         }
 
         // 6. Anything lasting? Filed under the person it names (the role a nameless story uses
@@ -2395,6 +2450,14 @@ final class StoryEngine {
         f.away = others.filter { $0.here == false }.map(gone)
         f.have = a.carrying
         f.around = Cards.props(a)
+        f.spot = a.spot.isEmpty ? nil : a.spot
+        f.sound = a.location.isEmpty ? nil : a.ambience[a.location.lowercased()]
+        f.pending = a.pending.isEmpty ? nil : a.pending
+        let feel: [String] = others.filter { $0.here != false }.compactMap { w in
+            guard let c = Cards.card(for: w, in: a), let x = a.feelings[c.name.lowercased()] else { return nil }
+            return c.name + ": " + x
+        }
+        f.feelings = feel.isEmpty ? nil : feel
         if let looked { f.looked = looked }
         if let asked { f.asked = asked }
         if let notes { f.notes = notes }
