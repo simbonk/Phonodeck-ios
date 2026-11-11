@@ -224,10 +224,18 @@ enum Cards {
             !a.cast.contains { f.hasPrefix($0.name + " uses ") || mentions($0, in: f) } && !Continuity.elsewhereFact(f, in: a)
         }
         let hits = general.filter { !keywords($0).isDisjoint(with: kw) }
-        p.facts = opening ? Array(general.prefix(5)) : Array(hits.suffix(3))
+        // The world's own ground (the weather, the year, the city) goes with every reply: the
+        // first two facts the world was built with that are not about the player.
+        let ground = Array(a.facts.prefix(8).filter { f in general.contains(f) && !f.hasPrefix("You") }.prefix(2))
+        if opening {
+            p.facts = Array(general.prefix(5))
+        } else {
+            p.facts = ground
+            for f in hits.suffix(3) where !p.facts.contains(f) { p.facts.append(f) }
+        }
         for f in p.facts {
             let shared = keywords(f).intersection(kw).sorted().prefix(2).joined(separator: ", ")
-            let reason: String = opening ? "opening" : "shares: " + shared
+            let reason: String = opening ? "opening" : ground.contains(f) ? "the world's ground, every reply" : "shares: " + shared
             p.why.append("Fact: \"\(clip(f, 70))\" (\(reason))")
         }
         p.known += p.facts
