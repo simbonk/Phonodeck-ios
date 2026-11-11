@@ -85,6 +85,19 @@ enum PlayScripts {
     static let starters: [PlayScript] = parse(starterText)
 
     static let starterText = """
+    # A12 Straight questions
+    I sit at the bar beside the nearest regular. Hello, my name is Simon.
+    What are you working on there?
+    Why are you doing that?
+    I ask if she likes milk.
+    I ask the bartender how long this place has been open.
+    Who owns this place?
+    I ask her where she grew up.
+    What time do you close?
+    I ask the bartender if the back room is open tonight.
+    Why is it so quiet in here tonight?
+
+
     # A1 Back to the bar
     I sit at the bar and order a coffee.
     I tell them my name is Sam and I am a salesman from Chicago.
