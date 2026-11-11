@@ -79,7 +79,7 @@ enum Continuity {
 
     /// A name the player gives for themselves: "My name is Ada", "I'm Ada Byron", "call me Ada".
     static func selfIntroduction(_ input: String) -> String? {
-        let plain = #"(?i:my name is|my name's|name's|call me|they call me|the name is)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)"#
+        let plain = #"(?i:my name is|my name's|name's|call me|they call me|the name is|mine is|mine's)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)"#
         let short = #"(?i:\bi'm|\bi am|\bim)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)"#
         let notNames: Set<String> = ["Sorry", "Fine", "Good", "Okay", "Ok", "Not", "Just", "Here", "So", "Tired", "Exhausted", "Hungry", "Lost", "New", "From",
                                      "Looking", "Going", "Trying", "The", "A", "An", "Very", "Really", "Happy", "Glad", "Sure", "Well", "Alright", "All", "In", "On", "At"]

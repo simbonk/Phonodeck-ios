@@ -235,7 +235,7 @@ enum Cards {
         if !want.isEmpty { l.append("- What they want right now, and why (what they say and do comes from it): " + want.joined(separator: "; ")) }
         for c in facingCards {
             guard let k = a.knows[c.name.lowercased()], !k.isEmpty else { continue }
-            l.append("- What " + c.name + " knows about you (they remember it; nothing more): " + k.suffix(3).map { clip($0, 80) }.joined(separator: "; "))
+            l.append("- What " + c.name + " knows about you (they remember it; nothing more): " + (k.filter { $0.hasPrefix("your name is ") }.suffix(1) + k.filter { !$0.hasPrefix("your name is ") }.suffix(4)).map { clip($0, 90) }.joined(separator: "; "))
         }
         if !a.body.isEmpty { l.append("- How you are: " + a.body) }
         if !a.progress.isEmpty { l.append("- Toward what the player came for, so far: " + a.progress.suffix(2).map { clip($0, 110) }.joined(separator: " ")) }

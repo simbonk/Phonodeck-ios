@@ -71,6 +71,8 @@ final class StoryEngine {
     /// A turn the app had to stop because it left the foreground mid-reply; it runs again on return.
     /// Where the player was when the turn began, so the review knows which place people were left in.
     private var placeBeforeTurn = ""
+    /// Who the player last asked to come along, so "we leave together" brings the right person.
+    private var invited = ""
     /// How the grounded engine read the player's last message, for the export.
     private var lastRead = ""
     /// What the catch-up on a place found this turn, for the turn guide.
@@ -1174,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11k"
+    static let build = "build 2026-11-11l"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1404,7 +1406,55 @@ final class StoryEngine {
                 backInside = true
             }
         }
+        // "Back to the bar", "my old stool", "the speakeasy": a place on the map meant by a plain
+        // word for it. The last place the message names is where the player ends up.
+        if !a.location.isEmpty, let meant = Self.placeMeant(input, in: a) {
+            var later = true
+            if !read.going.isEmpty, read.going != "somewhere new",
+               let word = read.going.lowercased().split(whereSeparator: { !$0.isLetter }).last,
+               let at = input.lowercased().range(of: String(word), options: .backwards) {
+                later = input.distance(from: input.startIndex, to: at.lowerBound) < meant.at
+            }
+            if later {
+                read.going = meant.place
+                read.newPlace = ""
+                backInside = true
+            }
+        }
+        // "Upstairs", "back up": the way the player came.
+        let stairs = #"(?i)\b(upstairs|back up|up the stairs|downstairs|back down)\b"#
+        if read.going.isEmpty || read.going == "somewhere new", read.newPlace.isEmpty, !a.location.isEmpty,
+           input.range(of: stairs, options: .regularExpression) != nil {
+            let here = a.location
+            let ties = a.links.filter { $0.from.caseInsensitiveCompare(here) == .orderedSame || $0.to.caseInsensitiveCompare(here) == .orderedSame }
+            if ties.count == 1, let tie = ties.last {
+                read.going = tie.from.caseInsensitiveCompare(here) == .orderedSame ? tie.to : tie.from
+                backInside = true
+            }
+        }
         let me = a.playerName.lowercased().split(separator: " ").first.map(String.init) ?? ""
+        // "Her" or "him" with no name: when only one person here fits, that is who is meant.
+        let namesSomeone = a.cast.contains { c in
+            let f = Cards.first(c.name).lowercased()
+            return said.contains(f) || Continuity.wordSet(c.role).contains(where: { $0.count > 3 && said.contains($0) })
+        }
+        if !namesSomeone {
+            for (words, tag) in [(["her", "she"], " uses she/her"), (["him", "he"], " uses he/him")] where words.contains(where: { said.contains($0) }) {
+                let fits = a.whereabouts.filter { w in
+                    w.here != false && a.facts.contains { $0.hasPrefix(w.name + tag) }
+                }
+                if fits.count == 1, read.to.caseInsensitiveCompare(fits[0].name) != .orderedSame { read.to = fits[0].name }
+                break
+            }
+        }
+        // Someone the player asked along ("would you like company walking home?") is who "we" means.
+        let asksAlong = #"(?i)\b(walk(ing)? (you |her |him )?home|come (with|along)|join me|with me|company|go outside|step outside|go for a walk|walk with)\b"#
+        if !read.to.isEmpty, input.range(of: asksAlong, options: .regularExpression) != nil { invited = read.to }
+        let weGo = input.range(of: #"(?i)\b(we|us|together)\b"#, options: .regularExpression) != nil
+        if weGo, !namesSomeone, !invited.isEmpty, a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(invited) == .orderedSame && $0.here != false }) {
+            read.to = invited
+        }
+        let everyone = input.range(of: #"(?i)\b(them|both|everyone|everybody|each of|all of (you|them)|you two|all three|the two of)\b"#, options: .regularExpression) != nil
         let addressed = read.to.lowercased().split(separator: " ").first.map(String.init) ?? ""
         // Leaving takes two things agreeing: the reading, and words that read like going somewhere
         // (or the player already being on the way).
@@ -1448,6 +1498,9 @@ final class StoryEngine {
                 } else if let at = a.whereabouts[i].leftAt, !at.isEmpty, at.caseInsensitiveCompare(read.going) == .orderedSame {
                     a.whereabouts[i].here = true; a.whereabouts[i].leftAt = nil
                 }
+            } else if everyone, a.whereabouts[i].here != false {
+                // "I ask them both": everyone in the room is part of it.
+                a.whereabouts[i].engaged = true
             } else if !addressed.isEmpty {
                 if named {
                     a.whereabouts[i].engaged = true
@@ -2351,12 +2404,37 @@ final class StoryEngine {
             let nameSaid: String = (nm?["name"] as? String) ?? ""
             let roleSaid: String = (nm?["role"] as? String) ?? ""
             asked.append("Is anyone new here? → " + (isNew && nameSaid.count > 2 ? nameSaid : "no"))
+            // A new person has to be there in the telling itself: not only named in someone's
+            // speech, and not a name the player brought up (their own alias, a brother back home).
+            let plainName: String = nameSaid.lowercased().replacingOccurrences(of: #"^(the|a|an) "#, with: "", options: .regularExpression)
+            let telling: String = PresenceFilter.sentences(reply).filter { !$0.contains("\"") && !$0.contains("“") }.joined(separator: " ").lowercased()
+            let playerWords: Set<String> = Continuity.wordSet(start.transcript.filter { $0.role == .player }.map(\.text).joined(separator: " "))
+            let nameWords: [String] = plainName.split(separator: " ").map(String.init).filter { $0.count > 2 }
+            let fromPlayer = !nameWords.isEmpty && nameWords.allSatisfy { playerWords.contains($0) }
+            let present = plainName.count > 2 && telling.contains(plainName) && !fromPlayer
             commit { now in
                 guard isNew else { return }
-                if let added = addNewcomer(&now, name: nameSaid, role: roleSaid, about: reply, engaged: false) {
+                if present, let added = addNewcomer(&now, name: nameSaid, role: roleSaid, about: reply, engaged: false) {
                     filed.append("New person card: " + added + (roleSaid.isEmpty ? "" : " (" + roleSaid + ")"))
                 } else {
                     refused.append(nameSaid + " (not a new person the story shows)")
+                }
+            }
+        }
+
+        // What the player tells people about themselves is kept in their own words, for everyone
+        // who heard it.
+        if let told = Self.toldAboutSelf(playerSaid) {
+            commit { now in
+                let all = told.all || !now.whereabouts.contains { $0.engaged == true && $0.here != false }
+                for w in now.whereabouts where w.here != false && (all || w.engaged == true) {
+                    guard let c = Cards.card(for: w, in: now), !c.isPlayer else { continue }
+                    let key = c.name.lowercased()
+                    var known: [String] = now.knows[key] ?? []
+                    if known.contains(where: { Self.similar($0, told.what) }) { continue }
+                    known.append(told.what)
+                    now.knows[key] = Self.keepKnown(known)
+                    filed.append(c.name + " now knows: " + told.what)
                 }
             }
         }
@@ -2418,14 +2496,15 @@ final class StoryEngine {
                     now.wants[key] = clip(wants, 120)
                 }
                 var known: [String] = now.knows[key] ?? []
-                var fresh: [String] = learned.isEmpty ? [] : [clip(learned, 110)]
+                // Only things about the player, not a note that they asked something.
+                let junk = learned.range(of: #"(?i)^(you|the player) (asked|are curious|is curious|have forgotten|has forgotten|want to know|wants to know)"#, options: .regularExpression) != nil
+                var fresh: [String] = learned.isEmpty || junk ? [] : [clip(learned.replacingOccurrences(of: "the player", with: "you"), 110)]
                 if let said = Continuity.selfIntroduction(playerSaid) { fresh.append("your name is " + said) }
                 for f in fresh where !known.contains(where: { Self.similar($0, f) }) {
                     known.append(f)
                     filed.append(c.name + " now knows: " + f)
                 }
-                if known.count > 6 { known = Array(known.suffix(6)) }
-                now.knows[key] = known
+                now.knows[key] = Self.keepKnown(known)
             }
         }
 
@@ -2487,7 +2566,7 @@ final class StoryEngine {
         guard tm != nil else { return }
         let around = checked(strings(tm, "things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
             // The light, the air and the room itself are the background, and clothes are their wearer's.
-            if e.range(of: #"(?i)\b(light|lamplight|glow|air|smell|scent|aroma|warmth|silence|darkness|shadows?|room|backroom|music|sound)\b"#, options: .regularExpression) != nil {
+            if e.range(of: #"(?i)\b(light|lamplight|gaslight|candlelight|glow|air|smell|scent|aroma|tang|warmth|chill|silence|stillness|darkness|shadows?|room|backroom|space|music|sound|crackle|steam|clouds?|rain)\b"#, options: .regularExpression) != nil {
                 refused.append(e + " (background, not a thing)")
                 return false
             }
@@ -2804,6 +2883,71 @@ final class StoryEngine {
 
     /// Whether the message goes to a place by name: a going word, then the place's last word
     /// within a few words ("I returned back into the velvet thorn", "head to the jazz club").
+    /// What someone knows about the player: the name always stays, then the newest seven.
+    static func keepKnown(_ known: [String]) -> [String] {
+        guard known.count > 8 else { return known }
+        let names = known.filter { $0.hasPrefix("your name is ") }.suffix(1)
+        let rest = known.filter { !$0.hasPrefix("your name is ") }.suffix(8 - names.count)
+        return Array(names) + Array(rest)
+    }
+
+    /// "I tell them I am a salesman from Chicago" → "you said you are a salesman from Chicago".
+    static func toldAboutSelf(_ input: String) -> (what: String, all: Bool)? {
+        let pattern = #"(?i)\bI (?:tell|told|explain to|admit to|confess to) (them|her|him|everyone|everybody|the [a-z]+|[A-Z][a-z]+)(?: both| all)?,? (?:that |the truth[.:,]? )?((?:I|my)\b[^.?!]{6,160})"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: input, range: NSRange(location: 0, length: (input as NSString).length)), m.numberOfRanges > 2 else { return nil }
+        let who = (input as NSString).substring(with: m.range(at: 1)).lowercased()
+        var what = " " + (input as NSString).substring(with: m.range(at: 2)) + " "
+        let swaps: [(String, String)] = [(#"\bI am\b"#, "you are"), (#"\bI'm\b"#, "you are"), (#"\bI was\b"#, "you were"), (#"\bI have\b"#, "you have"),
+                                         (#"\bI've\b"#, "you have"), (#"\bI\b"#, "you"), (#"(?i)\bmy\b"#, "your"), (#"\bme\b"#, "you"), (#"(?i)\bmine\b"#, "yours"), (#"(?i)\bmyself\b"#, "yourself")]
+        for (from, to) in swaps { what = what.replacingOccurrences(of: from, with: to, options: .regularExpression) }
+        what = what.trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
+        guard what.count > 8 else { return nil }
+        let all = ["them", "everyone", "everybody"].contains(who)
+        return ("you said " + what, all)
+    }
+
+    /// A place on the map the message goes to by a plain word for it ("back to the bar" for The
+    /// Velvet Rose, "my old stool", "the speakeasy"), and where in the message that word is.
+    static func placeMeant(_ input: String, in a: Adventure) -> (place: String, at: Int)? {
+        let pattern = #"(?i)\b(?:go|goes|going|head|heads|walk|walks|return|returns|come|comes|step|steps|get|gets|climb|climbs|carry|carries|bring|brings|sit|sits|take|takes|run|runs|hurry|put|puts|set|sets|back)\b[^.?!;]{0,40}?\b(?:to|into|inside|in|at|on|behind)\s+(?:the|my|his|her|their)\s+(?:old\s+|first\s+|same\s+|own\s+)?([a-z]{3,})"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let ns = input as NSString
+        let dull: Set<String> = ["way", "door", "moment", "while", "rain", "air", "back", "room", "place", "floor", "wall", "hand", "pocket", "coat", "table", "side", "end", "front", "rest", "others", "woman", "man", "bartender", "two"]
+        let cue = input.range(of: #"(?i)\b(back|return|returns|again|old|same)\b"#, options: .regularExpression) != nil
+        let here = a.location
+        let home: String = a.frames.first?.place ?? ""
+        let premise = Continuity.wordSet(a.setup.place + " " + a.setup.describe)
+        func words(of place: String) -> (name: Set<String>, rest: Set<String>) {
+            let card = a.lore.first { $0.kind == .place && $0.name.caseInsensitiveCompare(place) == .orderedSame }
+            let things: [String] = a.placeThings[place.lowercased()] ?? []
+            return (Continuity.wordSet(place), Continuity.wordSet((card?.desc ?? "") + " " + things.joined(separator: " ")))
+        }
+        let mine = words(of: here)
+        var seen = Set<String>()
+        var places: [String] = []
+        for p in a.lore.filter({ $0.kind == .place }).map(\.name) + a.places where p.caseInsensitiveCompare(here) != .orderedSame && seen.insert(p.lowercased()).inserted {
+            places.append(p)
+        }
+        var best: (place: String, at: Int)? = nil
+        for m in re.matches(in: input, range: NSRange(location: 0, length: ns.length)) where m.numberOfRanges > 1 {
+            let noun = ns.substring(with: m.range(at: 1)).lowercased()
+            if dull.contains(noun) || mine.name.contains(noun) { continue }
+            var found: String? = places.first { words(of: $0).name.contains(noun) }
+            if found == nil, !mine.rest.contains(noun) {
+                let isHome: (String) -> Bool = { $0.caseInsensitiveCompare(home) == .orderedSame }
+                if let h = places.first(where: isHome), premise.contains(noun) {
+                    found = h
+                } else if cue {
+                    let fits = places.filter { words(of: $0).rest.contains(noun) }
+                    if fits.count == 1 { found = fits[0] }
+                }
+            }
+            if let f = found, best == nil || m.range(at: 1).location > best!.at { best = (f, m.range(at: 1).location) }
+        }
+        return best
+    }
+
     static func goesTo(_ place: String, in input: String) -> Bool {
         let skip: Set<String> = ["the", "a", "an", "of", "and", "at", "in", "on"]
         guard let last = place.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter({ !skip.contains($0) }).last,
