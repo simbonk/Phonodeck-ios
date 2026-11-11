@@ -685,7 +685,7 @@ final class StoryEngine {
         let engineLine: String = grounded
             ? "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off")
             : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
-        out.append(engineLine + " · " + Self.build)
+        out.append(engineLine + " · " + Self.build + " · " + EnginePack.label)
         if grounded {
             out += ["", "## Premise (the storyteller's only standing view of the story)", Cards.premise(a)]
         } else {
@@ -1176,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11o"
+    static let build = "build 2026-11-11p"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 

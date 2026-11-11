@@ -6,7 +6,7 @@ import Foundation
 enum Prompts {
     // MARK: The Game Master
 
-    static let gmRules = """
+    static let gmRulesBuiltIn = """
     You are the Game Master of an immersive audio story the player hears read aloud: their vacation from reality. Write what happens next.
 
     - Second person, present tense: the player is "you", never "they" or their name. 90 to 170 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. No headings, lists or notes.
@@ -18,6 +18,7 @@ enum Prompts {
     - New people go by their role ("the old fisherman") until named, and know the player's name only once told.
     - One clear thing happens, and it delivers the FEELING TO ACHIEVE; plot is an offer, never a pursuer. Do not reuse images or lines from earlier replies. End on an image, a line of dialogue or a question from someone, never a list of options.
     """
+    static var gmRules: String { EnginePack.text("gmRules", gmRulesBuiltIn) }
 
     static let feelingCraft: [(String, String)] = [
         ("nostalg", "Nostalgia: warm period detail and sensory memory (a song, a texture), familiar rituals, golden light and a touch of bittersweet."),
@@ -77,7 +78,8 @@ enum Prompts {
     }
 
     /// Nameless until introduced: what the storyteller is told about the people it knows only by role.
-    static let namelessRule = "Anyone written by their role (\"the bartender\", \"the regular\") has no name the player knows yet: call them by that role and never make up a name for them. A name comes only when your briefing gives it."
+    static let namelessRuleBuiltIn = "Anyone written by their role (\"the bartender\", \"the regular\") has no name the player knows yet: call them by that role and never make up a name for them. A name comes only when your briefing gives it."
+    static var namelessRule: String { EnginePack.text("namelessRule", namelessRuleBuiltIn) }
 
     /// Nameless until introduced: what the architect is told. The game still needs every person's
     /// name to keep track of them; it keeps them secret until the story says them.
@@ -86,11 +88,12 @@ enum Prompts {
             + (playerNamed ? "" : " The player has no name: leave the player's \"name\" empty and never name the player in the bible; write to them as 'you'.")
     }
 
-    static let shortRules = """
+    static let shortRulesBuiltIn = """
     ## SHORT STORY (15 minutes or less)
     - Impactful and clean: 70 to 130 words per reply, one clear goal, one main place, a small cast.
     - Every reply moves the story forward. Plant one detail early and pay it off at the end.
     """
+    static var shortRules: String { EnginePack.text("shortRules", shortRulesBuiltIn) }
 
     static func openingInstruction(simulator: Bool, short: Bool) -> String {
         let stage = "Start with two or three plain, simple sentences that set the stage: where the player is (name the place), what they are doing, and what they can see around them. Then paint the scene with what they hear, smell and feel, in specific detail that could only belong to this place, so the listener can picture it with their eyes closed."
@@ -109,7 +112,7 @@ enum Prompts {
     /// thinking is off because it is unbounded and slow, so instead the Game Master writes a short,
     /// capped plan first: it reviews the state, the clock, the goal and the recalled memories and
     /// decides what this reply must do. The plan then leads the briefing for the reply itself.
-    static let gmPlan = """
+    static let gmPlanBuiltIn = """
     You are the Game Master of an interactive audio story, planning your next reply in private before you write it. Read everything below carefully: the bible, the facts, your look-ahead from last turn, the clock, the recalled memories and the player's NEW MESSAGE at the very end. The earlier exchange is already answered: plan only for the new message. Your look-ahead was written before the player spoke: use it only if the player went along with it. What the player says they do always wins.
     If the player goes somewhere or looks for someone, this reply shows them doing it: they travel, and they find people where the scene says those people are. Nobody who is elsewhere simply appears beside them.
     Then output ONLY these five short lines, nothing else:
@@ -120,13 +123,15 @@ enum Prompts {
     USE: one thing already in the story to use (from the scene card or the recent turns); never a new object, gift or keepsake
     Each line at most 30 words. Plain words, no prose for the player.
     """
+    static var gmPlan: String { EnginePack.text("gmPlan", gmPlanBuiltIn) }
 
     /// The read, in two short questions that share one opening (so llama.cpp reads it once):
     /// where things stand and the player's new message, then the question.
-    static let readIntro = "You help run an interactive audio story. Here is where things stand, then the player's new message, then one question for you."
+    static let readIntroBuiltIn = "You help run an interactive audio story. Here is where things stand, then the player's new message, then one question for you."
+    static var readIntro: String { EnginePack.text("readIntro", readIntroBuiltIn) }
 
     /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
-    static let lookQuestion = """
+    static let lookQuestionBuiltIn = """
     QUESTION 1 OF 2. Fill in this form about the player's NEW MESSAGE. Output ONLY one JSON object:
     {"to":"the one person the player is speaking to or doing something with in the new message, or \"nobody\"",
      "going":"\"staying\" if the player stays in the place they are in; the name of a place if they go there; \"somewhere new\" if they leave for a place that is not listed",
@@ -135,19 +140,21 @@ enum Prompts {
     The lookups: "who is here", "where am I", "what I have", "what is around", "look at <a name from CARDS>", "where is <a person>", "remember <a topic from earlier in the story>".
     Look up only what this moment needs, the way an eye only sees what it looks at: the person the player asks about, the things around them if they look around, their own things if they reach for them, an earlier moment if they bring one back. Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going.
     """
+    static var lookQuestion: String { EnginePack.text("lookQuestion", lookQuestionBuiltIn) }
 
     /// Read, question 2: the moment, planned from what was looked up.
-    static let planQuestion = """
+    static let planQuestionBuiltIn = """
     QUESTION 2 OF 2. Plan the next moment from the message and WHAT YOU LOOKED UP. Output ONLY one JSON object:
     {"does":"one plain sentence starting 'You': exactly what the player says and does in the new message, nothing added or left out (e.g. 'You tell the bartender it is half past ten and order a coffee')",
      "answer":"only if the player asked a question: the plain, sensible answer the person they asked gives, from WHAT YOU LOOKED UP where it covers it, otherwise something ordinary that fits the place and time (a short list, a year, a name); never the player's own words; empty if they asked nothing",
      "beat":"one sentence: what the person the player is with does right away in answer to exactly that (they accept the coffee, they give their name back), true to what that person wants and why, in a way that delivers the FEELING"}
     Never add to what the player said. What the player says they do, the player does: never give the player's own action to someone else. The beat is a new sentence of your own, never one copied from THE STORY JUST SAID. The beat uses only people and things already in the story: no new objects, gifts or keepsakes, and nobody who is elsewhere.
     """
+    static var planQuestion: String { EnginePack.text("planQuestion", planQuestionBuiltIn) }
 
     /// The grounded engine's storyteller rules (Paint). Short on purpose: the briefing carries the
     /// scene and the moment to write, and a small model follows a few clear lines best.
-    static let groundedRules = """
+    static let groundedRulesBuiltIn = """
     You are the storyteller of an audio story the player hears read aloud: their vacation from reality. Write the next moment.
 
     - Second person, present tense: the player is "you", never "they" or their name. 80 to 150 words in 2 or 3 short paragraphs of plain, vivid words that are easy to hear. No headings, lists or notes.
@@ -159,85 +166,106 @@ enum Prompts {
     - Use at most one detail of the place. Do not reuse lines or images from earlier replies.
     - End on the person turned to the player, leaving room for them to answer. Never a list of options.
     """
+    static var groundedRules: String { EnginePack.text("groundedRules", groundedRulesBuiltIn) }
 
     /// The rebuild after a reply: short questions about the moment, one at a time, each sharing
     /// this opening and the moment itself (so llama.cpp reads them once). Code checks every answer
     /// against the story's own words before it goes on a card.
-    static let rebuildIntro = "You keep the books for an audio story. Read the latest moment, then answer one short question about it, only from what the story says, never guesses. Output ONLY one JSON object."
+    static let rebuildIntroBuiltIn = "You keep the books for an audio story. Read the latest moment, then answer one short question about it, only from what the story says, never guesses. Output ONLY one JSON object."
+    static var rebuildIntro: String { EnginePack.text("rebuildIntro", rebuildIntroBuiltIn) }
 
-    static let rebuildPlace = """
+    static let rebuildPlaceBuiltIn = """
     Where is the player at the end of the moment? {"where":"one choice from the list","name":"only if somewhere new: its short name, 1-4 words; otherwise empty"}
     """
+    static var rebuildPlace: String { EnginePack.text("rebuildPlace", rebuildPlaceBuiltIn) }
     /// How much story time the moment took, picked from `StoryEngine.timeSteps`.
-    static let rebuildTime = """
+    static let rebuildTimeBuiltIn = """
     About how much time passed in the story during this moment, from the player's words to the end of the reply? A few words across a bar is a moment; walking to another room or building nearby is a few minutes; a meal or a long talk is half an hour or more; sleeping is overnight. {"passed":"one choice from the list"}
     """
-    static let rebuildPeople = """
+    static var rebuildTime: String { EnginePack.text("rebuildTime", rebuildTimeBuiltIn) }
+    static let rebuildPeopleBuiltIn = """
     Who is with the player at the end of the moment, in the same room or spot? {"here":["names from the list; [] if nobody"]}
     """
+    static var rebuildPeople: String { EnginePack.text("rebuildPeople", rebuildPeopleBuiltIn) }
     static func rebuildDoing(_ who: String) -> String {
         "What is " + who + " doing at the end of the moment, in a few words? {\"doing\":\"a few words\"}"
     }
-    static let rebuildCarrying = """
+    static let rebuildCarryingBuiltIn = """
     What does the player have on them at the end of the moment? Leave out anything they gave away, paid, ate, drank or put down; ordering something is not having it. {"has":["2-5 words each"]}
     """
-    static let rebuildThings = """
+    static var rebuildCarrying: String { EnginePack.text("rebuildCarrying", rebuildCarryingBuiltIn) }
+    static let rebuildThingsBuiltIn = """
     What notable things did the story show in the place the player is in? {"things":["2-6 words each, e.g. 'a cast-iron stove'"]}
     """
+    static var rebuildThings: String { EnginePack.text("rebuildThings", rebuildThingsBuiltIn) }
     static func rebuildFeeling(_ who: String) -> String {
         "How does " + who + " feel about the player at the end of the moment, in one to three words? {\"feels\":\"1-3 words, e.g. 'warming up', 'wary', 'amused', 'annoyed'\"}"
     }
-    static let rebuildSpot = """
+    static let rebuildSpotBuiltIn = """
     Where exactly is the player in the place at the end of the moment, and how close to whoever they are with? Only what the story shows. {"spot":"a few words, e.g. 'on a stool at the bar, across from the bartender'"}
     """
-    static let rebuildSound = """
+    static var rebuildSpot: String { EnginePack.text("rebuildSpot", rebuildSpotBuiltIn) }
+    static let rebuildSoundBuiltIn = """
     What is the background of this place like at the end of the moment: its sounds and light, in one short line? Only what the story shows; empty if it shows nothing. {"background":"one short line, e.g. 'the band playing low, rain on the windows', or empty"}
     """
-    static let rebuildPending = """
+    static var rebuildSound: String { EnginePack.text("rebuildSound", rebuildSoundBuiltIn) }
+    static let rebuildPendingBuiltIn = """
     What is still hanging at the end of the moment: something ordered that has not come, a question not yet answered, something someone said they would do? Each is a short plain sentence about what hasn't happened yet, e.g. 'Your drink has not come yet', 'She asked where you are from', 'He said he would find the key'. Never a thing, a look, a sound or a mood. Keep anything in STILL HANGING that the moment did not settle; leave out what it settled. [] if nothing is open. {"open":["0 to 3 short sentences"]}
     """
+    static var rebuildPending: String { EnginePack.text("rebuildPending", rebuildPendingBuiltIn) }
     static func rebuildWants(_ who: String) -> String {
         "What does " + who + " want right now, and why (the reason behind what they say and do, true to who they are)? And what did " + who + " learn about the player in this moment, only from what the player said or showed? {\"wants\":\"what they want, because of what, e.g. 'to show you her sketches, because nobody has asked to see them'\",\"learned\":\"one short line, e.g. 'you are new in town', or empty\"}"
     }
-    static let rebuildNewPerson = """
+    static let rebuildNewPersonBuiltIn = """
     Does the story in this moment show or name a person who is not in PEOPLE IN THE STORY and is not the player? {"new":"yes or no","name":"their name as the story gives it, or what the story calls them, e.g. 'Mr. Elias' or 'the doorman'; empty if no","role":"who they are in a few words, e.g. 'the boss at the sewing studio'; empty if no"}
     """
+    static var rebuildNewPerson: String { EnginePack.text("rebuildNewPerson", rebuildNewPersonBuiltIn) }
     /// Asked before the reply, only when the player's message reads like someone arriving or being met.
-    static let newcomer = """
+    static let newcomerBuiltIn = """
     QUESTION: Does the new message bring in, or have the player meet, a person who is not in PEOPLE? {"new":"yes or no","name":"what to call them, from the message, e.g. 'Mr. Elias' or 'her boss'; empty if no","role":"who they are in a few words; empty if no"}
     """
-    static let rebuildBody = """
+    static var newcomer: String { EnginePack.text("newcomer", newcomerBuiltIn) }
+    static let rebuildBodyBuiltIn = """
     How is the player, physically, at the end of the moment (wet or dry, warm or cold, tired, hurt, how much they have drunk)? Only what the story shows. {"body":"a few words, e.g. 'soaked and cold, one drink in'"}
     """
-    static let rebuildGoal = """
+    static var rebuildBody: String { EnginePack.text("rebuildBody", rebuildBodyBuiltIn) }
+    static let rebuildGoalBuiltIn = """
     Did this moment reach a real part of THE GOAL that is not already in REACHED SO FAR (for example, someone actually shared what the goal asks to hear)? Being served, greeted, seated or kept company is not progress. {"closer":"yes or no","how":"if yes: one short sentence saying what was reached; otherwise empty"}
     """
-    static let rebuildAnswered = """
+    static var rebuildGoal: String { EnginePack.text("rebuildGoal", rebuildGoalBuiltIn) }
+    static let rebuildAnsweredBuiltIn = """
     The player asked a question. Did the story answer it in this moment? {"answered":"yes or no"}
     """
-    static let rebuildName = """
+    static var rebuildAnswered: String { EnginePack.text("rebuildAnswered", rebuildAnsweredBuiltIn) }
+    static let rebuildNameBuiltIn = """
     Did someone in the story say their own name in this moment? {"who":"one choice from the list","name":"the name they said, exactly as the story has it; empty if nobody"}
     """
-    static let rebuildContradiction = """
+    static var rebuildName: String { EnginePack.text("rebuildName", rebuildNameBuiltIn) }
+    static let rebuildContradictionBuiltIn = """
     Does the story in this moment say something that cannot be true if a line ON FILE is true (a different name, job, place or fact)? Saying the same thing again, or adding to it, is no. {"contradicts":"yes or no","line":"if yes: the line ON FILE, copied; otherwise empty","said":"if yes: the words in THE STORY that clash with it, copied; otherwise empty"}
     """
+    static var rebuildContradiction: String { EnginePack.text("rebuildContradiction", rebuildContradictionBuiltIn) }
     /// Asked before the reply, only when the player's action leans on a thing they must have.
-    static let canDo = """
+    static let canDoBuiltIn = """
     QUESTION: Can the player do what the new message says, with what they have and what is around them? Anything an ordinary person could do there is a yes. {"can":"yes or no","missing":"if no: the thing they would need and don't have, 1-4 words; otherwise empty"}
     """
-    static let rebuildFacts = """
+    static var canDo: String { EnginePack.text("canDo", canDoBuiltIn) }
+    static let rebuildFactsBuiltIn = """
     What did this moment establish that will still be true tomorrow: what someone said about their life, work, family or plans, a promise, something given or paid and to whom? Each a full sentence that starts with the person's name or 'You'. Not what someone is doing right now, and nothing in ALREADY KNOWN. {"facts":["0 to 2 sentences"]}
     """
+    static var rebuildFacts: String { EnginePack.text("rebuildFacts", rebuildFactsBuiltIn) }
 
     /// A place the player arrives in, built before the reply so the reply can bring it to life.
-    static let buildPlace = """
+    static let buildPlaceBuiltIn = """
     QUESTION: The player is arriving in this place right now. Build it so it comes to life, true to the story's time and world. {"desc":"two or three concrete sentences: what kind of place it is, the light, the sounds, the smell, how it feels to step in","things":["3 to 5 notable things in it, 2-6 words each, e.g. 'a narrow iron bed'"]}
     """
+    static var buildPlace: String { EnginePack.text("buildPlace", buildPlaceBuiltIn) }
 
     /// Coming back to a place after a long time away: what ordinary things changed meanwhile.
-    static let awayQuestion = """
+    static let awayQuestionBuiltIn = """
     QUESTION: The player is coming back to this place after the time shown. Who of the people left here is still here, and what ordinary things have changed meanwhile (the crowd, the light, a chore done, a meal over)? Nothing dramatic, nothing new that matters to the story. {"still_here":["names from PEOPLE LEFT HERE"],"changes":["0 to 2 short plain sentences"]}
     """
+    static var awayQuestion: String { EnginePack.text("awayQuestion", awayQuestionBuiltIn) }
 
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
@@ -249,7 +277,7 @@ enum Prompts {
 
     /// The architect's reply is streamed, and the build screen lights up each stage as the model
     /// starts writing that part, so the keys must come in this order.
-    static let architect = """
+    static let architectBuiltIn = """
     You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text, with the keys in exactly this order:
     {"title":"a short title",
      "bible":"180-300 words, written to the player as 'you': premise, tone, who the player is and what they have with them, the setting in concrete detail (what is there and what is not), the goal, what stands in the way",
@@ -268,11 +296,12 @@ enum Prompts {
      "roadmap":[{"from":0,"to":10,"goal":"secret steering goal for these minutes"}]}
     Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story; build the premise, people and roadmap to deliver it. "places" lists 3-5 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most two important items or groups. "known" is true only for people the player already knows at the start. "with_player" is true only for people in the same room or spot as the player when the story opens. "scene" and "things" describe only the opening place, and everything in them must fit the bible. The roadmap covers minute 0 to the session length with 3-5 acts and ends in a satisfying storybook ending. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's "pronouns" and "desc" must match how the bible refers to them: decide everyone's gender before writing the bible and keep it.
     """
+    static var architect: String { EnginePack.text("architect", architectBuiltIn) }
 
     /// The grounded engine's architect: only what the opening needs. No hidden plot, secrets or
     /// paced roadmap (there is no time limit), and a short premise instead of a long bible; the
     /// world is built as the player goes.
-    static let architectGrounded = """
+    static let architectGroundedBuiltIn = """
     You design an interactive audio story. From the player's answers, output ONLY one JSON object, no other text, with the keys in exactly this order:
     {"title":"a short title",
      "bible":"60-100 words, written to the player as 'you': what this story is, the era and setting, who the player is and why they are here",
@@ -288,29 +317,33 @@ enum Prompts {
      "things":["3-6 notable things in that spot, 2-6 words each"]}
     Rules: the FEELING TO ACHIEVE (given below) is the point of the whole story. "places" lists 1-3 places, starting with the opening place. "lore" lists the named people (keep the cast small) and at most one important item or group. "known" is true only for people the player already knows at the start. Everyone in "people" is in the opening place; "with_player" is true only for people the player is dealing with at the start. Avoid overused names (Elara, Kael, Lyra, Thorne, Vex, Seraphina, Mara, Silas, Finn, Zara, Kira, Orion). Names the player gave are kept exactly. Each person's pronouns and desc must match how the bible refers to them.
     """
+    static var architectGrounded: String { EnginePack.text("architectGrounded", architectGroundedBuiltIn) }
 
-    static let architectSimulatorGrounded = """
+    static let architectSimulatorGroundedBuiltIn = """
     This is an EXPERIENCE with no plot: no threat, villain, mystery or twist, and nothing scripted. "places" lists only the opening place. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
+    static var architectSimulatorGrounded: String { EnginePack.text("architectSimulatorGrounded", architectSimulatorGroundedBuiltIn) }
 
-    static let architectSimulator = """
+    static let architectSimulatorBuiltIn = """
     This is an EXPERIENCE with no plot: no threat, villain, mystery or twist, and nothing scripted. These rules override the ones above: "places" lists only the opening place. "beats" is [] and "roadmap" is []. "secrets" holds one private backstory for each person, written "Name: ..." (where they come from, what shaped them, what they hope for, in 1-2 sentences), which they share only when the player asks about their life. The people have their own lives and make the place feel real. Build everything around the player's goal and the feeling.
     """
+    static var architectSimulator: String { EnginePack.text("architectSimulator", architectSimulatorBuiltIn) }
 
     /// Continue: the next part of a finished story, with the same player, cast and world (the web
     /// app's SEQUEL_RULES, shortened for small models).
-    static let continuation = """
+    static let continuationBuiltIn = """
     This is the NEXT PART of an earlier story (EARLIER STORY below), with the same player, cast and world. Everything in the earlier story really happened and has consequences (changed relationships, debts, scars, reputations). Keep every returning character's name, personality, way of speaking and relationships, and keep the places and items. Facts the player set by hand are kept exactly. HOW IT ENDED is the truth about where things stand: the earlier bible describes how the story BEGAN, so do not copy it. Follow the connection:
     - "Right where it left off": the new part opens at the exact moment and place the last scene ended, with the same people present. "bible" describes that situation now (where the player is, who is with them, what just happened, what is still open). "location" is the place where the last scene ended. "time" is the time of day when it ended (a scene that ended at sunrise opens at sunrise). "people" puts each person where the last scene left them; anyone who left is elsewhere. "facts" are true at that moment: update anything the ending changed (where people are, what the player now has, the weather).
     - "Some time later": time has moved on; "time" and the bible say how much, and "location" and "people" say where everyone is now.
     "timeline" lists 2-4 key moments of the earlier story, each with when it happened relative to now. Grow a NEW central plot, secrets and roadmap from what the ending left open (loose threads, promises, unanswered questions, consequences); never repeat the earlier plot. "lore" lists the returning people (with "known": true and what they want now) plus any new ones; the returning cast is the heart of the story. After "roadmap", add one more key: "recap":"2-3 sentences, to the player as 'you', of what happened across the whole earlier story, ending with where it left off"
     """
+    static var continuation: String { EnginePack.text("continuation", continuationBuiltIn) }
 
     /// Where a finished story stands at its last line, read once when Continue builds the next part.
     /// The tracker can lag behind the final scene (and small models tend to copy the old situation),
     /// so this short call reads the ending itself; code then sets the new part's place, time, people
     /// and facts from it. The keys are described in words rather than as a template to copy.
-    static let ending = """
+    static let endingBuiltIn = """
     You read the end of an interactive story and say exactly where things stand at its very last line. Output ONLY one JSON object with these keys, in this order:
     place: where the player is at the last line (a short place name from the story)
     time: the time of day at the last line
@@ -321,6 +354,7 @@ enum Prompts {
     Shape: {"place":"","time":"","with_you":"","people":[{"name":"","where":"","doing":""}],"facts":[""],"recap":""}
     The last scene wins over everything before it: if it took people somewhere, they are there now. Use only what the story says. No commentary.
     """
+    static var ending: String { EnginePack.text("ending", endingBuiltIn) }
 
     /// How a new part connects to the one before. The first is the default.
     static let continueLinks = ["Right where it left off", "Some time later"]
@@ -345,7 +379,7 @@ enum Prompts {
     /// The Game Master's review of the reply just written, run in the background while it is read
     /// aloud: it checks the reply against the facts, notes slips to correct from now on, keeps the
     /// list of facts current, and proposes the next move. The next turn's plan realigns it.
-    static let review = """
+    static let reviewBuiltIn = """
     You are the Game Master of an interactive audio story, reviewing the reply you just wrote while the player listens to it. Output ONLY one JSON object:
     {"scene":"one or two plain sentences: exactly where the player is now and what is going on around them",
      "left":false,
@@ -362,6 +396,7 @@ enum Prompts {
     "left" is true only if, in this reply, the player went out of the building or area they were in and into a different place (out a door, down a street, to another building). Moving to another seat, table or corner of the same room is false. When the player leaves, "here" names exactly the people who went with them; everyone else stayed behind.
     Time only moves forward and only as far as the story showed. A person moves only if the reply showed them going; someone heading somewhere is not there yet. A slip contradicts the bible, the facts or the scene: a changed pronoun, an object the player does not have, someone acting in the scene who was elsewhere, a person in a new place with no movement shown. Only list a slip you can point to in the reply's own words. Write real content about this story; never copy these descriptions. "carrying" and "things" hold only what the story has actually shown, never guesses. Be exact and plain (say "Teina is in her hut in the settlement, 200 metres inland", never "might be"). No commentary.
     """
+    static var review: String { EnginePack.text("review", reviewBuiltIn) }
 
     /// Each key of the review, for asking again when a review leaves some out.
     static let reviewKeyHelp: [String: String] = [
@@ -373,7 +408,7 @@ enum Prompts {
 
     // MARK: Memory
 
-    static let memory = """
+    static let memoryBuiltIn = """
     You keep the memory of an interactive story. From the latest exchange, output ONLY one JSON object:
     {"events":["0-2 notable events, past tense"],
      "location":"the short name of the place the player is in now, 1-4 words (use a place name from the story if there is one)",
@@ -383,13 +418,15 @@ enum Prompts {
      "mood":{"feeling":0,"enjoying":"","leaving_plot":false}}
     lore: only people, places, items or groups that are new or whose situation changed in this exchange; never the player. mood.feeling is 0-10: how strongly the player seems to feel the FEELING TO ACHIEVE. enjoying: a character, place or activity they clearly want more of, or "". leaving_plot: true if they are deliberately moving away from the plot. No commentary.
     """
+    static var memory: String { EnginePack.text("memory", memoryBuiltIn) }
 
-    static let chapter = "Summarise these story turns in 2 or 3 plain past-tense sentences, second person (\"you\"), keeping names, promises, discoveries and anything unresolved. Output only the summary."
+    static let chapterBuiltIn = "Summarise these story turns in 2 or 3 plain past-tense sentences, second person (\"you\"), keeping names, promises, discoveries and anything unresolved. Output only the summary."
+    static var chapter: String { EnginePack.text("chapter", chapterBuiltIn) }
 
     // MARK: Housekeeping (every 10 turns, in the background, one call per turn at most)
 
     /// The hidden showrunner (the web app's PLAN_RULES, shortened for small models).
-    static let showrunner = """
+    static let showrunnerBuiltIn = """
     You are the hidden showrunner of an interactive audio story. Output ONLY one JSON object:
     {"voice":"2 sentences: narrator voice, a sensory palette unique to this story, and a different way of speaking for each main character",
      "secrets":["3-5 hidden truths or mysteries the player has not discovered yet"],
@@ -398,13 +435,17 @@ enum Prompts {
      "cast":[{"name":"","wants":"what they are pursuing right now","fears":"","secret":"","next_move":"a concrete thing they will do next, whether or not the player is present"}]}
     Make them surprising, specific to THIS story, and consistent with the bible, lore and history. "cast" is only the named characters (not the player, not people known only by their role); give each a real motivation, a secret and a next_move. No commentary, no markdown.
     """
+    static var showrunner: String { EnginePack.text("showrunner", showrunnerBuiltIn) }
 
-    static let showrunnerRevise = "You are UPDATING existing notes: drop secrets the player has now discovered, add fresh ones, update thread statuses, advance every next_move, and pick a new big_reveal only if the old one has happened. If PLAYER-SET FACTS are given, make every note agree with them."
+    static let showrunnerReviseBuiltIn = "You are UPDATING existing notes: drop secrets the player has now discovered, add fresh ones, update thread statuses, advance every next_move, and pick a new big_reveal only if the old one has happened. If PLAYER-SET FACTS are given, make every note agree with them."
+    static var showrunnerRevise: String { EnginePack.text("showrunnerRevise", showrunnerReviseBuiltIn) }
 
-    static let showrunnerSimulator = "This is an EXPERIENCE with no plot: secrets are small delights to discover, threads are gentle background life, big_reveal is a lovely surprise rather than a twist, and the cast have modest, warm wants that make the place feel alive."
+    static let showrunnerSimulatorBuiltIn = "This is an EXPERIENCE with no plot: secrets are small delights to discover, threads are gentle background life, big_reveal is a lovely surprise rather than a twist, and the cast have modest, warm wants that make the place feel alive."
+    static var showrunnerSimulator: String { EnginePack.text("showrunnerSimulator", showrunnerSimulatorBuiltIn) }
 
     /// Rewrites the story bible so it stays current (the web app's refreshBible).
-    static let bibleRefresh = "Rewrite the story bible of an interactive story as a tight one-pager of at most 280 words, plain text, addressing the player character as \"you\": premise, tone, who you are, the cast, the setting, the current situation, the goal, and a short \"story so far\". Keep everything still relevant and compress old material. Keep every detail the player set by hand, even if unusual. Call anyone whose name the player has not learned yet only by their role; never write that name. Output only the bible."
+    static let bibleRefreshBuiltIn = "Rewrite the story bible of an interactive story as a tight one-pager of at most 280 words, plain text, addressing the player character as \"you\": premise, tone, who you are, the cast, the setting, the current situation, the goal, and a short \"story so far\". Keep everything still relevant and compress old material. Keep every detail the player set by hand, even if unusual. Call anyone whose name the player has not learned yet only by their role; never write that name. Output only the bible."
+    static var bibleRefresh: String { EnginePack.text("bibleRefresh", bibleRefreshBuiltIn) }
 
     // MARK: Director (a fresh nudge each turn so replies don't settle into a formula)
 
@@ -434,7 +475,8 @@ enum Prompts {
     ]
 
     /// The ending nudge that brings someone or something new into the scene (not for calm scenes).
-    static let interruptingEnding = "End on an interruption: someone arrives or a message lands."
+    static let interruptingEndingBuiltIn = "End on an interruption: someone arrives or a message lands."
+    static var interruptingEnding: String { EnginePack.text("interruptingEnding", interruptingEndingBuiltIn) }
 
     // MARK: The set-up wizard
 
@@ -517,5 +559,54 @@ enum Prompts {
         "Quiet awe under an impossibly big sky", "Cosy safety while a storm rages outside", "Hard-won triumph against the odds",
         "Bittersweet nostalgia for a time I never lived", "The warmth of a found family", "Wonder at discovering something no one has seen",
         "Falling a little in love with a place", "The calm of having nowhere to be",
+    ]
+
+    // MARK: The engine file
+
+    /// Every prompt the engine file can replace, by its name in the file, with the text built
+    /// into the app (see `EnginePack`).
+    static let builtIns: [(String, String)] = [
+        ("gmRules", gmRulesBuiltIn),
+        ("namelessRule", namelessRuleBuiltIn),
+        ("shortRules", shortRulesBuiltIn),
+        ("gmPlan", gmPlanBuiltIn),
+        ("readIntro", readIntroBuiltIn),
+        ("lookQuestion", lookQuestionBuiltIn),
+        ("planQuestion", planQuestionBuiltIn),
+        ("groundedRules", groundedRulesBuiltIn),
+        ("rebuildIntro", rebuildIntroBuiltIn),
+        ("rebuildPlace", rebuildPlaceBuiltIn),
+        ("rebuildTime", rebuildTimeBuiltIn),
+        ("rebuildPeople", rebuildPeopleBuiltIn),
+        ("rebuildCarrying", rebuildCarryingBuiltIn),
+        ("rebuildThings", rebuildThingsBuiltIn),
+        ("rebuildSpot", rebuildSpotBuiltIn),
+        ("rebuildSound", rebuildSoundBuiltIn),
+        ("rebuildPending", rebuildPendingBuiltIn),
+        ("rebuildNewPerson", rebuildNewPersonBuiltIn),
+        ("newcomer", newcomerBuiltIn),
+        ("rebuildBody", rebuildBodyBuiltIn),
+        ("rebuildGoal", rebuildGoalBuiltIn),
+        ("rebuildAnswered", rebuildAnsweredBuiltIn),
+        ("rebuildName", rebuildNameBuiltIn),
+        ("rebuildContradiction", rebuildContradictionBuiltIn),
+        ("canDo", canDoBuiltIn),
+        ("rebuildFacts", rebuildFactsBuiltIn),
+        ("buildPlace", buildPlaceBuiltIn),
+        ("awayQuestion", awayQuestionBuiltIn),
+        ("architect", architectBuiltIn),
+        ("architectGrounded", architectGroundedBuiltIn),
+        ("architectSimulatorGrounded", architectSimulatorGroundedBuiltIn),
+        ("architectSimulator", architectSimulatorBuiltIn),
+        ("continuation", continuationBuiltIn),
+        ("ending", endingBuiltIn),
+        ("review", reviewBuiltIn),
+        ("memory", memoryBuiltIn),
+        ("chapter", chapterBuiltIn),
+        ("showrunner", showrunnerBuiltIn),
+        ("showrunnerRevise", showrunnerReviseBuiltIn),
+        ("showrunnerSimulator", showrunnerSimulatorBuiltIn),
+        ("bibleRefresh", bibleRefreshBuiltIn),
+        ("interruptingEnding", interruptingEndingBuiltIn),
     ]
 }
