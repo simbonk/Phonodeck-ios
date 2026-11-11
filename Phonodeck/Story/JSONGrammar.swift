@@ -31,19 +31,14 @@ enum JSONGrammar {
     /// The Game Master's review of the reply just written (see `Prompts.review`). `cast` is the
     /// named people of this story: "here" (who is in the room with the player) may only hold
     /// those names, so presence is always about real people, spelled the way the code knows them.
-    static func review(cast: [String], grounded: Bool = false) -> String {
-        let names = cast.filter { n in
-            !n.isEmpty && n.count <= 40 && n.unicodeScalars.allSatisfy { CharacterSet.letters.contains($0) || " -.'".unicodeScalars.contains($0) }
-        }
+    static func review(cast: [String]) -> String {
+        let names = safe(cast, max: 40)
         let who = names.isEmpty ? "who ::= s40" : "who ::= " + names.map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
         // How many more names may follow the first.
         let more = names.isEmpty ? 5 : names.count - 1
-        // The grounded engine's update is the only call after a reply, so it also carries what the
-        // memory pass used to find out (the place, the mood, story steps done) and drops the slips.
-        var keys = grounded ? [key("place") + " s60"] : []
-        keys += [
-            key("left") + " bool",
+        let keys = [
             key("scene") + " s240",
+            key("left") + " bool",
             key("here") + " here",
             key("people") + " people",
             key("carrying") + " items",
@@ -51,13 +46,10 @@ enum JSONGrammar {
             key("time") + " s120",
             key("timeline") + " timeline",
             key("new_facts") + " newfacts",
+            key("fixes") + " fixes",
+            key("unanswered") + " s240",
+            key("next") + " s400",
         ]
-        keys += grounded
-            ? [key("feeling") + " score", key("enjoying") + " s60", key("steps_done") + " timeline"]
-            : [key("fixes") + " fixes"]
-        keys += [key("unanswered") + " s240", key("next") + " s400"]
-        // The first version of this grammar put "scene" before "left"; the prompt's order is kept here.
-        if !grounded { keys.swapAt(0, 1) }
         return [
             "root ::= \"{\" ws " + keys.joined(separator: " \",\" ws ") + " ws \"}\"",
             more > 0 ? #"here ::= "[" ws ( who ( "," ws who ){0,\#(more)} )? ws "]""# : #"here ::= "[" ws ( who )? ws "]""#,
@@ -67,12 +59,40 @@ enum JSONGrammar {
                 .joined(separator: " \",\" ws ") + " ws \"}\"",
             #"items ::= "[" ws ( s60 ( "," ws s60 ){0,5} )? ws "]""#,
             #"timeline ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
-            // The grounded update always names what was learned: left optional, it came back empty every time.
-            grounded ? #"newfacts ::= "[" ws s160 ( "," ws s160 )? ws "]""# : #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
+            #"newfacts ::= "[" ws ( s160 ( "," ws s160 ){0,2} )? ws "]""#,
             #"fixes ::= "[" ws ( s240 )? ws "]""#,
             #"bool ::= "true" | "false""#,
-            #"score ::= "10" | [0-9]"#,
             capped("s40", 40), capped("s60", 60), capped("s120", 120), capped("s160", 160), capped("s240", 240), capped("s400", 400),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// Names that can be spelled safely as grammar choices.
+    private static func safe(_ options: [String], max: Int) -> [String] {
+        options.filter { n in
+            !n.isEmpty && n.count <= max && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) }
+        }
+    }
+
+    /// The grounded engine's filing after a reply (see `Prompts.fileTurn`): only what the moment
+    /// added. People are picked from the story's named cast.
+    static func filing(cast: [String]) -> String {
+        let names = safe(cast, max: 40)
+        let who = names.isEmpty ? "who ::= s40" : "who ::= " + names.map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
+        return [
+            "root ::= \"{\" ws " + [
+                key("place") + " s60",
+                key("new_facts") + " facts",
+                key("things") + " items",
+                key("carrying") + " items",
+                key("people") + " people",
+            ].joined(separator: " \",\" ws ") + " ws \"}\"",
+            #"facts ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
+            #"items ::= "[" ws ( s60 ( "," ws s60 ){0,5} )? ws "]""#,
+            #"people ::= "[" ws ( person ( "," ws person ){0,2} )? ws "]""#,
+            "person ::= \"{\" ws " + [key("name") + " who", key("doing") + " s100"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            who,
+            capped("s40", 40), capped("s60", 60), capped("s100", 100), capped("s160", 160),
             common,
         ].joined(separator: "\n")
     }
@@ -80,25 +100,26 @@ enum JSONGrammar {
     /// One of a fixed set of answers, as a JSON string. Names that can't be spelled safely in a
     /// grammar are left out.
     private static func choice(_ name: String, _ options: [String]) -> String {
-        let safe = options.filter { n in
-            !n.isEmpty && n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) }
-        }
-        return name + " ::= " + safe.map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
+        return name + " ::= " + safe(options, max: 60).map { "\"\\\"" + $0 + "\\\"\"" }.joined(separator: " | ")
     }
 
     /// The reading of the player's new message (see `Prompts.readPlayer`): who they turn to and
     /// where they go are picked from what exists, never written freely.
-    static func intent(cast: [String], places: [String]) -> String {
-        [
+    static func intent(cast: [String], places: [String], about: [String]) -> String {
+        let cards = safe(about, max: 60)
+        return [
             "root ::= \"{\" ws " + [
                 key("to") + " who",
                 key("going") + " where",
+                key("about") + " about",
                 key("does") + " s200",
                 key("answer") + " s240",
                 key("beat") + " s240",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("who", cast + ["nobody"]),
             choice("where", ["staying"] + places + ["somewhere new"]),
+            cards.isEmpty ? #"about ::= "[" ws "]""# : #"about ::= "[" ws ( card ( "," ws card ){0,2} )? ws "]""#,
+            cards.isEmpty ? "" : choice("card", cards),
             capped("s240", 240),
             capped("s200", 200),
             common,
