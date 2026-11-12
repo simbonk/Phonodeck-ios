@@ -709,6 +709,8 @@ final class StoryEngine {
         if !items.isEmpty { out.append("- Other cards: " + items.joined(separator: ", ")) }
         out.append("- Now: " + (a.location.isEmpty ? "on the move" : a.location) + (a.storyTime.isEmpty ? "" : " · " + a.storyTime))
         if !a.carrying.isEmpty { out.append("- You have: " + a.carrying.joined(separator: "; ")) }
+        if !a.feels.isEmpty { out.append("- You feel: " + a.feels) }
+        if !a.progress.isEmpty { out.append("- Toward the goal: " + a.progress.joined(separator: " · ")) }
         let here = Cards.props(a)
         if !here.isEmpty { out.append("- Props here: " + here.joined(separator: "; ")) }
         if !a.facts.isEmpty { out += ["", "## Facts on file (\(a.facts.count); each reply gets only the ones it needs)"] + a.facts.map { "- " + $0 } }
@@ -1273,6 +1275,8 @@ final class StoryEngine {
         var spot = ""        // where in the place the player moves to
         var tells = ""       // what the player tells about themselves ("your name is Simon")
         var body = ""        // a change to the player's body ("sitting", "coat off")
+        var feels = ""       // how the player says they feel
+        var goalStep = ""    // what the player's own message does toward the goal
         var looks: [Looks.Look] = []   // what the read asked to look up
         var answer = ""
         var beat = ""
@@ -1315,10 +1319,11 @@ final class StoryEngine {
         let here = a.location
         let places = a.places.filter { $0.caseInsensitiveCompare(here) != .orderedSame }.suffix(5).map { $0 }
         let menu = Cards.menu(a, input: input)
-        let prompt = context + "\n\n" + Prompts.lookQuestion + "\nThe form:"
+        let goal: String = a.setup.goal.isEmpty ? "" : "\nWHAT THE PLAYER CAME FOR: " + clip(a.setup.goal, 200)
+        let prompt = context + goal + "\n\n" + Prompts.lookQuestion + "\nThe form:"
         let grammar = JSONGrammar.look(cast: cast, places: places, cards: menu, people: cast)
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 220, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+                                             options: .init(maxTokens: 300, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
         guard let m = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !m.isEmpty else { return nil }
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         var read = PlayerRead()
@@ -1343,6 +1348,8 @@ final class StoryEngine {
         read.spot = field("spot")
         read.tells = field("tells")
         read.body = field("body")
+        read.feels = field("feels")
+        read.goalStep = field("goal_step")
         let asked = ((m["look"] as? [Any]) ?? []).compactMap { $0 as? String }
         for raw in asked {
             if let l = Looks.parse(raw, cards: menu, people: cast), !read.looks.contains(l) { read.looks.append(l) }
@@ -1784,6 +1791,15 @@ final class StoryEngine {
                 a.body = clip(r.body, 70)
                 actsNow.append("You are → " + r.body)
             }
+            if !r.feels.isEmpty, Continuity.grounded(r.feels, in: said, share: 0.5), a.feels.caseInsensitiveCompare(r.feels) != .orderedSame {
+                a.feels = clip(r.feels, 70)
+                actsNow.append("You feel → " + r.feels)
+            }
+            if !r.goalStep.isEmpty, !a.setup.goal.isEmpty, Continuity.grounded(r.goalStep, in: said, share: 0.5),
+               !a.progress.contains(where: { Self.similar($0, r.goalStep) }) {
+                a.progress = Array((a.progress + [clip(r.goalStep, 130)]).suffix(8))
+                actsNow.append("Toward the goal → " + r.goalStep)
+            }
             guard actsNow.count > before else { return [] }
             adventure?.carrying = a.carrying
             adventure?.things = a.things
@@ -1791,6 +1807,8 @@ final class StoryEngine {
             adventure?.spot = a.spot
             adventure?.knows = a.knows
             adventure?.body = a.body
+            adventure?.feels = a.feels
+            adventure?.progress = a.progress
             return Array(actsNow[before...])
         }
         if !hidden, !playerNarrates {
@@ -2199,7 +2217,7 @@ final class StoryEngine {
                 let motion: String = r.going.isEmpty ? "staying" : "going: " + r.going
                 let asked: String = r.looks.isEmpty ? "nothing" : r.looks.map(\.text).joined(separator: ", ")
                 var l = "LOOK: to \(to) · \(motion) · asked to look up: \(asked)"
-                for (k, v) in [("takes", r.takes), ("puts down", r.putsDown), ("moves to", r.spot), ("tells", r.tells), ("body", r.body)] where !v.isEmpty { l += " · " + k + ": " + v }
+                for (k, v) in [("takes", r.takes), ("puts down", r.putsDown), ("moves to", r.spot), ("tells", r.tells), ("body", r.body), ("feels", r.feels), ("toward the goal", r.goalStep)] where !v.isEmpty { l += " · " + k + ": " + v }
                 if !r.does.isEmpty { l += "\nPLAN:\n  does: " + r.does }
                 if !r.answer.isEmpty { l += "\n  answer: " + r.answer }
                 if !r.beat.isEmpty { l += "\n  next: " + r.beat }

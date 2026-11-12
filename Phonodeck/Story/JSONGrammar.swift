@@ -99,6 +99,8 @@ enum JSONGrammar {
                 key("spot") + " s60",
                 key("tells") + " s80",
                 key("body") + " s40",
+                key("feels") + " s40",
+                key("goal_step") + " s80",
                 key("look") + " looks",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("who", cast + ["nobody"]),

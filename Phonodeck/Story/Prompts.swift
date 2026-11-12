@@ -136,6 +136,8 @@ enum Prompts {
  "spot":"where in this same place the player moves to in the new message (e.g. 'in the corner booth', 'standing at the window'); empty if they don't move",
  "tells":"what the player tells about themselves in the new message, as 'your name is Simon' or 'you are from Ohio'; empty if nothing",
  "body":"a change to the player's body in the new message, 2-5 words (e.g. 'sitting at the bar', 'coat off', 'standing'); empty if none",
+ "feels":"how the player says they feel in the new message, 1-4 of their words (e.g. 'homesick', 'nervous'); empty if they don't say",
+ "goal_step":"only if the new message itself moves toward WHAT THE PLAYER CAME FOR: what they do, in one short sentence (e.g. 'You asked the bartender about his dreams'); empty otherwise",
  "look":["up to 3 lookups you need before writing what happens next; [] if the moment needs nothing more"]}
     The lookups: "who is here", "where am I", "what I have", "what is around", "look at <a name from CARDS>", "where is <a person>", "remember <a topic from earlier in the story>".
     Look up only what this moment needs, the way an eye only sees what it looks at: the person the player asks about, the things around them if they look around, their own things if they reach for them, an earlier moment if they bring one back. Moving to another seat, table or corner of the same place is "staying". Going out a door, down a street or to another building is going.

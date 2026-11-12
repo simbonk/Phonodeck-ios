@@ -238,6 +238,7 @@ enum Cards {
             l.append("- What " + c.name + " knows about you (they remember it; nothing more): " + (k.filter { $0.hasPrefix("your name is ") }.suffix(1) + k.filter { !$0.hasPrefix("your name is ") }.suffix(4)).map { clip($0, 90) }.joined(separator: "; "))
         }
         if !a.body.isEmpty { l.append("- How you are: " + a.body) }
+        if !a.feels.isEmpty { l.append("- How you feel (your own words): " + a.feels) }
         if !a.progress.isEmpty { l.append("- Toward what the player came for, so far: " + a.progress.suffix(2).map { clip($0, 110) }.joined(separator: " ")) }
         if !p.background.isEmpty { l.append("- Also in the room (quiet; they don't join in): " + p.background.joined(separator: ", ")) }
         l += p.away.map { "- " + $0 }
