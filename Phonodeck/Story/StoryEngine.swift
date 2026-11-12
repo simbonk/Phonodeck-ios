@@ -1268,6 +1268,7 @@ final class StoryEngine {
         var to = ""          // a cast member's name, or "" for nobody
         var going = ""       // "" for staying, a known place, or "somewhere new"
         var newPlace = ""    // going somewhere new: its name, from the message
+        var takes = ""       // what the player picks up or takes, in the read's words
         var looks: [Looks.Look] = []   // what the read asked to look up
         var answer = ""
         var beat = ""
@@ -1328,6 +1329,8 @@ final class StoryEngine {
         else if let p = places.first(where: { $0.lowercased() == going }) { read.going = p }
         let named = s("new_place")
         if read.going == "somewhere new", named.count > 2, !Self.echoesPrompt(named) { read.newPlace = Self.ownPlace(named) }
+        let takes = s("takes")
+        if takes.count > 2, !Self.echoesPrompt(takes), !["nothing", "none", "empty", "n/a"].contains(takes.lowercased()) { read.takes = takes }
         let asked = ((m["look"] as? [Any]) ?? []).compactMap { $0 as? String }
         for raw in asked {
             if let l = Looks.parse(raw, cards: menu, people: cast), !read.looks.contains(l) { read.looks.append(l) }
@@ -1703,28 +1706,33 @@ final class StoryEngine {
         // Picking something up is the player's own act: it is in their hands the moment they say
         // it, when the thing is in the scene (the last reply, the place, its props, the premise).
         var pickedNow: String? = nil
-        if !hidden, !playerNarrates {
-            let lastGM: String = a.transcript.last(where: { $0.role == .gm })?.text ?? ""
-            let props = Cards.props(a)
-            // "I pick up every single barstool", or "I take it" after the watch is set in front of you.
-            let named = Self.pickedUp(input).map { $0.hasPrefix("the ") ? String($0.dropFirst(4)) : $0 }
-            let item = named ?? Self.pickedUpIt(input, lastReply: lastGM, props: props)
+        let lastGMBefore: String = a.transcript.last(where: { $0.role == .gm })?.text ?? ""
+        /// Puts a thing in the player's hands when it is really in the scene (the last reply, the
+        /// premise, the place, its props or facts), and takes it off the place's props.
+        func take(_ raw: String) -> Bool {
+            let item = raw.lowercased().hasPrefix("the ") ? String(raw.dropFirst(4)) : raw
             let names: Set<String> = Set(a.cast.flatMap { Continuity.wordSet($0.name) }.filter { $0.count > 2 })
-            if let item, Continuity.wordSet(item).isDisjoint(with: names),
-               !a.carrying.contains(where: { Self.similar($0, item) }) {
-                let scene: String = ([lastGM, a.bible, Cards.premise(a), Cards.placeCard(a)?.desc ?? ""] + props + a.facts).joined(separator: " ")
-                if Continuity.grounded(item, in: Continuity.wordSet(scene)) {
-                    a.carrying = Array((a.carrying + [item]).suffix(8))
-                    pickedNow = item
-                    // In your hands now, so no longer lying about the place.
-                    let key = a.location.lowercased()
-                    if !a.location.isEmpty, var here = a.placeThings[key] {
-                        here.removeAll { Self.similar($0, item) }
-                        a.placeThings[key] = here
-                    }
-                    a.things.removeAll { Self.similar($0, item) }
-                }
+            guard item.count > 2, Continuity.wordSet(item).isDisjoint(with: names),
+                  Continuity.wordSet(item).isDisjoint(with: Self.personWords),
+                  !a.carrying.contains(where: { Self.similar($0, item) }) else { return false }
+            let props = Cards.props(a)
+            let scene: String = ([lastGMBefore, a.bible, Cards.premise(a), Cards.placeCard(a)?.desc ?? ""] + props + a.facts).joined(separator: " ")
+            guard Continuity.grounded(item, in: Continuity.wordSet(scene)) else { return false }
+            a.carrying = Array((a.carrying + [item]).suffix(8))
+            pickedNow = item
+            // In your hands now, so no longer lying about the place.
+            let key = a.location.lowercased()
+            if !a.location.isEmpty, var here = a.placeThings[key] {
+                here.removeAll { Self.similar($0, item) }
+                a.placeThings[key] = here
             }
+            a.things.removeAll { Self.similar($0, item) }
+            return true
+        }
+        if !hidden, !playerNarrates {
+            // "I pick up every single barstool", or "I take it" after the watch is set in front of you.
+            if let named = Self.pickedUp(input) { _ = take(named) }
+            else if let it = Self.pickedUpIt(input, lastReply: lastGMBefore, props: Cards.props(a)) { _ = take(it) }
         }
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
         pendingInput = nil
@@ -1751,6 +1759,17 @@ final class StoryEngine {
             read = await lookPlayer(a, input: input, context: context)
             guard !Task.isCancelled else { adventure = snapshot; return }
             lap("look")
+            // What the read says the player takes, in any words ("I scoop up the stools", "I'll hang on
+            // to it"), when the words above missed it. The player's message must name it or point at it.
+            if pickedNow == nil, let takes = read?.takes, !takes.isEmpty {
+                let pointsAt = input.range(of: #"(?i)\b(it|them|this|that|these|those|everything|all)\b"#, options: .regularExpression) != nil
+                if Continuity.grounded(takes, in: Continuity.wordSet(input), share: 0.5) || pointsAt, take(takes), let got = pickedNow {
+                    adventure?.carrying = a.carrying
+                    adventure?.things = a.things
+                    adventure?.placeThings = a.placeThings
+                    step("You pick up → " + got + " (in your hands now, from the read)")
+                }
+            }
             if read != nil, let meant = Self.addressedByDeed(a, input: input), read!.to.caseInsensitiveCompare(meant) != .orderedSame {
                 read!.to = meant
                 step("Who do you mean? → " + meant + " (the one the story just showed doing that)")
@@ -2115,6 +2134,7 @@ final class StoryEngine {
                 let motion: String = r.going.isEmpty ? "staying" : "going: " + r.going
                 let asked: String = r.looks.isEmpty ? "nothing" : r.looks.map(\.text).joined(separator: ", ")
                 var l = "LOOK: to \(to) · \(motion) · asked to look up: \(asked)"
+                if !r.takes.isEmpty { l += " · takes: " + r.takes }
                 if !r.does.isEmpty { l += "\nPLAN:\n  does: " + r.does }
                 if !r.answer.isEmpty { l += "\n  answer: " + r.answer }
                 if !r.beat.isEmpty { l += "\n  next: " + r.beat }
@@ -2123,6 +2143,7 @@ final class StoryEngine {
                 before.append("READ: skipped (the player is narrating; their words are canon)")
             }
             if !lastRead.isEmpty { before.append("SETTLED IN CODE: " + lastRead) }
+            if let pickedNow { before.append("IN YOUR HANDS NOW: " + pickedNow) }
         }
         if !looked.isEmpty {
             let lines: [String] = looked.map { ans in

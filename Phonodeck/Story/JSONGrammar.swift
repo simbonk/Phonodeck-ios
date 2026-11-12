@@ -94,6 +94,7 @@ enum JSONGrammar {
                 key("to") + " who",
                 key("going") + " where",
                 key("new_place") + " s40",
+                key("takes") + " s40",
                 key("look") + " looks",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("who", cast + ["nobody"]),
