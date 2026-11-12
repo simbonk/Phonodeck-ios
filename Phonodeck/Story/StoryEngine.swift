@@ -1176,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11p"
+    static let build = "build 2026-11-11q"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1342,13 +1342,13 @@ final class StoryEngine {
         prompt += "\n\nWHAT YOU LOOKED UP (from the app; an answer never contradicts it):\n" + (lines.isEmpty ? "- nothing" : lines.joined(separator: "\n"))
         let asked = Self.asks(input)
         prompt += "\n\n" + Prompts.planQuestion
-        if asked { prompt += "\nTHE PLAYER ASKED SOMETHING: \"answer\" must not be empty. Give the real answer, plainly: a reason, a yes or no, a name, a number." }
+        if asked { prompt += "\nTHE PLAYER ASKED SOMETHING: \"answer\" must not be empty. Give the real answer, plainly: a reason, a yes or no, a name, a number. It is what the person asked would say, about what the story already shows (what they are doing, what is around), true to the time and place." }
         prompt += "\nThe form:"
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
                                              options: .init(maxTokens: 200, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.plan(asked: asked)))) ?? ""
         let m = JSONExtract.object(reply) ?? Self.salvageJSON(reply)
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
-        read.answer = Self.echoesPrompt(s("answer")) ? "" : clip(s("answer"), 260)
+        read.answer = Self.echoesPrompt(s("answer")) || Self.outOfTime(s("answer"), a) ? "" : clip(s("answer"), 260)
         // The plan left a question unanswered (a model that ignores grammars, or an answer too
         // vague to use): one short question asks for the answer alone.
         if asked, read.answer.count < 6 || Self.vagueAnswer(read.answer) {
@@ -1358,7 +1358,7 @@ final class StoryEngine {
                                                options: .init(maxTokens: 80, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.text("answer", chars: 200)))) ?? ""
             let am = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
             let got: String = ((am["answer"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if got.count >= 6, !Self.echoesPrompt(got), !Self.vagueAnswer(got) { read.answer = clip(got, 260) }
+            if got.count >= 6, !Self.echoesPrompt(got), !Self.vagueAnswer(got), !Self.outOfTime(got, a) { read.answer = clip(got, 260) }
         }
         read.beat = Self.echoesPrompt(s("beat")) ? "" : clip(s("beat"), 260)
         read.does = Self.echoesPrompt(s("does")) ? "" : clip(s("does"), 200)
@@ -1724,6 +1724,10 @@ final class StoryEngine {
             read = await lookPlayer(a, input: input, context: context)
             guard !Task.isCancelled else { adventure = snapshot; return }
             lap("look")
+            if read != nil, let meant = Self.addressedByDeed(a, input: input), read!.to.caseInsensitiveCompare(meant) != .orderedSame {
+                read!.to = meant
+                step("Who do you mean? → " + meant + " (the one the story just showed doing that)")
+            }
         }
 
         // 2. Settle and look up. Code settles who the player is with and where, then answers each
@@ -3715,6 +3719,45 @@ final class StoryEngine {
         // "I'm freaked out. What happened to my crew".
         let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b|\b(how|what|why|who|where|when|which)\s+(happened|happens|is|are|was|were|did|do|does|can|could|should|will|would|has|have)\b"#
         return t.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// "What are you stitching?" with no name: the one person here the last reply showed doing
+    /// that is who is meant, even when the player was facing someone else.
+    static func addressedByDeed(_ a: Adventure, input: String) -> String? {
+        let said = Continuity.wordSet(input)
+        let namesSomeone = a.cast.contains { c in
+            said.contains(Cards.first(c.name).lowercased()) || Continuity.wordSet(c.role).contains(where: { $0.count > 3 && said.contains($0) })
+        }
+        guard !namesSomeone, let lastGM = a.transcript.last(where: { $0.role == .gm })?.text else { return nil }
+        let common: Set<String> = ["about", "there", "their", "would", "could", "should", "where", "which", "while", "these", "those",
+                                   "thing", "things", "something", "doing", "think", "right", "today", "tonight", "again", "other"]
+        func stems(_ t: String) -> Set<String> {
+            Set(t.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
+                .filter { $0.count >= 5 && !common.contains($0) }.map { String($0.prefix(5)) })
+        }
+        let asked = stems(input)
+        guard !asked.isEmpty else { return nil }
+        var fits: [String] = []
+        for c in a.cast where a.whereabouts.contains(where: { $0.name == c.name && $0.here != false }) {
+            let tags: [String] = [Cards.first(c.name).lowercased()] + Continuity.wordSet(c.role).filter { $0.count > 3 }
+            let about = PresenceFilter.sentences(lastGM).filter { sen in
+                let w = Continuity.wordSet(sen)
+                return tags.contains(where: { w.contains($0) })
+            }.joined(separator: " ")
+            if !asked.isDisjoint(with: stems(about)) { fits.append(c.name) }
+        }
+        return fits.count == 1 ? fits[0] : nil
+    }
+
+    /// An answer that names a year after the story's own (a watch that stopped "in 1954" in a 1925
+    /// story) doesn't belong to it.
+    static func outOfTime(_ s: String, _ a: Adventure) -> Bool {
+        func years(_ t: String) -> [Int] {
+            guard let re = try? NSRegularExpression(pattern: #"\b(1[0-9]{3}|20[0-9]{2})\b"#) else { return [] }
+            return re.matches(in: t, range: NSRange(t.startIndex..., in: t)).compactMap { Range($0.range, in: t).flatMap { Int(t[$0]) } }
+        }
+        guard let now = years(a.bible).first else { return false }
+        return years(s).contains { $0 > now }
     }
 
     /// An answer that dodges ("it's complicated", "you'll see", "that's a story for another time").

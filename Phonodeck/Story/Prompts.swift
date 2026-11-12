@@ -164,6 +164,7 @@ enum Prompts {
     - If the player asks something, the person answers plainly in the first lines, from the facts given; if the facts don't say, they give a plain answer that fits.
     - People are ordinary and solid. They speak in short plain sentences about real things, each in their own way. No sayings, metaphors or wisdom.
     - Use at most one detail of the place. Do not reuse lines or images from earlier replies.
+    - The story never knows it is being heard: no microphone, listener, recording or audience in it.
     - End on the person turned to the player, leaving room for them to answer. Never a list of options.
     """
     static var groundedRules: String { EnginePack.text("groundedRules", groundedRulesBuiltIn) }
