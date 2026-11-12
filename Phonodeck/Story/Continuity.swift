@@ -624,8 +624,9 @@ enum Continuity {
 ///   goes. Names inside dialogue are fine (people talk about each other), so are possessives
 ///   ("Walter's bar"), memories ("the key Walter gave you") and a sentence that shows the person
 ///   arriving.
-/// - Sentences copied word for word from the last few replies (small models sometimes start a
-///   reply by repeating the previous one).
+/// - Sentences copied from the last few replies, word for word or nearly ("Rain lashes the
+///   skylight above, blurring the gray winter night..." again, with a few words added), and the
+///   player's own message quoted back at them ("Yes I do.").
 struct PresenceFilter {
     /// `also`: what the story calls them while their name is not known ("the bartender").
     struct Absent { let name: String; let at: String; var also: [String] = [] }
@@ -633,6 +634,10 @@ struct PresenceFilter {
     let absent: [Absent]
     private let acts: NSRegularExpression?
     private let said: Set<String>
+    /// Every run of four words in the last few replies, to catch a sentence that is mostly copied.
+    private let runs: Set<String>
+    /// The player's own message, squeezed, so a reply that opens by quoting it loses that line.
+    private let playerKey: String
     private static let boundary = try! NSRegularExpression(pattern: #"[.!?…]["”’]?\s+(?=\S)"#)
     private static let arrival = try! NSRegularExpression(
         pattern: #"\b(arrives?|enters?|joins?|returns?|approach(es)?|catch(es)? up|(walks?|comes?|steps?|hurries|runs?|strides?|slips?|wanders?|climbs?|pushes) (in|into|up|over|out|through|back|down|toward|towards)|calls? (out|over|from)|voice (carries|comes|calls|drifts)|on the (phone|radio|line))\b"#,
@@ -664,7 +669,7 @@ struct PresenceFilter {
 
     /// `absent`: the people known to be somewhere else. `earlier`: the last few replies, whose
     /// sentences must not come back word for word.
-    init(absent: [Absent], earlier: [String] = []) {
+    init(absent: [Absent], earlier: [String] = [], player: String = "") {
         var names: [String] = []
         for p in absent {
             names.append(p.name)
@@ -691,10 +696,39 @@ struct PresenceFilter {
             }
         }
         said = seen
+        var grams = Set<String>()
+        for text in earlier {
+            let w = Self.words(text)
+            if w.count >= 4 { for i in 0...(w.count - 4) { grams.insert(w[i..<(i + 4)].joined(separator: " ")) } }
+        }
+        runs = grams
+        playerKey = Self.key(player)
+    }
+
+    private static func words(_ s: String) -> [String] {
+        s.lowercased().replacingOccurrences(of: "’", with: "'").split(whereSeparator: { !$0.isLetter && $0 != "'" }).map(String.init)
+    }
+
+    /// How much of a sentence is copied from the last few replies: the share of its words that sit
+    /// in a run of four or more words found there.
+    func copied(_ unit: String) -> Double {
+        let w = Self.words(unit)
+        guard w.count >= 8, !runs.isEmpty else { return 0 }
+        var covered = [Bool](repeating: false, count: w.count)
+        for i in 0...(w.count - 4) where runs.contains(w[i..<(i + 4)].joined(separator: " ")) {
+            for j in i..<(i + 4) { covered[j] = true }
+        }
+        return Double(covered.filter { $0 }.count) / Double(w.count)
+    }
+
+    /// The sentence only quotes back what the player just said ("Yes I do.").
+    private func echoesPlayer(_ unit: String) -> Bool {
+        let k = Self.key(unit)
+        return k.count >= 4 && playerKey.count >= 4 && playerKey.contains(k) && (unit.contains("\"") || unit.contains("“"))
     }
 
     /// Nothing to check: nobody is elsewhere and there are no earlier replies.
-    var idle: Bool { acts == nil && said.isEmpty }
+    var idle: Bool { acts == nil && said.isEmpty && playerKey.isEmpty }
 
     /// What to show while the reply streams: the accepted text plus the sentence being written,
     /// unless that sentence is already on its way out.
@@ -758,7 +792,7 @@ struct PresenceFilter {
         var keep = true
         if dropping {
             keep = false
-        } else if said.contains(Self.key(unit)) {
+        } else if said.contains(Self.key(unit)) || copied(unit) >= 0.6 || echoesPlayer(unit) {
             keep = false
             echoes += 1
         } else if voicing && startsInQuote {
