@@ -704,7 +704,6 @@ final class AutoPlay {
             self.engine.close()
             self.engine.narrate = narrated
             self.engine.holdNarrate = false
-            UIApplication.shared.isIdleTimerDisabled = false
             self.status = Task.isCancelled ? "Stopped." : "Finished \(scripts.count) " + (scripts.count == 1 ? "story." : "stories.")
             self.running = false
         }

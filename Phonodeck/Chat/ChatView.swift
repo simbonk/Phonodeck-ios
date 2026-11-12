@@ -46,12 +46,10 @@ struct ChatView: View {
         }
         .onChange(of: dictation.text) { _, t in if dictation.listening, app.tab == .chat { input = t } }
         .onChange(of: dictation.sent) { if app.tab == .chat { input = "" } }
-        .onChange(of: chat.handsFree) { _, on in UIApplication.shared.isIdleTimerDisabled = on }
         .onDisappear {
             // Leaving the tab hands the microphone and the narrator back to the story.
             if chat.handsFree { chat.setHandsFree(false) }
             chat.stopReading()
-            UIApplication.shared.isIdleTimerDisabled = false
         }
     }
 

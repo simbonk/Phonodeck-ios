@@ -18,6 +18,9 @@ struct PhonodeckApp: App {
             // before background), so iOS never sees it submit GPU work from the background.
             AppActivity.shared.set(foreground: phase == .active)
             if phase == .background { app.lock() }
+            // The phone never sleeps while the Phonodeck is open: a story is meant to be heard with
+            // the phone on your chest and your eyes closed, whatever it costs the battery.
+            if phase == .active { UIApplication.shared.isIdleTimerDisabled = true }
             if phase == .active { app.engine.resumeAfterBackground() }
         }
     }

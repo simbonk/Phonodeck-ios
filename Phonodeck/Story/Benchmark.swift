@@ -145,7 +145,6 @@ final class ModelBenchmark {
             self.llm.unload()
             self.engine.narrate = narrated
             self.engine.holdNarrate = false
-            UIApplication.shared.isIdleTimerDisabled = false
             self.status = Task.isCancelled ? "Stopped. What was played is below." : "Finished \(self.plays.count) " + (self.plays.count == 1 ? "play." : "plays.")
             self.running = false
         }
