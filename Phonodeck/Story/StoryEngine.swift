@@ -1269,6 +1269,10 @@ final class StoryEngine {
         var going = ""       // "" for staying, a known place, or "somewhere new"
         var newPlace = ""    // going somewhere new: its name, from the message
         var takes = ""       // what the player picks up or takes, in the read's words
+        var putsDown = ""    // what the player puts down or gives away
+        var spot = ""        // where in the place the player moves to
+        var tells = ""       // what the player tells about themselves ("your name is Simon")
+        var body = ""        // a change to the player's body ("sitting", "coat off")
         var looks: [Looks.Look] = []   // what the read asked to look up
         var answer = ""
         var beat = ""
@@ -1314,7 +1318,7 @@ final class StoryEngine {
         let prompt = context + "\n\n" + Prompts.lookQuestion + "\nThe form:"
         let grammar = JSONGrammar.look(cast: cast, places: places, cards: menu, people: cast)
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 120, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+                                             options: .init(maxTokens: 220, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
         guard let m = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !m.isEmpty else { return nil }
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         var read = PlayerRead()
@@ -1330,7 +1334,15 @@ final class StoryEngine {
         let named = s("new_place")
         if read.going == "somewhere new", named.count > 2, !Self.echoesPrompt(named) { read.newPlace = Self.ownPlace(named) }
         let takes = s("takes")
-        if takes.count > 2, !Self.echoesPrompt(takes), !["nothing", "none", "empty", "n/a"].contains(takes.lowercased()) { read.takes = takes }
+        func field(_ k: String) -> String {
+            let v = s(k)
+            return v.count > 2 && !Self.echoesPrompt(v) && !["nothing", "none", "empty", "n/a", "no change", "staying"].contains(v.lowercased()) ? v : ""
+        }
+        read.takes = field("takes")
+        read.putsDown = field("puts_down")
+        read.spot = field("spot")
+        read.tells = field("tells")
+        read.body = field("body")
         let asked = ((m["look"] as? [Any]) ?? []).compactMap { $0 as? String }
         for raw in asked {
             if let l = Looks.parse(raw, cards: menu, people: cast), !read.looks.contains(l) { read.looks.append(l) }
@@ -1729,6 +1741,58 @@ final class StoryEngine {
             a.things.removeAll { Self.similar($0, item) }
             return true
         }
+        /// The rest of the player's own act, filed the moment they send it (the rebuild revisits it
+        /// after the reply): what they put down or give away, where they move in the room, what they
+        /// tell about themselves, and their body. Each is kept only when the message itself says it.
+        var actsNow: [String] = []
+        func playerActs(_ r: PlayerRead) -> [String] {
+            let before = actsNow.count
+            let said = Continuity.wordSet(input)
+            let pointsAt = input.range(of: #"(?i)\b(it|them|this|that|these|those|everything|all)\b"#, options: .regularExpression) != nil
+            if !r.putsDown.isEmpty, Continuity.grounded(r.putsDown, in: said, share: 0.5) || pointsAt,
+               let held = a.carrying.first(where: { Self.similar($0, r.putsDown) || Continuity.grounded($0, in: Continuity.wordSet(r.putsDown), share: 0.5) }) {
+                a.carrying.removeAll { $0 == held }
+                let given = input.range(of: #"(?i)\b(give|gives|hand|hands|pass|passes|offer|offers|pay|pays|slide|slides|toss|tosses)\b"#, options: .regularExpression) != nil
+                if given, !r.to.isEmpty {
+                    actsNow.append("Gone from your hands → " + held + " (to " + r.to + ")")
+                } else {
+                    let key = a.location.lowercased()
+                    if !a.location.isEmpty { a.placeThings[key] = Array(((a.placeThings[key] ?? a.things) + [held]).suffix(30)) }
+                    a.things = Array((a.things + [held]).suffix(30))
+                    actsNow.append("You put down → " + held)
+                }
+            }
+            if !r.spot.isEmpty, Continuity.grounded(r.spot, in: said, share: 0.5), a.spot.caseInsensitiveCompare(r.spot) != .orderedSame {
+                a.spot = clip(r.spot, 90)
+                actsNow.append("You are now → " + r.spot)
+            }
+            if !r.tells.isEmpty, Continuity.grounded(r.tells, in: said, share: 0.6) {
+                let heard: [String] = r.to.isEmpty
+                    ? a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
+                    : [r.to]
+                for name in heard {
+                    guard let c = a.cast.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
+                    let key = c.name.lowercased()
+                    var known: [String] = a.knows[key] ?? []
+                    guard !known.contains(where: { Self.similar($0, r.tells) }) else { continue }
+                    known.append(clip(r.tells, 110))
+                    a.knows[key] = Self.keepKnown(known)
+                    actsNow.append(c.name + " now knows → " + r.tells)
+                }
+            }
+            if !r.body.isEmpty, Continuity.grounded(r.body, in: said, share: 0.5), a.body.caseInsensitiveCompare(r.body) != .orderedSame {
+                a.body = clip(r.body, 70)
+                actsNow.append("You are → " + r.body)
+            }
+            guard actsNow.count > before else { return [] }
+            adventure?.carrying = a.carrying
+            adventure?.things = a.things
+            adventure?.placeThings = a.placeThings
+            adventure?.spot = a.spot
+            adventure?.knows = a.knows
+            adventure?.body = a.body
+            return Array(actsNow[before...])
+        }
         if !hidden, !playerNarrates {
             // "I pick up every single barstool", or "I take it" after the watch is set in front of you.
             if let named = Self.pickedUp(input) { _ = take(named) }
@@ -1770,6 +1834,7 @@ final class StoryEngine {
                     step("You pick up → " + got + " (in your hands now, from the read)")
                 }
             }
+            if let r = read { for l in playerActs(r) { step(l) } }
             if read != nil, let meant = Self.addressedByDeed(a, input: input), read!.to.caseInsensitiveCompare(meant) != .orderedSame {
                 read!.to = meant
                 step("Who do you mean? → " + meant + " (the one the story just showed doing that)")
@@ -2134,7 +2199,7 @@ final class StoryEngine {
                 let motion: String = r.going.isEmpty ? "staying" : "going: " + r.going
                 let asked: String = r.looks.isEmpty ? "nothing" : r.looks.map(\.text).joined(separator: ", ")
                 var l = "LOOK: to \(to) · \(motion) · asked to look up: \(asked)"
-                if !r.takes.isEmpty { l += " · takes: " + r.takes }
+                for (k, v) in [("takes", r.takes), ("puts down", r.putsDown), ("moves to", r.spot), ("tells", r.tells), ("body", r.body)] where !v.isEmpty { l += " · " + k + ": " + v }
                 if !r.does.isEmpty { l += "\nPLAN:\n  does: " + r.does }
                 if !r.answer.isEmpty { l += "\n  answer: " + r.answer }
                 if !r.beat.isEmpty { l += "\n  next: " + r.beat }
@@ -2144,6 +2209,7 @@ final class StoryEngine {
             }
             if !lastRead.isEmpty { before.append("SETTLED IN CODE: " + lastRead) }
             if let pickedNow { before.append("IN YOUR HANDS NOW: " + pickedNow) }
+            if !actsNow.isEmpty { before.append("FILED AS YOU SENT IT:\n" + actsNow.map { "  - " + $0 }.joined(separator: "\n")) }
         }
         if !looked.isEmpty {
             let lines: [String] = looked.map { ans in
