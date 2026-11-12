@@ -20,12 +20,27 @@ final class EnginePack: @unchecked Sendable {
     private let lock = NSLock()
     private var texts: [String: String] = [:]
     private var tests: String?
+    private var wizard: [String: Any] = [:]
     private var label = "built-in"
 
     /// The text in use for `key`: the active file's prompt, or the built-in text.
     static func text(_ key: String, _ builtIn: String) -> String {
         shared.lock.lock(); defer { shared.lock.unlock() }
         return shared.texts[key] ?? builtIn
+    }
+
+    /// A list the engine file's wizard section gives ("storyOrder", "simulatorOrder",
+    /// "feelingIdeas"), or nil to use the app's own.
+    static func wizardList(_ key: String) -> [String]? {
+        shared.lock.lock(); defer { shared.lock.unlock() }
+        guard let l = (shared.wizard[key] as? [Any])?.compactMap({ $0 as? String }).filter({ !$0.isEmpty }), !l.isEmpty else { return nil }
+        return l
+    }
+
+    /// The engine file's wording and options for one wizard question, by its id.
+    static func wizardQuestion(_ id: String) -> [String: Any]? {
+        shared.lock.lock(); defer { shared.lock.unlock() }
+        return (shared.wizard["questions"] as? [String: Any])?[id] as? [String: Any]
     }
 
     /// The test scripts in use.
@@ -48,6 +63,7 @@ final class EnginePack: @unchecked Sendable {
         var notes = ""
         var prompts: [String: String] = [:]
         var testScripts: String?
+        var wizard: [String: Any] = [:]
         var error: String?
     }
 
@@ -96,6 +112,7 @@ final class EnginePack: @unchecked Sendable {
         p.build = str("build") ?? ""
         p.notes = str("notes") ?? ""
         if let t = eng.objectForKeyedSubscript("testScripts"), t.isString { p.testScripts = t.toString() }
+        if let w = eng.objectForKeyedSubscript("wizard"), w.isObject, let d = w.toDictionary() as? [String: Any] { p.wizard = d }
         if let d = eng.objectForKeyedSubscript("prompts")?.toDictionary() {
             for (k, v) in d {
                 if let k = k as? String, let v = v as? String, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -119,7 +136,21 @@ final class EnginePack: @unchecked Sendable {
         s += "// A prompt left out keeps the app's built-in text. Bump the version when you change something.\n"
         s += "var PhonodeckEngine = {\n  version: \"0\",\n  build: \"" + StoryEngine.build + "\",\n  notes: \"The engine built into the app.\",\n  prompts: {\n"
         for (k, v) in Prompts.builtIns { s += "    " + k + ": " + literal(v.trimmingCharacters(in: .whitespacesAndNewlines)) + ",\n\n" }
-        s += "  },\n  testScripts: " + literal(PlayScripts.starterText.trimmingCharacters(in: .whitespacesAndNewlines)) + ",\n};\n"
+        s += "  },\n  testScripts: " + literal(PlayScripts.starterText.trimmingCharacters(in: .whitespacesAndNewlines)) + ",\n"
+        var questions: [String: Any] = [:]
+        for q in CuratorQuestions.all {
+            var o: [String: Any] = ["q": q.q, "h": q.h, "ph": q.ph]
+            if !q.c.isEmpty { o["c"] = q.c }
+            if let ck = q.ck { o["ck"] = ck }
+            if let cs = q.cs { o["cs"] = cs }
+            questions[q.id] = o
+        }
+        let wizard: [String: Any] = ["storyOrder": CuratorQuestions.storyBuiltIn.map(\.id), "simulatorOrder": CuratorQuestions.simulatorBuiltIn.map(\.id),
+                                     "feelingIdeas": Prompts.feelingIdeasBuiltIn, "questions": questions]
+        if let d = try? JSONSerialization.data(withJSONObject: wizard, options: [.prettyPrinted, .sortedKeys]), let j = String(data: d, encoding: .utf8) {
+            s += "  wizard: " + j + ",\n"
+        }
+        s += "};\n"
         return s
     }
 
@@ -192,6 +223,7 @@ final class EnginePack: @unchecked Sendable {
         let n = Self.active
         var t: [String: String] = [:]
         var tests: String?
+        var wiz: [String: Any] = [:]
         var l = "built-in"
         if n > 0, let source = try? String(contentsOf: Self.file(n), encoding: .utf8) {
             let p = Self.parse(source)
@@ -199,12 +231,13 @@ final class EnginePack: @unchecked Sendable {
                 let known = Self.knownPrompts
                 t = p.prompts.filter { known.contains($0.key) }
                 tests = p.testScripts
+                wiz = p.wizard
                 l = "V\(n) (file " + p.version + ")"
             } else {
                 l = "built-in (V\(n) doesn't run)"
             }
         }
-        lock.lock(); texts = t; self.tests = tests; label = l; lock.unlock()
+        lock.lock(); texts = t; self.tests = tests; wizard = wiz; label = l; lock.unlock()
     }
 
     /// Downloads the file at `sourceURL`, only when the player asks. If it runs and differs from the
