@@ -1198,7 +1198,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-12z2"
+    static let build = "build 2026-11-12z3"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -2092,6 +2092,8 @@ final class StoryEngine {
         let card = Cards.briefing(a, pick: pick, looked: lookedLines, extra: extra, notes: notes, moment: moment)
         // The yes/no pass's question and answer, for "Copy with prompts".
         var gateLog = ""
+        // What the yes/no pass let in and left out, for the story export.
+        var foveaView: [String] = []
         var lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
         if fov {
             // Every card item, marked yes or no for this moment; only the yeses reach the storyteller.
@@ -2118,7 +2120,14 @@ final class StoryEngine {
             var kept: [Fovea.Item] = []
             for (i, item) in items.enumerated() where i < keep.count && keep[i] { kept.append(item) }
             foveaYes = Set(kept.map(\.kind))
-            var events: [String] = extra
+            foveaView = []
+            for (i, item) in items.enumerated() {
+                let mark: String = i < keep.count && keep[i] ? "  + " : "  - "
+                foveaView.append(mark + Fovea.clip(item.text, 90))
+            }
+            // The notes that only apply now (the final reply, the player moving, phrases that keep
+            // coming back) still go with the moment.
+            var events: [String] = extra + notes
             if !foveaTold.isEmpty { events.insert(foveaTold + " Say it in this reply.", at: 0) }
             system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
             lead = Fovea.lead(a, input: input, arrived: arrivedNow, events: events, kept: kept)
@@ -2306,8 +2315,12 @@ final class StoryEngine {
             }
             before.append("LOOKED UP:\n" + lines.joined(separator: "\n"))
         }
-        let inView: [String] = pick.why.map { "  - " + $0 }
-        before.append("IN VIEW:\n" + inView.joined(separator: "\n"))
+        if fov {
+            before.append("WHAT MATTERS (+ in, - left out):\n" + (foveaView.isEmpty ? "  (no card items)" : foveaView.joined(separator: "\n")))
+        } else {
+            let inView: [String] = pick.why.map { "  - " + $0 }
+            before.append("IN VIEW:\n" + inView.joined(separator: "\n"))
+        }
         let noteLines: [String] = extra.map { clip($0, 90) } + notes.map { clip($0, 90) }
         if !noteLines.isEmpty { before.append("NOTES: " + noteLines.joined(separator: " | ")) }
         let turnTokens = kept.reduce(0) { $0 + Self.tokens($1.text) + 8 }

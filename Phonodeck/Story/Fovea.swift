@@ -97,6 +97,9 @@ enum Fovea {
                 add("other", name + role + " is also in the room" + doing + (theirs.isEmpty ? "." : ". " + theirs.joined(separator: " ")))
             }
         }
+        // Who the player is: offered, not always sent (it matters when someone asks about them).
+        let whoAmI: String = Cards.premise(a).components(separatedBy: "\n").first(where: { $0.hasPrefix("The player is ") }) ?? ""
+        if !whoAmI.isEmpty { add("you", "Who you are: " + String(whoAmI.dropFirst("The player is ".count))) }
         for t in a.carrying.prefix(6) { add("have", "You have: " + t) }
         for t in Cards.props(a).prefix(6) { add("around", "Around you: " + t) }
         for p in a.pending { add("hanging", "Still hanging: " + p) }
