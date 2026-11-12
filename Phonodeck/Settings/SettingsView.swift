@@ -94,7 +94,6 @@ struct SettingsView: View {
                     Toggle("Grounded engine", isOn: $engine.grounded)
                         .disabled(!engine.gmPlans)
                     NavigationLink("Test scenarios") { AutoPlayView() }
-                    NavigationLink("Engine file") { EnginePackView() }
                 } header: {
                     Text("Game Master")
                 } footer: {

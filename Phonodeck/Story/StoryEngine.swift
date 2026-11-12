@@ -685,7 +685,7 @@ final class StoryEngine {
         let engineLine: String = grounded
             ? "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off")
             : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
-        out.append(engineLine + " · " + Self.build + " · " + EnginePack.label)
+        out.append(engineLine + " · " + Self.build)
         if grounded {
             out += ["", "## Premise (the storyteller's only standing view of the story)", Cards.premise(a)]
         } else {
@@ -1176,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11r"
+    static let build = "build 2026-11-11s"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1700,6 +1700,19 @@ final class StoryEngine {
         if !hidden, a.nameless,
            input.range(of: #"(?i)\bintroduc(e|es|ed|ing) (myself|me)\b"#, options: .regularExpression) != nil { introduced = true }
 
+        // Picking something up is the player's own act: it is in their hands the moment they say
+        // it, when the thing is in the scene (the last reply, the place, its props, the premise).
+        var pickedNow: String? = nil
+        if !hidden, !playerNarrates, let taken = Self.pickedUp(input),
+           !a.carrying.contains(where: { Self.similar($0, taken) || Self.similar($0, String(taken.dropFirst(4))) }) {
+            let lastGM: String = a.transcript.last(where: { $0.role == .gm })?.text ?? ""
+            let scene: String = ([lastGM, a.bible, Cards.placeCard(a)?.desc ?? ""] + Cards.props(a) + a.facts).joined(separator: " ")
+            if Continuity.grounded(taken, in: Continuity.wordSet(scene)) {
+                let item = taken.hasPrefix("the ") ? String(taken.dropFirst(4)) : taken
+                a.carrying = Array((a.carrying + [item]).suffix(8))
+                pickedNow = item
+            }
+        }
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
         pendingInput = nil
         adventure = a
@@ -1713,6 +1726,7 @@ final class StoryEngine {
             Self.updateFrame(&a, looked: [], asked: [], notes: catchUpNotes, steps: [], pre: pre)
             adventure?.frames = a.frames
         }
+        if let pickedNow { step("You pick up → " + pickedNow + " (in your hands now)") }
         if !hidden { step("You said → " + clip(input.replacingOccurrences(of: "\n", with: " "), 140)) }
 
         // 1. Look. One short call: who the player turns to, where they go, and what to look up.
@@ -1735,6 +1749,7 @@ final class StoryEngine {
         // the message names).
         var moment = ""
         var extra: [String] = []
+        if let pickedNow { extra.append("THE PLAYER PICKS UP THE " + pickedNow.uppercased() + " and is holding it now: show them doing it in this reply.") }
         var looked: [Looks.Answer] = []
         if !hidden, !playerNarrates {
             settle(&a, read: read ?? PlayerRead(), input: input)
@@ -2607,7 +2622,9 @@ final class StoryEngine {
             var ledger = held
             for old in start.carrying where !held.contains(where: { Self.similar($0, old) }) {
                 let noun = old.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
-                if parting, noun.count >= 3, said.contains(noun) { filed.append("Gone from your hands: " + old); continue }
+                // What the player just picked up isn't gone because the reply says "left" or "set".
+                let justTaken = Self.pickedUp(playerSaid).map { $0.lowercased().contains(noun) } ?? false
+                if parting, !justTaken, noun.count >= 3, said.contains(noun) { filed.append("Gone from your hands: " + old); continue }
                 ledger.append(old)
             }
             for h in held where !start.carrying.contains(where: { Self.similar($0, h) }) { filed.append("You have: " + h) }

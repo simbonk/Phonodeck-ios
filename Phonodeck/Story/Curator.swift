@@ -62,35 +62,8 @@ enum CuratorQuestions {
                                        ck: ["Nothing too scary", "No spiders", "Lots of jokes", "In the style of a fairy tale"])
     static let romance = CuratorQuestion(id: "romance", kind: .romance, q: "Any romance in this story?", h: "Something you said suggests romance. Tell the story who you are and who you're drawn to. It stays in the background unless you take it further.")
 
-    static let storyBuiltIn = [world, vibe, who, traits, place, hook, allies, threat, play, avoid]
-    static let simulatorBuiltIn = [world, place, goal, who, allies, avoid]
-    static let all = [time, me, pick, feeling, mode, goal, world, vibe, who, traits, place, hook, allies, threat, play, avoid, romance]
-
-    /// The story and simulator questions, in the order the engine file gives (built-in otherwise),
-    /// each with the engine file's wording and options.
-    static var story: [CuratorQuestion] { ordered("storyOrder", storyBuiltIn) }
-    static var simulator: [CuratorQuestion] { ordered("simulatorOrder", simulatorBuiltIn) }
-
-    private static func ordered(_ key: String, _ builtIn: [CuratorQuestion]) -> [CuratorQuestion] {
-        guard let ids = EnginePack.wizardList(key) else { return builtIn.map(tuned) }
-        // Only questions the app knows how to show; time, about you, choosing and play mode keep their places.
-        let fixed: Set<String> = ["time", "me", "pick", "feeling", "mode", "romance"]
-        let list = ids.compactMap { id in all.first { $0.id == id && !fixed.contains(id) } }.map(tuned)
-        return list.isEmpty ? builtIn.map(tuned) : list
-    }
-
-    /// A question with the engine file's wording and options, where it gives them.
-    static func tuned(_ q: CuratorQuestion) -> CuratorQuestion {
-        guard let o = EnginePack.wizardQuestion(q.id) else { return q }
-        var t = q
-        if let v = o["q"] as? String, !v.isEmpty { t.q = v }
-        if let v = o["h"] as? String { t.h = v }
-        if let v = o["ph"] as? String, !v.isEmpty { t.ph = v }
-        if let v = o["c"] as? [String] { t.c = v }
-        if let v = o["ck"] as? [String] { t.ck = v }
-        if let v = o["cs"] as? [String] { t.cs = v }
-        return t
-    }
+    static let story = [world, vibe, who, traits, place, hook, allies, threat, play, avoid]
+    static let simulator = [world, place, goal, who, allies, avoid]
 }
 
 /// The set-up wizard: how long you have, about you, then a curated experience or a world you build
@@ -134,11 +107,11 @@ struct CuratorView: View {
     private var simulator: Bool { (answers["mode"] ?? "").localizedCaseInsensitiveContains("simulator") }
 
     private var questions: [CuratorQuestion] {
-        var qs = [CuratorQuestions.time, CuratorQuestions.pick].map(CuratorQuestions.tuned)
+        var qs = [CuratorQuestions.time, CuratorQuestions.pick]
         if buildOwn {
-            qs += [CuratorQuestions.feeling, CuratorQuestions.mode].map(CuratorQuestions.tuned)
+            qs += [CuratorQuestions.feeling, CuratorQuestions.mode]
             qs += simulator ? CuratorQuestions.simulator : CuratorQuestions.story
-            if !minor && romanceHinted { qs.append(CuratorQuestions.tuned(CuratorQuestions.romance)) }
+            if !minor && romanceHinted { qs.append(CuratorQuestions.romance) }
         }
         return qs
     }
