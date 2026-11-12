@@ -210,6 +210,25 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// Three short texts, each under its own key.
+    static func triple(_ k1: String, _ c1: Int, _ k2: String, _ c2: Int, _ k3: String, _ c3: Int) -> String {
+        [
+            "root ::= \"{\" ws " + key(k1) + " sa \",\" ws " + key(k2) + " sb \",\" ws " + key(k3) + " sc ws \"}\"",
+            capped("sa", c1), capped("sb", c2), capped("sc", c3),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// The foveated gate: a yes or no for each numbered card item, "1" to `n`, in order.
+    static func gate(count n: Int) -> String {
+        let keys = (1...max(1, n)).map { key(String($0)) + " yn" }
+        return [
+            "root ::= \"{\" ws " + keys.joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("yn", ["yes", "no"]),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// Building a place the player arrives in (see `Prompts.buildPlace`).
     static let place = [
         "root ::= \"{\" ws " + key("desc") + " s300 \",\" ws " + key("things") + " items ws \"}\"",

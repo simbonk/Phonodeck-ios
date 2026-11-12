@@ -49,6 +49,10 @@ final class StoryEngine {
     /// message decides which cards this moment needs, and the storyteller sees only those (see
     /// `runGroundedTurn`). Off, the classic Game Master plans and reviews with the whole world each turn.
     var grounded: Bool { didSet { UserDefaults.standard.set(grounded, forKey: "groundedEngine") } }
+    /// Foveated story (on the grounded engine): after the read, every card item is marked yes or no
+    /// for this moment, and the storyteller sees only the year, the time, the room, the person the
+    /// player faces and the items marked yes (see `Fovea`). No plan writes the next beat.
+    var foveated: Bool { didSet { UserDefaults.standard.set(foveated, forKey: "foveatedStory") } }
     /// How far the current reasoning step is toward its room to think (0 to 1), or nil when
     /// nothing is reasoning. About 4 characters a token.
     var thinkingProgress: Double? {
@@ -79,6 +83,10 @@ final class StoryEngine {
     private var lastRead = ""
     /// What the catch-up on a place found this turn, for the turn guide.
     private var catchUpNotes: [String] = []
+    /// The last turn was foveated, and the kinds of card item it marked yes (the rebuild after it
+    /// asks only about those, the people and the place).
+    private var foveaUsed = false
+    private var foveaYes: Set<String> = []
     private var interruptedTurn: (input: String, hidden: Bool, forceFinal: Bool)?
     private var currentTask: Task<Void, Never>?
 
@@ -94,6 +102,7 @@ final class StoryEngine {
         gmPlans = UserDefaults.standard.object(forKey: "gmPlans") as? Bool ?? true
         deepThinking = UserDefaults.standard.object(forKey: "deepThinking") as? Bool ?? true
         grounded = UserDefaults.standard.object(forKey: "groundedEngine") as? Bool ?? true
+        foveated = UserDefaults.standard.object(forKey: "foveatedStory") as? Bool ?? true
         narrator.onFinished = { [weak self] in self?.narrationFinished() }
         dictation.onSend = { [weak self] text in self?.send(text) }
     }
@@ -1722,6 +1731,11 @@ final class StoryEngine {
         let maxOut = opening ? 520 : 300
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
+        // Foveated: no lookups and no plan; one yes/no pass over the cards picks what the reply sees.
+        let fov = foveated && gmPlans && !hidden && !playerNarrates
+        foveaUsed = fov
+        foveaYes = []
+        var foveaTold = ""
         namesThisTurn = []
         putDownThisTurn = []
         var introduced = hidden ? false : learnPlayerName(&a, input: input)
@@ -1918,7 +1932,7 @@ final class StoryEngine {
                 }
             }
         }
-        if !hidden {
+        if !hidden, !fov {
             let asked = read?.looks ?? []
             let looks = asked + Looks.auto(a, input: input, to: read?.to ?? "", asked: asked)
             stage = looks.isEmpty ? "Gathering the world" : "Looking things up"
@@ -1996,7 +2010,7 @@ final class StoryEngine {
             }
         }
         // Read, question 2: the moment, planned from what was looked up.
-        if read != nil {
+        if read != nil, !fov {
             stage = "What happens next?"
             lapFrom = Date()
             await planPlayer(a, input: input, context: context, looked: looked, into: &read!)
@@ -2007,7 +2021,10 @@ final class StoryEngine {
                 if !r.beat.isEmpty { step("What happens next? → " + r.beat) }
             }
         }
-        if !hidden, !playerNarrates {
+        if fov {
+            foveaTold = revealName(&a, input: input, to: read?.to ?? "", introduced: introduced)
+            adventure = a
+        } else if !hidden, !playerNarrates {
             moment = momentText(a, read: read ?? PlayerRead(), input: input)
             let told = revealName(&a, input: input, to: read?.to ?? "", introduced: introduced)
             if !told.isEmpty { moment = Self.withAnswer(moment, told) }
@@ -2069,7 +2086,39 @@ final class StoryEngine {
         }
         var system = groundedSystem(a)
         let card = Cards.briefing(a, pick: pick, looked: lookedLines, extra: extra, notes: notes, moment: moment)
-        let lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
+        var lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
+        if fov {
+            // Every card item, marked yes or no for this moment; only the yeses reach the storyteller.
+            stage = "What matters right now?"
+            lapFrom = Date()
+            let items: [Fovea.Item] = Fovea.items(a, input: input, asking: playerAsks)
+            var keep: [Bool] = []
+            if !items.isEmpty {
+                var intent = Fovea.PlayerIntent()
+                if let r = read {
+                    intent.to = r.to; intent.going = r.going; intent.newPlace = r.newPlace
+                    intent.takes = r.takes; intent.putsDown = r.putsDown; intent.tells = r.tells
+                }
+                let ask: String = Fovea.gatePrompt(a, input: input, intent: Fovea.intent(intent), lastReply: lastGMBefore, items: items)
+                let raw = (try? await llm.complete(system: nil, prompt: ask,
+                                                   options: .init(maxTokens: 12 + items.count * 9, temperature: 0.1, repetitionPenalty: 1.0,
+                                                                  grammar: JSONGrammar.gate(count: items.count)))) ?? ""
+                guard !Task.isCancelled else { adventure = snapshot; return }
+                let m: [String: Any] = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+                keep = Fovea.chosen(items, answer: m, input: input)
+                lap("what matters")
+            }
+            var kept: [Fovea.Item] = []
+            for (i, item) in items.enumerated() where i < keep.count && keep[i] { kept.append(item) }
+            foveaYes = Set(kept.map(\.kind))
+            var events: [String] = extra
+            if !foveaTold.isEmpty { events.insert(foveaTold + " Say it in this reply.", at: 0) }
+            system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
+            lead = Fovea.lead(a, input: input, arrived: arrivedNow, events: events, kept: kept)
+            let shown: String = kept.isEmpty ? "only the room and who you face" : kept.map { Fovea.clip($0.text, 50) }.joined(separator: "; ")
+            step("What matters right now? → " + shown + " (\(items.count - kept.count) of \(items.count) left out)")
+            lastRead += "; foveated: \(kept.count) of \(items.count) card items in"
+        }
         // The story's own last turns keep its voice and thread: as many of the last four as fit.
         // Anything older is reached with a "remember" lookup.
         let budget = LLMService.contextBudget - maxOut - Self.safetyTokens
@@ -2386,6 +2435,9 @@ final class StoryEngine {
         let open: WorldFrame? = start.frames.last.flatMap { $0.turn == start.playerTurns ? $0 : nil }
         var notes: [String] = open?.notes ?? []
         defer { rebuildStep = "" }
+        // After a foveated turn, questions about things that were out of view are skipped.
+        let lean = foveaUsed
+        let wanted = foveaYes
 
         func roleOf(_ c: LoreEntry) -> String { c.role.isEmpty ? "" : " (the story may call them \"" + Continuity.roleLabel(c.role) + "\")" }
         var base = Prompts.rebuildIntro
@@ -2397,6 +2449,10 @@ final class StoryEngine {
 
         func ask(_ label: String, _ question: String, _ grammar: String, _ tokens: Int) async -> [String: Any]? {
             guard !Task.isCancelled else { return nil }
+            if lean, foveaSkip(label, wanted: wanted, start: start, playerSaid: playerSaid) {
+                times.append(label + " skipped (out of view)")
+                return [:]
+            }
             rebuildStep = label
             let t0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: base + question,
@@ -2676,7 +2732,7 @@ final class StoryEngine {
         let mineOnly = Continuity.wordSet(playerSaid + " you your player " + start.playerName)
         for c in facingNow.prefix(2) {
             let wm = await ask("What does " + c.name + " want, and what did they learn?", Prompts.rebuildWants(c.name + roleOf(c)),
-                               JSONGrammar.pair("wants", 110, "learned", 100), 90)
+                               JSONGrammar.triple("wants", 110, "learned", 100, "between", 100), 120)
             guard wm != nil else { return }
             let trim = CharacterSet(charactersIn: " .\n")
             let wants: String = ((wm?["wants"] as? String) ?? "").trimmingCharacters(in: trim)
@@ -2684,7 +2740,16 @@ final class StoryEngine {
             var learned: String = ""
             if learnedSaid.count > 5, !Self.echoesPrompt(learnedSaid), Continuity.grounded(learnedSaid, in: mineOnly, share: 0.5) { learned = learnedSaid }
             let wantOK = wants.count > 3 && !Self.echoesPrompt(wants)
-            asked.append(c.name + " wants? → " + (wantOK ? wants : "not shown") + (learned.isEmpty ? "" : "; learned: " + learned))
+            // What happened between them and the player, kept on their card: only what the player's
+            // own words or the reply show.
+            let betweenSaid: String = ((wm?["between"] as? String) ?? "").trimmingCharacters(in: trim)
+            var together: String = ""
+            let togetherWords: Set<String> = Continuity.wordSet(playerSaid + " " + reply + " you your " + c.name + " " + c.role)
+            if betweenSaid.count > 5, !Self.echoesPrompt(betweenSaid), Continuity.grounded(betweenSaid, in: togetherWords, share: 0.6) {
+                together = betweenSaid
+            }
+            let wantsLine: String = c.name + " wants? → " + (wantOK ? wants : "not shown") + (learned.isEmpty ? "" : "; learned: " + learned)
+            asked.append(wantsLine + (together.isEmpty ? "" : "; between you: " + together))
             commit { now in
                 let key = c.name.lowercased()
                 if wantOK {
@@ -2706,6 +2771,14 @@ final class StoryEngine {
                     filed.append(c.name + " now knows: " + f)
                 }
                 now.knows[key] = Self.keepKnown(known)
+                if !together.isEmpty {
+                    var shared: [String] = now.between[key] ?? []
+                    if !shared.contains(where: { Self.similar($0, together) }) {
+                        shared.append(clip(together, 110))
+                        now.between[key] = Array(shared.suffix(6))
+                        filed.append("Between you and " + c.name + ": " + together)
+                    }
+                }
             }
         }
 
@@ -3030,6 +3103,27 @@ final class StoryEngine {
     }
 
     /// Updates the turn guide's snapshot with what was looked up before the reply.
+    /// After a foveated turn: the rebuild questions about the player and the room that the moment
+    /// didn't touch. A move, something taken or put down, or a yes from the gate keeps a question.
+    private func foveaSkip(_ label: String, wanted: Set<String>, start: Adventure, playerSaid: String) -> Bool {
+        let moved = (adventure?.location ?? start.location).caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
+        switch label {
+        case "What do you have?":
+            return !wanted.contains("have") && putDownThisTurn.isEmpty && Self.pickedUp(playerSaid) == nil
+        case "What is around?":
+            return !wanted.contains("around") && !moved
+        case "What's the background like?":
+            let known = !(start.ambience[start.location.lowercased()] ?? "").isEmpty
+            return known && !moved && !wanted.contains("sound")
+        case "Where are you in the room?":
+            return !wanted.contains("spot") && !moved
+        case "How are you, physically?":
+            return !wanted.contains("body")
+        default:
+            return false
+        }
+    }
+
     private func recordFrame(looked: [String]) {
         guard var a = adventure else { return }
         Self.updateFrame(&a, looked: looked, asked: [], notes: catchUpNotes, steps: [])
