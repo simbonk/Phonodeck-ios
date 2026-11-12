@@ -35,6 +35,8 @@ final class StoryEngine {
 
     /// Names learned this turn, for the world check.
     private var namesThisTurn: [String] = []
+    /// What the player put down or gave away this turn: the rebuild doesn't put it back in their hands.
+    private var putDownThisTurn: [String] = []
 
     /// Read replies aloud as they are written.
     var narrate: Bool { didSet { UserDefaults.standard.set(narrate, forKey: "narrate") } }
@@ -848,6 +850,7 @@ final class StoryEngine {
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
         namesThisTurn = []
+        putDownThisTurn = []
         let introduced = hidden ? false : learnPlayerName(&a, input: input)
         var notes = directorNotes(a, playerNarrates: playerNarrates, playerAsks: playerAsks, opening: opening)
         if !hidden, !playerNarrates, Continuity.moves(input) {
@@ -1716,6 +1719,7 @@ final class StoryEngine {
         let playerNarrates = !hidden && Self.narrates(input)
         let playerAsks = !hidden && !playerNarrates && Self.asks(input)
         namesThisTurn = []
+        putDownThisTurn = []
         var introduced = hidden ? false : learnPlayerName(&a, input: input)
         // "I walk over to introduce myself": the player gives the name the story already knows.
         // With no name known yet, the person they turn to still gives theirs.
@@ -1759,6 +1763,7 @@ final class StoryEngine {
             if !r.putsDown.isEmpty, Continuity.grounded(r.putsDown, in: said, share: 0.5) || pointsAt,
                let held = a.carrying.first(where: { Self.similar($0, r.putsDown) || Continuity.grounded($0, in: Continuity.wordSet(r.putsDown), share: 0.5) }) {
                 a.carrying.removeAll { $0 == held }
+                putDownThisTurn.append(held)
                 let given = input.range(of: #"(?i)\b(give|gives|hand|hands|pass|passes|offer|offers|pay|pays|slide|slides|toss|tosses)\b"#, options: .regularExpression) != nil
                 if given, !r.to.isEmpty {
                     actsNow.append("Gone from your hands → " + held + " (to " + r.to + ")")
@@ -2719,8 +2724,20 @@ final class StoryEngine {
                 refused.append(h + " (someone else's)")
                 return false
             }
-            if start.carrying.contains(where: { Self.similar($0, h) }) || Continuity.grounded(h, in: inReply) { return true }
-            refused.append(h + " (not in this reply)")
+            if start.carrying.contains(where: { Self.similar($0, h) }) { return true }
+            // Something new in your hands has to come from your own words or be shown as yours:
+            // someone else "holding up a spool of thread" doesn't put it in your hands, and what you
+            // just set down doesn't come back because the reply names it.
+            if putDownThisTurn.contains(where: { Self.similar($0, h) || Continuity.grounded($0, in: Continuity.wordSet(h), share: 0.5) }) {
+                refused.append(h + " (you just put it down)")
+                return false
+            }
+            guard Continuity.grounded(h, in: inReply) else {
+                refused.append(h + " (not in this reply)")
+                return false
+            }
+            if Self.shownAsYours(h, reply: reply, playerSaid: playerSaid) { return true }
+            refused.append(h + " (not shown in your hands)")
             return false
         }
         // What the player said they picked up, and the story shows them with, is theirs even when
@@ -3951,6 +3968,25 @@ final class StoryEngine {
     private static let notStarts: Set<String> = ["where", "what", "when", "how", "after", "again", "speed", "pace", "right"]
     /// "Take a seat", "take a sip", "take her hand": not things to carry.
     private static let notThings: Set<String> = ["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance", "sip", "swig", "gulp", "walk", "stroll", "rest", "break", "bow", "guess", "hint", "note", "notes", "care", "hold", "liking", "stand", "hand", "hands", "arm", "word", "advice", "where", "what", "speed", "pace", "him", "her", "them", "you", "one", "ones", "lot", "bit"]
+
+    /// Whether a thing is the player's: their own words name it, or a sentence of the reply that
+    /// names it shows it as theirs ("your soaked coat", "she hands you the glass", "you lift the
+    /// stools", "in your hand"). "She holds up a spool of thread" is hers.
+    static func shownAsYours(_ thing: String, reply: String, playerSaid: String) -> Bool {
+        if Continuity.grounded(thing, in: Continuity.wordSet(playerSaid), share: 0.5) { return true }
+        guard var noun = thing.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init), noun.count >= 3 else { return false }
+        if noun.hasSuffix("s"), noun.count > 4 { noun = String(noun.dropLast()) }
+        let n = NSRegularExpression.escapedPattern(for: noun)
+        let mine = #"(?i)\byour\s+(?:[a-z'-]+\s+){0,3}"# + n
+            + #"|\b(?:hands?|handed|gives?|gave|passes|passed|slides?|slid|tosses|tossed|offers?|offered|presses|pressed)\s+you\b"#
+            + #"|\b(?:hands?|handed|gives?|gave|passes|passed|slides?|slid|tosses|tossed|offers?|offered|presses|pressed|puts?|places?|placed|sets?)\b[^.!?]{0,60}\b(?:to you|into your|in your)\b"#
+            + #"|\byou\s+(?:[a-z]+ly\s+)?(?:take|took|grab|grabbed|pick|picked|accept|accepted|pocket|pocketed|hold|holding|carry|carrying|lift|lifted|clutch|clutching|cradle|cradling|raise|raised)\b"#
+            + #"|\bin your (?:hand|hands|pocket|lap|grip|palm|fingers|arms)\b"#
+        for sentence in PresenceFilter.sentences(reply) where sentence.lowercased().contains(noun) {
+            if sentence.range(of: mine, options: .regularExpression) != nil { return true }
+        }
+        return false
+    }
 
     /// Words for people, who are walked with or brought along, never carried ("take the bartender").
     static let personWords: Set<String> = ["bartender", "barkeep", "man", "woman", "men", "women", "lady", "gentleman", "girl", "boy", "guy", "kid", "child", "regular", "stranger", "friend", "waiter", "waitress", "owner", "guard", "officer", "doctor", "captain", "driver", "people", "person", "everyone", "everybody"]
