@@ -340,7 +340,7 @@ final class StoryEngine {
         error = nil
         let built = grounded
         let forge = Forge(name: e.title.isEmpty ? (source.map { $0.report?.title ?? $0.title } ?? "Your world") : e.title,
-                          curated: CuratedExperiences.all.contains { $0.id == e.id }, grounded: built)
+                          curated: CuratedExperiences.all.contains { $0.id == e.id }, grounded: built, onePlace: e.simulator)
         self.forge = forge
         ComputerSounds.shared.startHum()
         currentTask = Task {
@@ -550,11 +550,15 @@ final class StoryEngine {
             let name = str("name", item)
             guard !name.isEmpty, name.caseInsensitiveCompare(playerName) != .orderedSame else { continue }
             let kind = item["type"] is String ? LoreEntry.kind(from: str("type", item)) : .person
+            // Places come only from "places": a place the architect slipped into the lore (the
+            // flower shop the speakeasy hides behind) would put a second place on a one-place map.
+            if kind == .place { continue }
             if kind == .person { people += 1; if people > cap + 1 { continue } }
             let pronouns = str("pronouns", item)
             if kind == .person, !pronouns.isEmpty { a.facts.append("\(name) uses \(pronouns).") }
-            addLore(&a, LoreEntry(name: name, kind: kind, desc: str("desc", item), role: str("role", item),
-                                  known: kind != .person || (!a.nameless && (item["known"] as? Bool ?? false)), wants: str("wants", item)))
+            let at = addLore(&a, LoreEntry(name: name, kind: kind, desc: str("desc", item), role: str("role", item),
+                                           known: kind != .person || (!a.nameless && (item["known"] as? Bool ?? false)), wants: str("wants", item)))
+            if kind == .person { a.lore[at].privateLife = clip(str("private", item), 240) }
         }
 
         a.beats = ((plan["beats"] as? [Any]) ?? []).compactMap { b in
@@ -2026,7 +2030,7 @@ final class StoryEngine {
         // Arriving somewhere paints the whole place: its card and what is in it.
         let arrivedNow = !hidden && !a.location.isEmpty && a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
         let around = arrivedNow || looked.contains { $0.look.kind == .around }
-        let pick = Cards.pick(a, input: hidden ? "" : input, opening: opening, around: around)
+        let pick = Cards.pick(a, input: hidden ? "" : input, opening: opening, around: around, asking: playerAsks)
         // What the briefing shows from the lookups: everything but what the scene already holds
         // (the place card, the full card of whoever the player is facing, the things around).
         let facing = a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
@@ -2319,7 +2323,8 @@ final class StoryEngine {
             var lines: [String] = []
             if !a.scene.isEmpty { lines.append("WHERE YOU ARE AS IT OPENS: " + clip(a.scene, 280)) }
             return lines + [
-                "THIS IS THE OPENING SCENE, and it may run to about 200 words. The listener cannot see anything yet: first tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and who is there, then paint it with sound, smell, light and texture.",
+                "THIS IS THE OPENING SCENE, and it may run to about 200 words. The listener cannot see anything yet: first tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and who is there, then spend most of it painting the place itself: what you see in front of you, then sound, smell, light and texture.",
+                "Show the people only from the outside: how they look, what their hands are doing, how they sound. Say nothing of their hopes, dreams, worries, plans or past, and give no hints of them; those come out only when the player asks.",
                 me.isEmpty ? "Make clear who the player is and why they are here." : "Make clear who the player is (\(clip(me, 160))) and why they are here.",
                 "Set up the feeling (" + (a.setup.feeling.isEmpty ? "the one the player came for" : a.setup.feeling) + ") from the first lines, and end on someone turned to the player.",
             ]
