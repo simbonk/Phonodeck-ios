@@ -977,7 +977,7 @@ final class StoryEngine {
         var redrawn = false
         if !opening, !hidden {
             let f = PresenceFilter(absent: absentPeople(a, input: input, plan: plan),
-                                   earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text))
+                                   earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input)
             if !f.idle { presence = f }
         }
         do {
@@ -1014,7 +1014,7 @@ final class StoryEngine {
                     note += "Stay with the player and whoever they are with. Use new sentences, none from earlier replies.)"
                     var again = history
                     if let last = again.popLast() { again.append(ChatTurn(role: .user, text: last.text + "\n\n" + note)) }
-                    var second = PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text))
+                    var second = PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input)
                     let left = reply.trimmingCharacters(in: .whitespacesAndNewlines)
                     let survived = left.split(whereSeparator: \.isWhitespace).count < 12 ? "" : left
                     for try await piece in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
@@ -2094,7 +2094,7 @@ final class StoryEngine {
         var redrawn = false
         if !opening, !hidden {
             let f = PresenceFilter(absent: absentPeople(a, input: input, plan: moment),
-                                   earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text))
+                                   earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input)
             if !f.idle { presence = f }
         }
         do {
@@ -2134,7 +2134,7 @@ final class StoryEngine {
                     note += "Stay with the player and whoever they are with. Use new sentences, none from earlier replies.)"
                     var again = history
                     if let last = again.popLast() { again.append(ChatTurn(role: .user, text: last.text + "\n\n" + note)) }
-                    var second = PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text))
+                    var second = PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input)
                     let left = reply.trimmingCharacters(in: .whitespacesAndNewlines)
                     let survived = left.split(whereSeparator: \.isWhitespace).count < 12 ? "" : left
                     for try await piece in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
