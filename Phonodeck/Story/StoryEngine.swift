@@ -3787,7 +3787,7 @@ final class StoryEngine {
             guard let r = Range(m.range(at: g), in: input) else { continue }
             var words = input[r].lowercased().split(separator: " ").map(String.init)
             // "the stools and hold them": stop at a joining word.
-            if let cut = words.firstIndex(where: { ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on"].contains($0) }) { words = Array(words[..<cut]) }
+            if let cut = words.firstIndex(where: { ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on", "by", "near", "at", "for", "into", "behind", "under", "i", "so"].contains($0) }) { words = Array(words[..<cut]) }
             guard let last = words.last, last.count > 2, !["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance"].contains(last) else { return nil }
             return "the " + words.joined(separator: " ")
         }
