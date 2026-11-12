@@ -179,6 +179,8 @@ struct StoryTurn: Codable, Identifiable, Hashable {
     /// (director notes, recalled memories, its reasoning and plan) and its review afterwards.
     var before: String? = nil
     var after: String? = nil
+    /// Exactly what the storyteller was sent for this reply (grounded engine), for "Copy with prompts".
+    var prompt: String? = nil
 }
 
 struct Mood: Codable, Hashable {
