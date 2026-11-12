@@ -91,6 +91,7 @@ enum PlayScripts {
     What are you working on there?
     Why are you doing that?
     I ask if she likes milk.
+    I walk over to the woman and ask her what her name is.
     I ask the bartender how long this place has been open.
     Who owns this place?
     I ask her where she grew up.

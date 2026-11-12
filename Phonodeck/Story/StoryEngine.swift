@@ -3595,7 +3595,17 @@ final class StoryEngine {
                 let core = Continuity.roleLabel(a.lore[i].role).replacingOccurrences(of: "the ", with: "")
                 return core.count >= 3 && text.contains(core)
             }
-            target = byRole ?? others.first { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? (others.count == 1 ? others[0] : nil)
+            // "I go to the woman and ask her what her name is": "her" is the person they're with
+            // when she is the one asked, or the only one here it fits.
+            let own = hidden.first(where: { lead(a.lore[$0].name) == lead(addressee) })
+            let askedDirect = text.range(of: #"\b(ask|asks|asking|asked)\s+(her|him|them)\b|\b(to|at)\s+(her|him)\b"#, options: .regularExpression) != nil
+            let fitsOwn = own.map { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? false
+            let fitsOther = others.contains { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) }
+            if byRole == nil, let own, fitsOwn, askedDirect || !fitsOther {
+                target = own; ask = "you"
+            } else {
+                target = byRole ?? others.first { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? (others.count == 1 && !fitsOwn ? others[0] : nil)
+            }
             // "I approach the lady and ask for her name": the person asked is the one they're with.
             if target == nil, let own = hidden.first(where: { lead(a.lore[$0].name) == lead(addressee) }) { target = own; ask = "you" }
         }
