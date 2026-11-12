@@ -110,6 +110,15 @@ enum Cards {
         return t.range(of: #"\b(behind (you|the player|your)|at your back|over your shoulder|out of (your|the player's) (sight|view))\b"#, options: .regularExpression) != nil
     }
 
+    /// "Behind the bar" is across the counter from a customer, in front of them. Small models read
+    /// it as "behind you", so the card says which way they are.
+    static func facing(_ w: Whereabout) -> String {
+        guard !behindPlayer(w) else { return "" }
+        let t = w.at.lowercased()
+        return t.range(of: #"\bbehind (the |a |his |her |their )?([a-z-]+ ){0,2}(bar|counter|desk|register|till|stall|bench|table)\b"#, options: .regularExpression) != nil
+            ? " (across the counter from you, in front of you, not behind you)" : ""
+    }
+
     /// The place card for where the player is, if the world has one.
     static func placeCard(_ a: Adventure) -> LoreEntry? {
         guard !a.location.isEmpty else { return nil }
@@ -167,7 +176,7 @@ enum Cards {
             let c = card(for: w, in: a)
             let name = c?.name ?? w.name
             let pr = pronoun(name, in: a)
-            let spot = Continuity.placed(w.at) + (w.doing.isEmpty ? "" : ", " + w.doing)
+            let spot = Continuity.placed(w.at) + facing(w) + (w.doing.isEmpty ? "" : ", " + w.doing)
             let named = c.map { mentions($0, in: input) } ?? input.lowercased().contains(first(w.name).lowercased())
             // Foveated: someone behind the player who isn't talking to them is only heard.
             if w.here != false, w.engaged != true, behindPlayer(w) {

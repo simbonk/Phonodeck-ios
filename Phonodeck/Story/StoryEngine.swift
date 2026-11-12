@@ -1185,7 +1185,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11s"
+    static let build = "build 2026-11-12x"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -2315,6 +2315,18 @@ final class StoryEngine {
         return s
     }
 
+    /// How the opening ends: on the person the player is with, by their role, speaking to them
+    /// (a vague "someone turns toward you" loses who the player is talking to).
+    static func openingEnd(_ a: Adventure) -> String {
+        let me = Cards.first(a.playerName).lowercased()
+        let w = a.whereabouts.first { $0.here != false && $0.engaged == true && Cards.first($0.name).lowercased() != me && Cards.first($0.name).lowercased() != "you" }
+        guard let w else { return "End on a sound or a small change in the room that invites the player to act." }
+        let c = Cards.card(for: w, in: a)
+        let role: String = c.map { Continuity.roleLabel($0.role) } ?? ""
+        let who: String = role.isEmpty || (c?.known ?? false) ? w.name : role
+        return "End with " + who + " speaking to the player: one short line of dialogue that leaves room to answer. Name them as " + who + ", never \"someone\"."
+    }
+
     /// At most a few notes for this reply, only where they apply: the opening, a question, the
     /// player moving, narrating, the end of the session, and phrases that keep coming back.
     private func groundedNotes(_ a: Adventure, input: String, going: Bool, opening: Bool, playerNarrates: Bool, playerAsks: Bool) -> [String] {
@@ -2326,7 +2338,8 @@ final class StoryEngine {
                 "THIS IS THE OPENING SCENE, and it may run to about 200 words. The listener cannot see anything yet: first tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and who is there, then spend most of it painting the place itself: what you see in front of you, then sound, smell, light and texture.",
                 "Show the people only from the outside: how they look, what their hands are doing, how they sound. Say nothing of their hopes, dreams, worries, plans or past, and give no hints of them; those come out only when the player asks.",
                 me.isEmpty ? "Make clear who the player is and why they are here." : "Make clear who the player is (\(clip(me, 160))) and why they are here.",
-                "Set up the feeling (" + (a.setup.feeling.isEmpty ? "the one the player came for" : a.setup.feeling) + ") from the first lines, and end on someone turned to the player.",
+                "Set up the feeling (" + (a.setup.feeling.isEmpty ? "the one the player came for" : a.setup.feeling) + ") from the first lines.",
+                Self.openingEnd(a),
             ]
         }
         var notes: [String] = []
