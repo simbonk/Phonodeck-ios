@@ -39,7 +39,10 @@ final class StoryEngine {
     private var putDownThisTurn: [String] = []
 
     /// Read replies aloud as they are written.
-    var narrate: Bool { didSet { UserDefaults.standard.set(narrate, forKey: "narrate") } }
+    var narrate: Bool { didSet { if !holdNarrate { UserDefaults.standard.set(narrate, forKey: "narrate") } } }
+    /// Set while a benchmark or test run turns reading aloud off for itself: the switch is not
+    /// saved, so a run the app never finished (closed, crashed) can't leave the narrator off.
+    var holdNarrate = false
     /// The Game Master writes a short private plan before each reply (a few seconds more per turn).
     var gmPlans: Bool { didSet { UserDefaults.standard.set(gmPlans, forKey: "gmPlans") } }
     /// The plan and the look-ahead use the model's reasoning mode (Qwen's thinking): much slower,
@@ -692,13 +695,13 @@ final class StoryEngine {
     /// app holds it now, then every turn with what happened behind the scenes (with the grounded
     /// engine: how the message was read, what was fetched and why, the prompt's size, and what was
     /// filed afterwards).
-    func storyText() -> String {
+    func storyText(prompts: Bool = false) -> String {
         guard let a = adventure else { return "" }
         var out = ["# " + a.title, ""]
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
         let engineLine: String = grounded
-            ? "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off")
+            ? (foveated && gmPlans ? "Foveated story (read, yes/no pass, paint, lean rebuild)" : "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off"))
             : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
         out.append(engineLine + " · " + Self.build)
         if grounded {
@@ -736,6 +739,7 @@ final class StoryEngine {
             out.append((t.role == .player ? me : "GAME MASTER") + ":\n" + t.text)
             out.append("")
             if let b = t.after, !b.isEmpty { out += [b, ""] }
+            if prompts, let p = t.prompt, !p.isEmpty { out += ["PROMPT SENT FOR THIS REPLY:", "<<<", p, ">>>", ""] }
         }
         return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1194,7 +1198,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-12y"
+    static let build = "build 2026-11-12z2"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -2086,6 +2090,8 @@ final class StoryEngine {
         }
         var system = groundedSystem(a)
         let card = Cards.briefing(a, pick: pick, looked: lookedLines, extra: extra, notes: notes, moment: moment)
+        // The yes/no pass's question and answer, for "Copy with prompts".
+        var gateLog = ""
         var lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
         if fov {
             // Every card item, marked yes or no for this moment; only the yeses reach the storyteller.
@@ -2106,6 +2112,7 @@ final class StoryEngine {
                 guard !Task.isCancelled else { adventure = snapshot; return }
                 let m: [String: Any] = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
                 keep = Fovea.chosen(items, answer: m, input: input)
+                gateLog = ask + " " + raw
                 lap("what matters")
             }
             var kept: [Fovea.Item] = []
@@ -2141,6 +2148,11 @@ final class StoryEngine {
             system = Continuity.unnamed(system, in: a, playerTold: told)
             history = history.map { ChatTurn(role: $0.role, text: Continuity.unnamed($0.text, in: a, playerTold: told)) }
         }
+        // Exactly what the storyteller was sent, for "Copy with prompts".
+        var sent: [String] = ["SYSTEM:\n" + system]
+        for t in history { sent.append((t.role == .user ? "USER" : "ASSISTANT") + ":\n" + t.text) }
+        if !gateLog.isEmpty { sent.insert("YES/NO PASS (asked before the reply):\n" + gateLog, at: 0) }
+        let sentPrompt: String = sent.joined(separator: "\n\n")
         stage = "The storyteller is writing"
         a.gmWait = Date().timeIntervalSince(ticked)
         lapFrom = Date()
@@ -2313,7 +2325,7 @@ final class StoryEngine {
         }
         let took = String(format: "%.1fs", Date().timeIntervalSince(turnBegan))
         before.append("TIMES: " + times.joined(separator: " · ") + " · total " + took + " before the rebuild")
-        a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.joined(separator: "\n")))
+        a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.joined(separator: "\n"), prompt: sentPrompt))
         streaming = ""
         if a.left == 0 && !hidden { a.ended = true }
         adventure = a

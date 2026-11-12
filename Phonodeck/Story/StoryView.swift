@@ -125,6 +125,10 @@ struct StoryView: View {
                 Label("Copy story text", systemImage: "doc.on.doc")
             }
             .disabled(a.transcript.isEmpty)
+            Button { UIPasteboard.general.string = engine.storyText(prompts: true) } label: {
+                Label("Copy with prompts", systemImage: "doc.on.clipboard")
+            }
+            .disabled(a.transcript.isEmpty)
             Button { engine.undo() } label: { Label("Undo last turn", systemImage: "arrow.uturn.backward") }
                 .disabled(!engine.canUndo)
             if !a.ended {

@@ -673,6 +673,7 @@ final class AutoPlay {
         digest = nil
         let narrated = engine.narrate
         engine.setHandsFree(false)
+        engine.holdNarrate = true
         engine.narrate = false
         UIApplication.shared.isIdleTimerDisabled = true
         let stamp = Self.stamp()
@@ -702,6 +703,7 @@ final class AutoPlay {
             self.engine.stopAll()
             self.engine.close()
             self.engine.narrate = narrated
+            self.engine.holdNarrate = false
             UIApplication.shared.isIdleTimerDisabled = false
             self.status = Task.isCancelled ? "Stopped." : "Finished \(scripts.count) " + (scripts.count == 1 ? "story." : "stories.")
             self.running = false

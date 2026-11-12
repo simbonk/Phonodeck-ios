@@ -117,6 +117,7 @@ final class ModelBenchmark {
         let original = store.languageID
         let narrated = engine.narrate
         engine.setHandsFree(false)
+        engine.holdNarrate = true
         engine.narrate = false
         UIApplication.shared.isIdleTimerDisabled = true
         try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
@@ -143,6 +144,7 @@ final class ModelBenchmark {
             self.store.languageID = original
             self.llm.unload()
             self.engine.narrate = narrated
+            self.engine.holdNarrate = false
             UIApplication.shared.isIdleTimerDisabled = false
             self.status = Task.isCancelled ? "Stopped. What was played is below." : "Finished \(self.plays.count) " + (self.plays.count == 1 ? "play." : "plays.")
             self.running = false
