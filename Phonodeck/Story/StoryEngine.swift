@@ -3780,7 +3780,7 @@ final class StoryEngine {
 
     /// The thing the player says they pick up or take ("I pick up all of the stools" → "the stools").
     static func pickedUp(_ input: String) -> String? {
-        let pattern = #"(?i)\b(?:pick|picks|picked) up\s+(?:all of\s+|both of\s+|one of\s+)?(?:the|a|an|my|some|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+)?)|\b(?:grab|grabs|take|takes|lift|lifts|carry|carries)\s+(?:all of\s+)?(?:the|a|an|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+)?)"#
+        let pattern = #"(?i)\b(?:pick|picks|picked) up\s+(?:all of\s+|both of\s+|one of\s+)?(?:the|a|an|my|some|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})|\b(?:grab|grabs|take|takes|lift|lifts|carry|carries)\s+(?:all of\s+)?(?:the|a|an|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})"#
         guard let re = try? NSRegularExpression(pattern: pattern),
               let m = re.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)) else { return nil }
         for g in [1, 2] {
