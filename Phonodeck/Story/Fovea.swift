@@ -65,6 +65,13 @@ enum Fovea {
         func add(_ kind: String, _ text: String) {
             let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard t.count > 2, !out.contains(where: { $0.text == t }) else { return }
+            // Near-copies ("a crackling jazz record", "a cracking jazz record"; "You have: wet boots"
+            // and "You are wearing wet boots") are offered once.
+            let words = Cards.keywords(t)
+            if words.count >= 2, out.contains(where: { o in
+                let w = Cards.keywords(o.text)
+                return Double(words.intersection(w).count) >= Double(min(words.count, w.count)) * 0.6
+            }) { return }
             out.append(Item(kind: kind, text: clip(t, 170)))
         }
         let faced = facing(a)
@@ -75,8 +82,9 @@ enum Fovea {
             if let x = a.wants[c.name.lowercased()] { add("want", c.name + " wants " + x + " (it shows in what they do; unsaid unless asked)") }
             if let b = a.between[c.name.lowercased()], !b.isEmpty { add("between", "Between you and " + c.name + " so far: " + b.suffix(3).joined(separator: "; ")) }
             if let k = a.knows[c.name.lowercased()], !k.isEmpty { add("knows", c.name + " knows about you: " + k.suffix(3).joined(separator: "; ")) }
-            // Their private life is only offered when the player asks something.
-            if asking, !c.privateLife.isEmpty { add("private", c.name + "'s private life (shared a little, only because you asked): " + c.privateLife) }
+            // Their private life is always offered (hearing it is often why the player came); the
+            // pass lets it in when the moment turns to their life, and they share only a little.
+            if !c.privateLife.isEmpty { add("private", c.name + "'s private life (shared a little, only if the player asks about their life, work, hopes or plans): " + c.privateLife) }
         }
         // Everyone else keeps their own card; it is offered as one item each.
         let me = Cards.first(a.playerName).lowercased()
@@ -101,7 +109,7 @@ enum Fovea {
         let whoAmI: String = Cards.premise(a).components(separatedBy: "\n").first(where: { $0.hasPrefix("The player is ") }) ?? ""
         if !whoAmI.isEmpty { add("you", "Who you are: " + String(whoAmI.dropFirst("The player is ".count))) }
         for t in a.carrying.prefix(6) { add("have", "You have: " + t) }
-        for t in Cards.props(a).prefix(6) { add("around", "Around you: " + t) }
+        for t in Cards.props(a).prefix(4) { add("around", "Around you: " + t) }
         for p in a.pending { add("hanging", "Still hanging: " + p) }
         if !a.spot.isEmpty { add("spot", "Where you are in the room: " + a.spot) }
         if let s = a.ambience[a.location.lowercased()], !a.location.isEmpty, !s.isEmpty { add("sound", "The background: " + s) }
@@ -111,7 +119,7 @@ enum Fovea {
         let general = a.facts.filter { f in
             !a.cast.contains { f.hasPrefix($0.name + " uses ") || Cards.mentions($0, in: f) } && !Continuity.elsewhereFact(f, in: a)
         }
-        for f in general.prefix(6) { add("fact", f) }
+        for f in general.prefix(4) { add("fact", f) }
         return Array(out.prefix(24))
     }
 

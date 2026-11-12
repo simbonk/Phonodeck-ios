@@ -9,7 +9,7 @@ enum Continuity {
     /// "at the bar" for "the bar", and "in the corner chair" left as it is.
     static func placed(_ at: String) -> String {
         let first = at.lowercased().split(separator: " ").first.map(String.init) ?? ""
-        let leads: Set<String> = ["in", "at", "on", "behind", "by", "near", "beside", "under", "inside", "outside", "sitting", "standing", "seated", "leaning", "across", "over", "next", "up", "down", "among", "between"]
+        let leads: Set<String> = ["with", "in", "at", "on", "behind", "by", "near", "beside", "under", "inside", "outside", "sitting", "standing", "seated", "leaning", "across", "over", "next", "up", "down", "among", "between"]
         return leads.contains(first) ? at : "at " + at
     }
 

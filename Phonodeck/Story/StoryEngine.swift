@@ -1198,7 +1198,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-12z3"
+    static let build = "build 2026-11-12z4"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -2785,7 +2785,7 @@ final class StoryEngine {
                 // Only things about the player, not a note that they asked something.
                 let junk = learned.range(of: #"(?i)^(you|the player) (asked|are curious|is curious|have forgotten|has forgotten|want to know|wants to know)"#, options: .regularExpression) != nil
                 var tidy = learned.replacingOccurrences(of: "the player", with: "you")
-                for (from, to) in [(#"\byou is\b"#, "you are"), (#"\byou was\b"#, "you were"), (#"\byou has\b"#, "you have"), (#"\bthemselves\b"#, "yourself"),
+                for (from, to) in [(#"\byou is\b"#, "you are"), (#"\byou was\b"#, "you were"), (#"\byou has\b"#, "you have"), (#"\bthemselves\b"#, "yourself"), (#"\byou introduced (himself|herself)\b"#, "you introduced yourself"), (#"\b(himself|herself)\b"#, "yourself"),
                                    (#"(?i)^you are (sitting|standing|listening|asking|waiting|looking)\b.*"#, "")] {
                     tidy = tidy.replacingOccurrences(of: from, with: to, options: .regularExpression)
                 }
@@ -4026,7 +4026,7 @@ final class StoryEngine {
         if t.contains("?") { return true }
         // Also a question in the middle of a message without a question mark (dictation drops them):
         // "I'm freaked out. What happened to my crew".
-        let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b|\b(how|what|why|who|where|when|which)\s+(happened|happens|is|are|was|were|did|do|does|can|could|should|will|would|has|have)\b"#
+        let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b|\b(how|what|why|who|where|when|which)\s+(happened|happens|is|are|was|were|did|do|does|can|could|should|will|would|has|have)\b|\b(wanna|want to|would like to|like to|dying to) know\b|\b(do|did|are|were|can|could|would|will|have) (you|she|he|they)\b"#
         return t.range(of: pattern, options: .regularExpression) != nil
     }
 
