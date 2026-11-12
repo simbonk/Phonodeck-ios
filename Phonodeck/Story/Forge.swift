@@ -40,6 +40,8 @@ final class Forge {
 
     let stages: [Stage]
     private let grounded: Bool
+    /// An experience lives in one place: the map shows only that, whatever else the model listed.
+    private let onePlace: Bool
 
     /// The long first wait cycles through these.
     static let waitingLines = [
@@ -63,9 +65,10 @@ final class Forge {
     private var raw = ""
     private let lines: [String]
 
-    init(name: String, curated: Bool, grounded: Bool = false) {
+    init(name: String, curated: Bool, grounded: Bool = false, onePlace: Bool = false) {
         self.name = name
         self.grounded = grounded
+        self.onePlace = onePlace
         stages = grounded ? Self.groundedStages : Self.classicStages
         var l = Self.waitingLines
         if curated { l.insert("This world was curated for you. Next time, try building one yourself.", at: 3) }
@@ -154,7 +157,7 @@ final class Forge {
         func plural(_ n: Int, _ one: String, _ many: String) -> String? { n > 0 ? "\(n) " + (n == 1 ? one : many) : nil }
         let secrets = max(0, (section("secrets")?.filter { $0 == "\"" }.count ?? 0) / 2)
         let people = section("lore")?.components(separatedBy: "\"person\"").count ?? 1
-        finds[2] = [firstString("location").map { "You begin at " + $0 }, plural(count("places", "name"), "place on the map", "places on the map")]
+        finds[2] = [firstString("location").map { "You begin at " + $0 }, onePlace ? nil : plural(count("places", "name"), "place on the map", "places on the map")]
             .compactMap { $0 }.joined(separator: " · ")
         finds[3] = [firstString("player").map { "You are " + $0 }, plural(people - 1, "character with a life of their own", "characters with lives of their own")]
             .compactMap { $0 }.joined(separator: " · ")

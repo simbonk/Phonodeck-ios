@@ -18,6 +18,8 @@ enum Cards {
         var with: [String] = []
         /// One line each: people in the room the player is not dealing with.
         var background: [String] = []
+        /// People in the room but out of the player's sight (behind them): heard, never described.
+        var unseen: [String] = []
         /// People somewhere else whom the player's message mentions.
         var away: [String] = []
         /// The world's ground facts (the weather, the year, the city).
@@ -101,6 +103,13 @@ enum Cards {
         a.location.isEmpty ? a.things : (a.placeThings[a.location.lowercased()] ?? (a.placeThings.isEmpty ? a.things : []))
     }
 
+    /// Whether a whereabouts line puts someone behind the player, where they can't be seen
+    /// ("behind you", "at your back"; not "behind the bar").
+    static func behindPlayer(_ w: Whereabout) -> Bool {
+        let t = (w.at + " " + w.doing).lowercased()
+        return t.range(of: #"\b(behind (you|the player|your)|at your back|over your shoulder|out of (your|the player's) (sight|view))\b"#, options: .regularExpression) != nil
+    }
+
     /// The place card for where the player is, if the world has one.
     static func placeCard(_ a: Adventure) -> LoreEntry? {
         guard !a.location.isEmpty else { return nil }
@@ -130,8 +139,8 @@ enum Cards {
     /// (their full card), and the names of anyone else in the room, like the edge of an eye's view.
     /// Everything else comes only through a lookup (see `Looks`). `opening` paints the whole room,
     /// so everyone placed there gets their full card; `around` is set when a lookup asked what is
-    /// in the place.
-    static func pick(_ a: Adventure, input: String, opening: Bool, around: Bool) -> Pick {
+    /// in the place. `asking`: the player asked something, so whoever they face may open up.
+    static func pick(_ a: Adventure, input: String, opening: Bool, around: Bool, asking: Bool = false) -> Pick {
         var p = Pick()
         let me = first(a.playerName).lowercased()
 
@@ -160,6 +169,14 @@ enum Cards {
             let pr = pronoun(name, in: a)
             let spot = Continuity.placed(w.at) + (w.doing.isEmpty ? "" : ", " + w.doing)
             let named = c.map { mentions($0, in: input) } ?? input.lowercased().contains(first(w.name).lowercased())
+            // Foveated: someone behind the player who isn't talking to them is only heard.
+            if w.here != false, w.engaged != true, behindPlayer(w) {
+                let role: String = c.map { Continuity.roleLabel($0.role) } ?? ""
+                let who: String = role.isEmpty ? name : name + " (" + role + ")"
+                p.unseen.append(who)
+                p.why.append(name + ": behind you, heard but not seen")
+                continue
+            }
             if w.here != false, opening || w.engaged == true {
                 let role: String = c?.role ?? ""
                 var line: String = name
@@ -169,6 +186,11 @@ enum Cards {
                 line += " Now: " + clip(spot, 120) + "."
                 let theirs = c.map { Array(facts(about: $0, in: a).suffix(3)) } ?? []
                 if !theirs.isEmpty { line += " Known: " + theirs.map { clip($0, 150) }.joined(separator: " ") }
+                // Their private life reaches the storyteller only when the player, facing them, asks.
+                if !opening, w.engaged == true, let c, !c.privateLife.isEmpty, asking {
+                    line += " Private (they kept this to themselves until now; they share a little of it only because you asked): " + clip(c.privateLife, 200)
+                    p.why.append(name + ": private life shared, you asked")
+                }
                 p.with.append(line)
                 p.known += theirs
                 let reason: String = opening ? "in the opening scene" : "you are facing them"
@@ -232,7 +254,7 @@ enum Cards {
         if !feel.isEmpty { l.append("- How they feel about you now (it carries into how they speak): " + feel.joined(separator: "; ")) }
         let facingCards: [LoreEntry] = a.whereabouts.filter { $0.here != false && $0.engaged == true && first($0.name).lowercased() != me }.compactMap { card(for: $0, in: a) }
         let want: [String] = facingCards.compactMap { c in a.wants[c.name.lowercased()].map { c.name + " wants " + $0 } }
-        if !want.isEmpty { l.append("- What they want right now, and why (what they say and do comes from it): " + want.joined(separator: "; ")) }
+        if !want.isEmpty { l.append("- What they want right now, and why (it shows in what they do; they don't say it unless you ask): " + want.joined(separator: "; ")) }
         for c in facingCards {
             guard let k = a.knows[c.name.lowercased()], !k.isEmpty else { continue }
             l.append("- What " + c.name + " knows about you (they remember it; nothing more): " + (k.filter { $0.hasPrefix("your name is ") }.suffix(1) + k.filter { !$0.hasPrefix("your name is ") }.suffix(4)).map { clip($0, 90) }.joined(separator: "; "))
@@ -241,6 +263,7 @@ enum Cards {
         if !a.feels.isEmpty { l.append("- How you feel (your own words): " + a.feels) }
         if !a.progress.isEmpty { l.append("- Toward what the player came for, so far: " + a.progress.suffix(2).map { clip($0, 110) }.joined(separator: " ")) }
         if !p.background.isEmpty { l.append("- Also in the room (quiet; they don't join in): " + p.background.joined(separator: ", ")) }
+        if !p.unseen.isEmpty { l.append("- Behind you, out of sight (you can only hear them, a voice or a sound; never describe how they look or what they are doing): " + p.unseen.joined(separator: ", ")) }
         l += p.away.map { "- " + $0 }
         let held: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.prefix(6).joined(separator: "; ")
         l.append("- You have (nothing else): " + held)

@@ -109,6 +109,9 @@ struct LoreEntry: Codable, Hashable, Identifiable {
     var known = true
     /// What a person wants: their private agenda.
     var wants = ""
+    /// What a person keeps to themselves (a hope, a worry, family, money). The storyteller sees it
+    /// only when the player asks about that person, so the opening and narration never spill it.
+    var privateLife = ""
     var isPlayer = false
     /// The player wrote or edited this entry; their words always win.
     var byPlayer = false
@@ -119,7 +122,7 @@ struct LoreEntry: Codable, Hashable, Identifiable {
         self.name = name; self.kind = kind; self.desc = desc; self.role = role; self.known = known; self.wants = wants; self.isPlayer = isPlayer
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, kind, desc, role, known, wants, isPlayer, byPlayer, updatedTurn }
+    enum CodingKeys: String, CodingKey { case id, name, kind, desc, role, known, wants, privateLife, isPlayer, byPlayer, updatedTurn }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
@@ -129,6 +132,7 @@ struct LoreEntry: Codable, Hashable, Identifiable {
         role = (try? c.decodeIfPresent(String.self, forKey: .role)) ?? ""
         known = (try? c.decodeIfPresent(Bool.self, forKey: .known)) ?? true
         wants = (try? c.decodeIfPresent(String.self, forKey: .wants)) ?? ""
+        privateLife = (try? c.decodeIfPresent(String.self, forKey: .privateLife)) ?? ""
         isPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .isPlayer)) ?? false
         byPlayer = (try? c.decodeIfPresent(Bool.self, forKey: .byPlayer)) ?? false
         updatedTurn = try? c.decodeIfPresent(Int.self, forKey: .updatedTurn)
