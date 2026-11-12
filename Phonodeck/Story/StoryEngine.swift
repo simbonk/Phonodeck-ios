@@ -685,7 +685,7 @@ final class StoryEngine {
         let engineLine: String = grounded
             ? "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off")
             : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
-        out.append(engineLine + " · " + Self.build + " · " + EnginePack.label)
+        out.append(engineLine + " · " + Self.build)
         if grounded {
             out += ["", "## Premise (the storyteller's only standing view of the story)", Cards.premise(a)]
         } else {

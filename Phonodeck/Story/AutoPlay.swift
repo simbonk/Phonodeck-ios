@@ -82,8 +82,7 @@ enum PlayScripts {
 
     /// The scripts that ship with the app. Each one leans on a part of the world-keeping that
     /// has gone wrong before: names, newcomers, leaving and coming back, things in hand, time.
-    /// From the engine file when it has test scripts (see `EnginePack`), otherwise these.
-    static var starters: [PlayScript] { parse(EnginePack.testScripts) }
+    static let starters: [PlayScript] = parse(starterText)
 
     static let starterText = """
     # 01 Who do you mean
@@ -694,7 +693,7 @@ final class AutoPlay {
                 if (try? joined.write(to: whole, atomically: true, encoding: .utf8)) != nil { self.combined = whole }
                 short.append(brief)
                 let small = dir.appending(path: "Phonodeck auto-play digest " + stamp + ".txt")
-                let lead = "PHONODECK AUTO-PLAY DIGEST · " + StoryEngine.build + " · " + EnginePack.label + " · \(short.count) of \(scripts.count) plays\n"
+                let lead = "PHONODECK AUTO-PLAY DIGEST · " + StoryEngine.build + " · \(short.count) of \(scripts.count) plays\n"
                     + "Each turn: what the player said, the start of the reply, the world as the app held it afterwards, and anything the checks caught.\n\n"
                 if (try? (lead + short.joined(separator: "\n\n")).write(to: small, atomically: true, encoding: .utf8)) != nil { self.digest = small }
             }
@@ -765,7 +764,7 @@ final class AutoPlay {
             }
         }
         let mins = String(format: "%.1f", Date().timeIntervalSince(began) / 60)
-        var head = ["AUTO-PLAY · " + script.title + " · " + StoryEngine.build + " · " + EnginePack.label,
+        var head = ["AUTO-PLAY · " + script.title + " · " + StoryEngine.build,
                     "Played \(played) of \(script.lines.count) lines in \(mins) minutes."]
         head += notes.map { "PROBLEM: " + $0 }
         let story = engine.storyText()

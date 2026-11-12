@@ -46,7 +46,6 @@ final class AppModel {
     enum Tab: Hashable { case phonodeck, chat, models, settings }
 
     init() {
-        EnginePack.start()
         let store = ModelStore()
         let llm = LLMService(store: store)
         let narrator = Narrator(store: store)
