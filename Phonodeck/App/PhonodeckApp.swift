@@ -46,6 +46,9 @@ final class AppModel {
     enum Tab: Hashable { case phonodeck, chat, models, settings }
 
     init() {
+        #if DEBUG
+        PickUpChecks.run()
+        #endif
         let store = ModelStore()
         let llm = LLMService(store: store)
         let narrator = Narrator(store: store)

@@ -113,6 +113,8 @@ enum PlayScripts {
     What do I have with me?
     I hand the glass back to the bartender.
     What am I holding now?
+    I get up and pick up every single barstool in my hands.
+    What am I holding now?
 
     # 04 True to the year
     I sit at the bar. What year is it?

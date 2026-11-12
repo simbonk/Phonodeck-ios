@@ -524,6 +524,12 @@ enum Continuity {
                 let stem = String(w.dropLast(end.count))
                 if story.contains(stem) || story.contains(stem + "e") || story.contains(stem + "s") { return true }
             }
+            // A joined word and its head: "barstools" against "stools", "stool" against "barstool".
+            if w.count >= 5, story.contains(where: { $0.count >= w.count + 3 && ($0.hasSuffix(w) || $0.hasSuffix(w + "s") || (w.hasSuffix("s") && $0.hasSuffix(String(w.dropLast())))) }) { return true }
+            for cut in 3..<max(3, w.count - 3) {
+                let head = String(w.suffix(w.count - cut))
+                if head.count >= 5, story.contains(head) || story.contains(head + "s") || (head.hasSuffix("s") && story.contains(String(head.dropLast()))) { return true }
+            }
             return false
         }
         return Double(words.filter(has).count) / Double(words.count) >= share

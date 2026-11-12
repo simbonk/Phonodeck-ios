@@ -709,6 +709,8 @@ final class StoryEngine {
         if !items.isEmpty { out.append("- Other cards: " + items.joined(separator: ", ")) }
         out.append("- Now: " + (a.location.isEmpty ? "on the move" : a.location) + (a.storyTime.isEmpty ? "" : " · " + a.storyTime))
         if !a.carrying.isEmpty { out.append("- You have: " + a.carrying.joined(separator: "; ")) }
+        if !a.feels.isEmpty { out.append("- You feel: " + a.feels) }
+        if !a.progress.isEmpty { out.append("- Toward the goal: " + a.progress.joined(separator: " · ")) }
         let here = Cards.props(a)
         if !here.isEmpty { out.append("- Props here: " + here.joined(separator: "; ")) }
         if !a.facts.isEmpty { out += ["", "## Facts on file (\(a.facts.count); each reply gets only the ones it needs)"] + a.facts.map { "- " + $0 } }
@@ -1268,6 +1270,13 @@ final class StoryEngine {
         var to = ""          // a cast member's name, or "" for nobody
         var going = ""       // "" for staying, a known place, or "somewhere new"
         var newPlace = ""    // going somewhere new: its name, from the message
+        var takes = ""       // what the player picks up or takes, in the read's words
+        var putsDown = ""    // what the player puts down or gives away
+        var spot = ""        // where in the place the player moves to
+        var tells = ""       // what the player tells about themselves ("your name is Simon")
+        var body = ""        // a change to the player's body ("sitting", "coat off")
+        var feels = ""       // how the player says they feel
+        var goalStep = ""    // what the player's own message does toward the goal
         var looks: [Looks.Look] = []   // what the read asked to look up
         var answer = ""
         var beat = ""
@@ -1310,10 +1319,11 @@ final class StoryEngine {
         let here = a.location
         let places = a.places.filter { $0.caseInsensitiveCompare(here) != .orderedSame }.suffix(5).map { $0 }
         let menu = Cards.menu(a, input: input)
-        let prompt = context + "\n\n" + Prompts.lookQuestion + "\nThe form:"
+        let goal: String = a.setup.goal.isEmpty ? "" : "\nWHAT THE PLAYER CAME FOR: " + clip(a.setup.goal, 200)
+        let prompt = context + goal + "\n\n" + Prompts.lookQuestion + "\nThe form:"
         let grammar = JSONGrammar.look(cast: cast, places: places, cards: menu, people: cast)
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 120, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+                                             options: .init(maxTokens: 300, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
         guard let m = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !m.isEmpty else { return nil }
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         var read = PlayerRead()
@@ -1328,6 +1338,18 @@ final class StoryEngine {
         else if let p = places.first(where: { $0.lowercased() == going }) { read.going = p }
         let named = s("new_place")
         if read.going == "somewhere new", named.count > 2, !Self.echoesPrompt(named) { read.newPlace = Self.ownPlace(named) }
+        let takes = s("takes")
+        func field(_ k: String) -> String {
+            let v = s(k)
+            return v.count > 2 && !Self.echoesPrompt(v) && !["nothing", "none", "empty", "n/a", "no change", "staying"].contains(v.lowercased()) ? v : ""
+        }
+        read.takes = field("takes")
+        read.putsDown = field("puts_down")
+        read.spot = field("spot")
+        read.tells = field("tells")
+        read.body = field("body")
+        read.feels = field("feels")
+        read.goalStep = field("goal_step")
         let asked = ((m["look"] as? [Any]) ?? []).compactMap { $0 as? String }
         for raw in asked {
             if let l = Looks.parse(raw, cards: menu, people: cast), !read.looks.contains(l) { read.looks.append(l) }
@@ -1703,15 +1725,96 @@ final class StoryEngine {
         // Picking something up is the player's own act: it is in their hands the moment they say
         // it, when the thing is in the scene (the last reply, the place, its props, the premise).
         var pickedNow: String? = nil
-        if !hidden, !playerNarrates, let taken = Self.pickedUp(input),
-           !a.carrying.contains(where: { Self.similar($0, taken) || Self.similar($0, String(taken.dropFirst(4))) }) {
-            let lastGM: String = a.transcript.last(where: { $0.role == .gm })?.text ?? ""
-            let scene: String = ([lastGM, a.bible, Cards.placeCard(a)?.desc ?? ""] + Cards.props(a) + a.facts).joined(separator: " ")
-            if Continuity.grounded(taken, in: Continuity.wordSet(scene)) {
-                let item = taken.hasPrefix("the ") ? String(taken.dropFirst(4)) : taken
-                a.carrying = Array((a.carrying + [item]).suffix(8))
-                pickedNow = item
+        let lastGMBefore: String = a.transcript.last(where: { $0.role == .gm })?.text ?? ""
+        /// Puts a thing in the player's hands when it is really in the scene (the last reply, the
+        /// premise, the place, its props or facts), and takes it off the place's props.
+        func take(_ raw: String) -> Bool {
+            let item = raw.lowercased().hasPrefix("the ") ? String(raw.dropFirst(4)) : raw
+            let names: Set<String> = Set(a.cast.flatMap { Continuity.wordSet($0.name) }.filter { $0.count > 2 })
+            guard item.count > 2, Continuity.wordSet(item).isDisjoint(with: names),
+                  Continuity.wordSet(item).isDisjoint(with: Self.personWords),
+                  !a.carrying.contains(where: { Self.similar($0, item) }) else { return false }
+            let props = Cards.props(a)
+            let scene: String = ([lastGMBefore, a.bible, Cards.premise(a), Cards.placeCard(a)?.desc ?? ""] + props + a.facts).joined(separator: " ")
+            guard Continuity.grounded(item, in: Continuity.wordSet(scene)) else { return false }
+            a.carrying = Array((a.carrying + [item]).suffix(8))
+            pickedNow = item
+            // In your hands now, so no longer lying about the place.
+            let key = a.location.lowercased()
+            if !a.location.isEmpty, var here = a.placeThings[key] {
+                here.removeAll { Self.similar($0, item) }
+                a.placeThings[key] = here
             }
+            a.things.removeAll { Self.similar($0, item) }
+            return true
+        }
+        /// The rest of the player's own act, filed the moment they send it (the rebuild revisits it
+        /// after the reply): what they put down or give away, where they move in the room, what they
+        /// tell about themselves, and their body. Each is kept only when the message itself says it.
+        var actsNow: [String] = []
+        func playerActs(_ r: PlayerRead) -> [String] {
+            let before = actsNow.count
+            let said = Continuity.wordSet(input)
+            let pointsAt = input.range(of: #"(?i)\b(it|them|this|that|these|those|everything|all)\b"#, options: .regularExpression) != nil
+            if !r.putsDown.isEmpty, Continuity.grounded(r.putsDown, in: said, share: 0.5) || pointsAt,
+               let held = a.carrying.first(where: { Self.similar($0, r.putsDown) || Continuity.grounded($0, in: Continuity.wordSet(r.putsDown), share: 0.5) }) {
+                a.carrying.removeAll { $0 == held }
+                let given = input.range(of: #"(?i)\b(give|gives|hand|hands|pass|passes|offer|offers|pay|pays|slide|slides|toss|tosses)\b"#, options: .regularExpression) != nil
+                if given, !r.to.isEmpty {
+                    actsNow.append("Gone from your hands → " + held + " (to " + r.to + ")")
+                } else {
+                    let key = a.location.lowercased()
+                    if !a.location.isEmpty { a.placeThings[key] = Array(((a.placeThings[key] ?? a.things) + [held]).suffix(30)) }
+                    a.things = Array((a.things + [held]).suffix(30))
+                    actsNow.append("You put down → " + held)
+                }
+            }
+            if !r.spot.isEmpty, Continuity.grounded(r.spot, in: said, share: 0.5), a.spot.caseInsensitiveCompare(r.spot) != .orderedSame {
+                a.spot = clip(r.spot, 90)
+                actsNow.append("You are now → " + r.spot)
+            }
+            if !r.tells.isEmpty, Continuity.grounded(r.tells, in: said, share: 0.6) {
+                let heard: [String] = r.to.isEmpty
+                    ? a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
+                    : [r.to]
+                for name in heard {
+                    guard let c = a.cast.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
+                    let key = c.name.lowercased()
+                    var known: [String] = a.knows[key] ?? []
+                    guard !known.contains(where: { Self.similar($0, r.tells) }) else { continue }
+                    known.append(clip(r.tells, 110))
+                    a.knows[key] = Self.keepKnown(known)
+                    actsNow.append(c.name + " now knows → " + r.tells)
+                }
+            }
+            if !r.body.isEmpty, Continuity.grounded(r.body, in: said, share: 0.5), a.body.caseInsensitiveCompare(r.body) != .orderedSame {
+                a.body = clip(r.body, 70)
+                actsNow.append("You are → " + r.body)
+            }
+            if !r.feels.isEmpty, Continuity.grounded(r.feels, in: said, share: 0.5), a.feels.caseInsensitiveCompare(r.feels) != .orderedSame {
+                a.feels = clip(r.feels, 70)
+                actsNow.append("You feel → " + r.feels)
+            }
+            if !r.goalStep.isEmpty, !a.setup.goal.isEmpty, Continuity.grounded(r.goalStep, in: said, share: 0.5),
+               !a.progress.contains(where: { Self.similar($0, r.goalStep) }) {
+                a.progress = Array((a.progress + [clip(r.goalStep, 130)]).suffix(8))
+                actsNow.append("Toward the goal → " + r.goalStep)
+            }
+            guard actsNow.count > before else { return [] }
+            adventure?.carrying = a.carrying
+            adventure?.things = a.things
+            adventure?.placeThings = a.placeThings
+            adventure?.spot = a.spot
+            adventure?.knows = a.knows
+            adventure?.body = a.body
+            adventure?.feels = a.feels
+            adventure?.progress = a.progress
+            return Array(actsNow[before...])
+        }
+        if !hidden, !playerNarrates {
+            // "I pick up every single barstool", or "I take it" after the watch is set in front of you.
+            if let named = Self.pickedUp(input) { _ = take(named) }
+            else if let it = Self.pickedUpIt(input, lastReply: lastGMBefore, props: Cards.props(a)) { _ = take(it) }
         }
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
         pendingInput = nil
@@ -1738,6 +1841,18 @@ final class StoryEngine {
             read = await lookPlayer(a, input: input, context: context)
             guard !Task.isCancelled else { adventure = snapshot; return }
             lap("look")
+            // What the read says the player takes, in any words ("I scoop up the stools", "I'll hang on
+            // to it"), when the words above missed it. The player's message must name it or point at it.
+            if pickedNow == nil, let takes = read?.takes, !takes.isEmpty {
+                let pointsAt = input.range(of: #"(?i)\b(it|them|this|that|these|those|everything|all)\b"#, options: .regularExpression) != nil
+                if Continuity.grounded(takes, in: Continuity.wordSet(input), share: 0.5) || pointsAt, take(takes), let got = pickedNow {
+                    adventure?.carrying = a.carrying
+                    adventure?.things = a.things
+                    adventure?.placeThings = a.placeThings
+                    step("You pick up → " + got + " (in your hands now, from the read)")
+                }
+            }
+            if let r = read { for l in playerActs(r) { step(l) } }
             if read != nil, let meant = Self.addressedByDeed(a, input: input), read!.to.caseInsensitiveCompare(meant) != .orderedSame {
                 read!.to = meant
                 step("Who do you mean? → " + meant + " (the one the story just showed doing that)")
@@ -2102,6 +2217,7 @@ final class StoryEngine {
                 let motion: String = r.going.isEmpty ? "staying" : "going: " + r.going
                 let asked: String = r.looks.isEmpty ? "nothing" : r.looks.map(\.text).joined(separator: ", ")
                 var l = "LOOK: to \(to) · \(motion) · asked to look up: \(asked)"
+                for (k, v) in [("takes", r.takes), ("puts down", r.putsDown), ("moves to", r.spot), ("tells", r.tells), ("body", r.body), ("feels", r.feels), ("toward the goal", r.goalStep)] where !v.isEmpty { l += " · " + k + ": " + v }
                 if !r.does.isEmpty { l += "\nPLAN:\n  does: " + r.does }
                 if !r.answer.isEmpty { l += "\n  answer: " + r.answer }
                 if !r.beat.isEmpty { l += "\n  next: " + r.beat }
@@ -2110,6 +2226,8 @@ final class StoryEngine {
                 before.append("READ: skipped (the player is narrating; their words are canon)")
             }
             if !lastRead.isEmpty { before.append("SETTLED IN CODE: " + lastRead) }
+            if let pickedNow { before.append("IN YOUR HANDS NOW: " + pickedNow) }
+            if !actsNow.isEmpty { before.append("FILED AS YOU SENT IT:\n" + actsNow.map { "  - " + $0 }.joined(separator: "\n")) }
         }
         if !looked.isEmpty {
             let lines: [String] = looked.map { ans in
@@ -2623,7 +2741,9 @@ final class StoryEngine {
             for old in start.carrying where !held.contains(where: { Self.similar($0, old) }) {
                 let noun = old.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
                 // What the player just picked up isn't gone because the reply says "left" or "set".
-                let justTaken = Self.pickedUp(playerSaid).map { $0.lowercased().contains(noun) } ?? false
+                let before = start.transcript.dropLast(2).last(where: { $0.role == .gm })?.text ?? ""
+                let justTaken = Self.pickedUp(playerSaid).map { $0.lowercased().contains(noun) }
+                    ?? (Self.pickedUpIt(playerSaid, lastReply: before, props: [old]) != nil)
                 if parting, !justTaken, noun.count >= 3, said.contains(noun) { filed.append("Gone from your hands: " + old); continue }
                 ledger.append(old)
             }
@@ -3795,20 +3915,62 @@ final class StoryEngine {
         return years(s).contains { $0 > now }
     }
 
-    /// The thing the player says they pick up or take ("I pick up all of the stools" → "the stools").
+    /// The thing the player says they pick up or take ("I pick up all of the stools" → "the stools",
+    /// "I pick up every single barstool in my hands" → "the barstools"). Nil when they say they won't
+    /// ("I can't take this"), when it's a person, or when it isn't a thing ("take a seat").
     static func pickedUp(_ input: String) -> String? {
-        let pattern = #"(?i)\b(?:pick|picks|picked) up\s+(?:all of\s+|both of\s+|one of\s+)?(?:the|a|an|my|some|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})|\b(?:grab|grabs|take|takes|lift|lifts|carry|carries)\s+(?:all of\s+)?(?:the|a|an|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})"#
-        guard let re = try? NSRegularExpression(pattern: pattern),
-              let m = re.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)) else { return nil }
-        for g in [1, 2] {
-            guard let r = Range(m.range(at: g), in: input) else { continue }
-            var words = input[r].lowercased().split(separator: " ").map(String.init)
-            // "the stools and hold them": stop at a joining word.
-            if let cut = words.firstIndex(where: { ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on", "by", "near", "at", "for", "into", "behind", "under", "i", "so"].contains($0) }) { words = Array(words[..<cut]) }
-            guard let last = words.last, last.count > 2, !["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance"].contains(last) else { return nil }
-            return "the " + words.joined(separator: " ")
+        let text = input.replacingOccurrences(of: "’", with: "'")
+        let det = #"(?:(?:all|both|one|each|some|most|any|a few|a couple|two|three|four|five|several|every one|every single one) of\s+)?(?:a few|a couple of|a pair of|a handful of|the|an|a|my|your|his|her|their|some|that|this|those|these|every(?:\s+single)?|each|all(?:\s+the)?|both(?:\s+the)?|two|three|four|five|six|several|one)\s+"#
+        let thing = #"([a-z]+(?:\s+[a-z]+){0,2})"#
+        let pattern = #"(?i)\b(?:pick|picks|picked|picking) up\s+(?:"# + det + #")?"# + thing
+            + #"|\b(?:pick|picks|picked) "# + det + #"([a-z]+(?:\s+[a-z]+){0,2}?)\s+up\b"#
+            + #"|\b(?:grab|grabs|grabbed|take|takes|took|lift|lifts|lifted|carry|carries|carried|collect|collects|pocket|pockets|gather up|gathers up|scoop up|scoops up)\s+"# + det + thing
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let whole = Range(m.range, in: text) else { continue }
+            // "I can't take this", "I don't pick up the glass": not taken.
+            let before = String(text[..<whole.lowerBound].suffix(40))
+            if before.range(of: #"(?i)\b(can'?t|cannot|can not|don'?t|do not|won'?t|will not|wouldn'?t|shouldn'?t|not|never|refuse to|rather not)\s+(?:[a-z']+\s+){0,2}$"#, options: .regularExpression) != nil { continue }
+            for g in [1, 2, 3] {
+                guard let r = Range(m.range(at: g), in: text) else { continue }
+                var words = text[r].lowercased().split(separator: " ").map(String.init)
+                // "the stools and hold them", "every single barstool in my hands": stop at a joining word.
+                if let cut = words.firstIndex(where: { joinWords.contains($0) }) { words = Array(words[..<cut]) }
+                guard let first = words.first, let last = words.last, last.count > 2,
+                      !notStarts.contains(first), !notThings.contains(last), !personWords.contains(last) else { continue }
+                // "every single barstool" is all of them.
+                if text[whole].range(of: #"(?i)\b(every|each|all|both|several|two|three|four|five|six|few|couple|pair|handful)\b"#, options: .regularExpression) != nil,
+                   !last.hasSuffix("s") { words[words.count - 1] = last + "s" }
+                return "the " + words.joined(separator: " ")
+            }
         }
         return nil
+    }
+
+    private static let joinWords: Set<String> = ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on", "by", "near", "at", "for", "into", "behind", "under", "i", "so", "over", "across", "around", "while", "as", "of"]
+    private static let notStarts: Set<String> = ["where", "what", "when", "how", "after", "again", "speed", "pace", "right"]
+    /// "Take a seat", "take a sip", "take her hand": not things to carry.
+    private static let notThings: Set<String> = ["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance", "sip", "swig", "gulp", "walk", "stroll", "rest", "break", "bow", "guess", "hint", "note", "notes", "care", "hold", "liking", "stand", "hand", "hands", "arm", "word", "advice", "where", "what", "speed", "pace", "him", "her", "them", "you", "one", "ones", "lot", "bit"]
+
+    /// Words for people, who are walked with or brought along, never carried ("take the bartender").
+    static let personWords: Set<String> = ["bartender", "barkeep", "man", "woman", "men", "women", "lady", "gentleman", "girl", "boy", "guy", "kid", "child", "regular", "stranger", "friend", "waiter", "waitress", "owner", "guard", "officer", "doctor", "captain", "driver", "people", "person", "everyone", "everybody"]
+
+    /// "I take it", "I pick them up", "I pocket it": the player takes what was just put in front of
+    /// them. Returns the prop the last reply named last ("places a small, silver pocket watch on the
+    /// bar" → "silver pocket watch").
+    static func pickedUpIt(_ input: String, lastReply: String, props: [String]) -> String? {
+        let text = input.replacingOccurrences(of: "’", with: "'")
+        guard let r = text.range(of: #"(?i)\b(?:(?:pick|picks|picked) (?:it|them) up|(?:pick|picks|picked) up (?:it|them)|(?:take|takes|took|grab|grabs|grabbed|pocket|pockets|accept|accepts|accepted|keep|keeps) (?:it|them))\b"#, options: .regularExpression) else { return nil }
+        let before = String(text[..<r.lowerBound].suffix(40))
+        if before.range(of: #"(?i)\b(can'?t|cannot|can not|don'?t|do not|won'?t|will not|wouldn'?t|shouldn'?t|not|never|refuse to|rather not)\s+(?:[a-z']+\s+){0,2}$"#, options: .regularExpression) != nil { return nil }
+        let reply = lastReply.lowercased()
+        var best: (String, String.Index)? = nil
+        for p in props {
+            let noun = p.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
+            guard noun.count >= 3, let at = reply.range(of: noun, options: .backwards)?.lowerBound else { continue }
+            if best == nil || at > best!.1 { best = (p, at) }
+        }
+        return best?.0
     }
 
     /// An answer that dodges ("it's complicated", "you'll see", "that's a story for another time").

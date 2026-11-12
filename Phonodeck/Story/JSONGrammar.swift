@@ -94,6 +94,13 @@ enum JSONGrammar {
                 key("to") + " who",
                 key("going") + " where",
                 key("new_place") + " s40",
+                key("takes") + " s40",
+                key("puts_down") + " s40",
+                key("spot") + " s60",
+                key("tells") + " s80",
+                key("body") + " s40",
+                key("feels") + " s40",
+                key("goal_step") + " s80",
                 key("look") + " looks",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("who", cast + ["nobody"]),
@@ -104,6 +111,8 @@ enum JSONGrammar {
             personNames.isEmpty ? "" : "pname ::= " + personNames.map { "\"" + $0 + "\"" }.joined(separator: " | "),
             #"topic ::= [a-zA-Z0-9 ,'-]{3,40}"#,
             capped("s40", 40),
+            capped("s60", 60),
+            capped("s80", 80),
             common,
         ].filter { !$0.isEmpty }.joined(separator: "\n")
     }
