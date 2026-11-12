@@ -2575,7 +2575,7 @@ final class StoryEngine {
         // What someone else is wearing is theirs, and a smell or a light is nothing to carry.
         let theirs: [Set<String>] = start.cast.map { Continuity.wordSet($0.desc) }
         let mineSaid = Continuity.wordSet(playerSaid)
-        let held = checked(strings(cm, "has", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { h in
+        var held = checked(strings(cm, "has", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { h in
             if h.range(of: #"(?i)\b(smell|scent|aroma|odou?r|light|glow|sound|air|warmth|chill|feeling|time|moment|chance|question|idea|plan|thought|memory|patience|courage|nerve|worry)s?\b"#, options: .regularExpression) != nil {
                 refused.append(h + " (not something you carry)")
                 return false
@@ -2589,6 +2589,14 @@ final class StoryEngine {
             if start.carrying.contains(where: { Self.similar($0, h) }) || Continuity.grounded(h, in: inReply) { return true }
             refused.append(h + " (not in this reply)")
             return false
+        }
+        // What the player said they picked up, and the story shows them with, is theirs even when
+        // the answer above missed it ("I pick up all of the stools and hold them").
+        if let taken = Self.pickedUp(playerSaid), Continuity.grounded(taken, in: inReply, share: 0.99),
+           !held.contains(where: { Self.similar($0, taken) || Continuity.wordSet($0).isSuperset(of: Continuity.wordSet(taken)) }),
+           !start.carrying.contains(where: { Self.similar($0, taken) }) {
+            held.append(taken)
+            notes.append("Picked up, from your own words: " + taken)
         }
         asked.append("What do you have? → " + (held.isEmpty ? "nothing new" : held.joined(separator: "; ")))
         commit { now in
@@ -3768,6 +3776,22 @@ final class StoryEngine {
         }
         guard let now = years(a.bible).first else { return false }
         return years(s).contains { $0 > now }
+    }
+
+    /// The thing the player says they pick up or take ("I pick up all of the stools" → "the stools").
+    static func pickedUp(_ input: String) -> String? {
+        let pattern = #"(?i)\b(?:pick|picks|picked) up\s+(?:all of\s+|both of\s+|one of\s+)?(?:the|a|an|my|some|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+)?)|\b(?:grab|grabs|take|takes|lift|lifts|carry|carries)\s+(?:all of\s+)?(?:the|a|an|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+)?)"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)) else { return nil }
+        for g in [1, 2] {
+            guard let r = Range(m.range(at: g), in: input) else { continue }
+            var words = input[r].lowercased().split(separator: " ").map(String.init)
+            // "the stools and hold them": stop at a joining word.
+            if let cut = words.firstIndex(where: { ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on"].contains($0) }) { words = Array(words[..<cut]) }
+            guard let last = words.last, last.count > 2, !["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance"].contains(last) else { return nil }
+            return "the " + words.joined(separator: " ")
+        }
+        return nil
     }
 
     /// An answer that dodges ("it's complicated", "you'll see", "that's a story for another time").
