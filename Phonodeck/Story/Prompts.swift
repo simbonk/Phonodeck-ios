@@ -487,45 +487,81 @@ enum Prompts {
     /// "A pulse in the pulse"), and the player's earlier answers come first, as the thing to build on.
     static func suggestions(question: String, hint: String, examples: [String], avoid: [String], earlier: String, world: String,
                             typed: String, id: String, age: Int, short: Bool) -> String {
-        var s = "You help someone set up an interactive audio story by suggesting answers to one question.\n\n"
+        // Every sentence is a template in the engine file; {name} marks where the app fills in.
+        func fill(_ t: String, _ v: [String: String] = [:]) -> String {
+            var out = t
+            for (k, x) in v { out = out.replacingOccurrences(of: "{" + k + "}", with: x) }
+            return out
+        }
+        var s = suggestIntro + "\n\n"
         s += "WHAT THEY HAVE CHOSEN SO FAR:\n" + (earlier.isEmpty ? "(nothing yet)" : earlier) + "\n\n"
         s += "QUESTION: \(question) (\(hint))\n"
         s += "EXAMPLES OF GOOD ANSWERS (generic, not yet tailored): " + examples.joined(separator: "; ") + "\n\n"
         s += "Write 6 NEW answers. "
         if id == "feeling" {
-            s += "Each is a FEELING someone might want to come away with from a really good story: a specific, evocative emotional experience of 3 to 9 words (like \"The thrill of getting away with something\"). Make them varied: warm, thrilling, bittersweet, triumphant, peaceful."
-            if !typed.isEmpty { s += " They typed \"\(typed.prefix(200))\": offer richer, more specific variations of that feeling." }
+            s += suggestFeeling
+            if !typed.isEmpty { s += " " + fill(suggestFeelingTyped, ["typed": String(typed.prefix(200))]) }
         } else {
             let setting = world.trimmingCharacters(in: .whitespacesAndNewlines)
             if !setting.isEmpty, id != "world" {
-                s += "Every answer must clearly belong in \(setting.prefix(120)): use its people, jobs, places and dangers, so someone could tell which world it is from the answer alone. "
+                s += fill(suggestInWorld, ["world": String(setting.prefix(120))]) + " "
             } else {
-                s += "Each answer should fit what they have chosen so far. "
+                s += suggestFits + " "
             }
             switch id {
-            case "world": s += "Each is a specific era and place, with a time and a place (like \"Venice during Carnival, 1750\"). No trademarked film, TV or game worlds."
-            case "who": s += "Each is a concrete role, job or background a person could really have there (like \"A field surgeon\" or \"A blockade runner\"), 2 to 6 words. No metaphors."
-            case "where": s += "Each is a concrete starting place there, 2 to 7 words."
-            case "goal": s += "Each is something to DO there, 2 to 6 words."
-            case "play": s += "Each is a gameplay style (like \"Heist planning\", \"Social intrigue\")."
-            default: s += "Each is short and plain, 1 to 6 words, at the same level of detail as the examples. No character names, no metaphors."
+            case "world": s += suggestWorld
+            case "who": s += suggestWho
+            case "where": s += suggestWhere
+            case "goal": s += suggestGoal
+            case "play": s += suggestPlay
+            default: s += suggestOther
             }
-            if !typed.isEmpty { s += " They have typed \"\(typed.prefix(160))\": suggest answers in that direction." }
+            if !typed.isEmpty { s += " " + fill(suggestTyped, ["typed": String(typed.prefix(160))]) }
         }
-        if age > 0 { s += age < 13 ? " The player is \(age), a child: G-rated, playful, no romance, nothing frightening." : age < 18 ? " The player is \(age), a teenager: PG, no romance." : " The player is \(age): suit that age." }
-        if short { s += " It is a SHORT story: keep answers simple and grounded, on Earth, today or in a familiar period of history." }
-        s += " Use a different sentence pattern for each answer, and never repeat a word inside one answer."
+        if age > 0 { s += " " + fill(age < 13 ? suggestChild : age < 18 ? suggestTeen : suggestAdult, ["age": String(age)]) }
+        if short { s += " " + suggestShort }
+        s += " " + suggestVary
         if !avoid.isEmpty { s += "\nDo not repeat any of these: " + avoid.joined(separator: "; ") }
         s += "\n\nOutput ONLY JSON: {\"options\":[\"...\"]}"
         return s
     }
 
-    /// Drops suggestions that show a small model has fallen into a loop: a word repeated inside one
-    /// option ("A mirror in the mirror"), or the same template over and over ("A spark in the dark",
-    /// "A flame in the ashes", ...). At most two options may share a phrase template such as
-    /// "a _ in the _"; plain ones like "A field surgeon" are not limited.
-    /// `existing` is every chip already shown (for duplicates); `earlierSuggestions` are the
-    /// model's own earlier ones (for templates).
+    // The suggestion prompt's sentences ({world}, {typed} and {age} are filled in by the app).
+    static let suggestIntroBuiltIn = "You help someone set up an interactive audio story by suggesting answers to one question."
+    static var suggestIntro: String { EnginePack.text("suggestIntro", suggestIntroBuiltIn) }
+    static let suggestFeelingBuiltIn = "Each is a FEELING someone might want to come away with from a really good story: a specific, evocative emotional experience of 3 to 9 words (like \"The thrill of getting away with something\"). Make them varied: warm, thrilling, bittersweet, triumphant, peaceful."
+    static var suggestFeeling: String { EnginePack.text("suggestFeeling", suggestFeelingBuiltIn) }
+    static let suggestFeelingTypedBuiltIn = "They typed \"{typed}\": offer richer, more specific variations of that feeling."
+    static var suggestFeelingTyped: String { EnginePack.text("suggestFeelingTyped", suggestFeelingTypedBuiltIn) }
+    static let suggestInWorldBuiltIn = "Every answer must clearly belong in {world}: use its people, jobs, places and dangers, so someone could tell which world it is from the answer alone."
+    static var suggestInWorld: String { EnginePack.text("suggestInWorld", suggestInWorldBuiltIn) }
+    static let suggestFitsBuiltIn = "Each answer should fit what they have chosen so far."
+    static var suggestFits: String { EnginePack.text("suggestFits", suggestFitsBuiltIn) }
+    static let suggestWorldBuiltIn = "Each is a specific era and place, with a time and a place (like \"Venice during Carnival, 1750\"). No trademarked film, TV or game worlds."
+    static var suggestWorld: String { EnginePack.text("suggestWorld", suggestWorldBuiltIn) }
+    static let suggestWhoBuiltIn = "Each is a concrete role, job or background a person could really have there (like \"A field surgeon\" or \"A blockade runner\"), 2 to 6 words. No metaphors."
+    static var suggestWho: String { EnginePack.text("suggestWho", suggestWhoBuiltIn) }
+    static let suggestWhereBuiltIn = "Each is a concrete starting place there, 2 to 7 words."
+    static var suggestWhere: String { EnginePack.text("suggestWhere", suggestWhereBuiltIn) }
+    static let suggestGoalBuiltIn = "Each is something to DO there, 2 to 6 words."
+    static var suggestGoal: String { EnginePack.text("suggestGoal", suggestGoalBuiltIn) }
+    static let suggestPlayBuiltIn = "Each is a gameplay style (like \"Heist planning\", \"Social intrigue\")."
+    static var suggestPlay: String { EnginePack.text("suggestPlay", suggestPlayBuiltIn) }
+    static let suggestOtherBuiltIn = "Each is short and plain, 1 to 6 words, at the same level of detail as the examples. No character names, no metaphors."
+    static var suggestOther: String { EnginePack.text("suggestOther", suggestOtherBuiltIn) }
+    static let suggestTypedBuiltIn = "They have typed \"{typed}\": suggest answers in that direction."
+    static var suggestTyped: String { EnginePack.text("suggestTyped", suggestTypedBuiltIn) }
+    static let suggestChildBuiltIn = "The player is {age}, a child: G-rated, playful, no romance, nothing frightening."
+    static var suggestChild: String { EnginePack.text("suggestChild", suggestChildBuiltIn) }
+    static let suggestTeenBuiltIn = "The player is {age}, a teenager: PG, no romance."
+    static var suggestTeen: String { EnginePack.text("suggestTeen", suggestTeenBuiltIn) }
+    static let suggestAdultBuiltIn = "The player is {age}: suit that age."
+    static var suggestAdult: String { EnginePack.text("suggestAdult", suggestAdultBuiltIn) }
+    static let suggestShortBuiltIn = "It is a SHORT story: keep answers simple and grounded, on Earth, today or in a familiar period of history."
+    static var suggestShort: String { EnginePack.text("suggestShort", suggestShortBuiltIn) }
+    static let suggestVaryBuiltIn = "Use a different sentence pattern for each answer, and never repeat a word inside one answer."
+    static var suggestVary: String { EnginePack.text("suggestVary", suggestVaryBuiltIn) }
+
     static func cleanSuggestions(_ options: [String], existing: [String], earlierSuggestions: [String]) -> [String] {
         let small: Set<String> = ["a", "an", "the", "in", "of", "on", "at", "to", "and", "or", "with", "from", "for", "by", "but", "who", "my", "your"]
         func words(_ s: String) -> [String] {
@@ -555,7 +591,8 @@ enum Prompts {
         return out
     }
 
-    static let feelingIdeas = [
+    static var feelingIdeas: [String] { EnginePack.wizardList("feelingIdeas") ?? feelingIdeasBuiltIn }
+    static let feelingIdeasBuiltIn = [
         "The thrill of getting away with something", "Coming home after years away", "Being truly seen by someone",
         "Quiet awe under an impossibly big sky", "Cosy safety while a storm rages outside", "Hard-won triumph against the odds",
         "Bittersweet nostalgia for a time I never lived", "The warmth of a found family", "Wonder at discovering something no one has seen",
@@ -567,6 +604,23 @@ enum Prompts {
     /// Every prompt the engine file can replace, by its name in the file, with the text built
     /// into the app (see `EnginePack`).
     static let builtIns: [(String, String)] = [
+        ("suggestIntro", suggestIntroBuiltIn),
+        ("suggestFeeling", suggestFeelingBuiltIn),
+        ("suggestFeelingTyped", suggestFeelingTypedBuiltIn),
+        ("suggestInWorld", suggestInWorldBuiltIn),
+        ("suggestFits", suggestFitsBuiltIn),
+        ("suggestWorld", suggestWorldBuiltIn),
+        ("suggestWho", suggestWhoBuiltIn),
+        ("suggestWhere", suggestWhereBuiltIn),
+        ("suggestGoal", suggestGoalBuiltIn),
+        ("suggestPlay", suggestPlayBuiltIn),
+        ("suggestOther", suggestOtherBuiltIn),
+        ("suggestTyped", suggestTypedBuiltIn),
+        ("suggestChild", suggestChildBuiltIn),
+        ("suggestTeen", suggestTeenBuiltIn),
+        ("suggestAdult", suggestAdultBuiltIn),
+        ("suggestShort", suggestShortBuiltIn),
+        ("suggestVary", suggestVaryBuiltIn),
         ("gmRules", gmRulesBuiltIn),
         ("namelessRule", namelessRuleBuiltIn),
         ("shortRules", shortRulesBuiltIn),
