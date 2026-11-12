@@ -1703,14 +1703,27 @@ final class StoryEngine {
         // Picking something up is the player's own act: it is in their hands the moment they say
         // it, when the thing is in the scene (the last reply, the place, its props, the premise).
         var pickedNow: String? = nil
-        if !hidden, !playerNarrates, let taken = Self.pickedUp(input),
-           !a.carrying.contains(where: { Self.similar($0, taken) || Self.similar($0, String(taken.dropFirst(4))) }) {
+        if !hidden, !playerNarrates {
             let lastGM: String = a.transcript.last(where: { $0.role == .gm })?.text ?? ""
-            let scene: String = ([lastGM, a.bible, Cards.placeCard(a)?.desc ?? ""] + Cards.props(a) + a.facts).joined(separator: " ")
-            if Continuity.grounded(taken, in: Continuity.wordSet(scene)) {
-                let item = taken.hasPrefix("the ") ? String(taken.dropFirst(4)) : taken
-                a.carrying = Array((a.carrying + [item]).suffix(8))
-                pickedNow = item
+            let props = Cards.props(a)
+            // "I pick up every single barstool", or "I take it" after the watch is set in front of you.
+            let named = Self.pickedUp(input).map { $0.hasPrefix("the ") ? String($0.dropFirst(4)) : $0 }
+            let item = named ?? Self.pickedUpIt(input, lastReply: lastGM, props: props)
+            let names: Set<String> = Set(a.cast.flatMap { Continuity.wordSet($0.name) }.filter { $0.count > 2 })
+            if let item, Continuity.wordSet(item).isDisjoint(with: names),
+               !a.carrying.contains(where: { Self.similar($0, item) }) {
+                let scene: String = ([lastGM, a.bible, Cards.premise(a), Cards.placeCard(a)?.desc ?? ""] + props + a.facts).joined(separator: " ")
+                if Continuity.grounded(item, in: Continuity.wordSet(scene)) {
+                    a.carrying = Array((a.carrying + [item]).suffix(8))
+                    pickedNow = item
+                    // In your hands now, so no longer lying about the place.
+                    let key = a.location.lowercased()
+                    if !a.location.isEmpty, var here = a.placeThings[key] {
+                        here.removeAll { Self.similar($0, item) }
+                        a.placeThings[key] = here
+                    }
+                    a.things.removeAll { Self.similar($0, item) }
+                }
             }
         }
         if !hidden { a.transcript.append(StoryTurn(role: .player, text: input)) }
@@ -2623,7 +2636,9 @@ final class StoryEngine {
             for old in start.carrying where !held.contains(where: { Self.similar($0, old) }) {
                 let noun = old.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
                 // What the player just picked up isn't gone because the reply says "left" or "set".
-                let justTaken = Self.pickedUp(playerSaid).map { $0.lowercased().contains(noun) } ?? false
+                let before = start.transcript.dropLast(2).last(where: { $0.role == .gm })?.text ?? ""
+                let justTaken = Self.pickedUp(playerSaid).map { $0.lowercased().contains(noun) }
+                    ?? (Self.pickedUpIt(playerSaid, lastReply: before, props: [old]) != nil)
                 if parting, !justTaken, noun.count >= 3, said.contains(noun) { filed.append("Gone from your hands: " + old); continue }
                 ledger.append(old)
             }
@@ -3795,20 +3810,62 @@ final class StoryEngine {
         return years(s).contains { $0 > now }
     }
 
-    /// The thing the player says they pick up or take ("I pick up all of the stools" → "the stools").
+    /// The thing the player says they pick up or take ("I pick up all of the stools" → "the stools",
+    /// "I pick up every single barstool in my hands" → "the barstools"). Nil when they say they won't
+    /// ("I can't take this"), when it's a person, or when it isn't a thing ("take a seat").
     static func pickedUp(_ input: String) -> String? {
-        let pattern = #"(?i)\b(?:pick|picks|picked) up\s+(?:all of\s+|both of\s+|one of\s+)?(?:the|a|an|my|some|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})|\b(?:grab|grabs|take|takes|lift|lifts|carry|carries)\s+(?:all of\s+)?(?:the|a|an|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})"#
-        guard let re = try? NSRegularExpression(pattern: pattern),
-              let m = re.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)) else { return nil }
-        for g in [1, 2] {
-            guard let r = Range(m.range(at: g), in: input) else { continue }
-            var words = input[r].lowercased().split(separator: " ").map(String.init)
-            // "the stools and hold them": stop at a joining word.
-            if let cut = words.firstIndex(where: { ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on", "by", "near", "at", "for", "into", "behind", "under", "i", "so"].contains($0) }) { words = Array(words[..<cut]) }
-            guard let last = words.last, last.count > 2, !["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance"].contains(last) else { return nil }
-            return "the " + words.joined(separator: " ")
+        let text = input.replacingOccurrences(of: "’", with: "'")
+        let det = #"(?:(?:all|both|one|each|some|most|any|a few|a couple|two|three|four|five|several|every one|every single one) of\s+)?(?:a few|a couple of|a pair of|a handful of|the|an|a|my|your|his|her|their|some|that|this|those|these|every(?:\s+single)?|each|all(?:\s+the)?|both(?:\s+the)?|two|three|four|five|six|several|one)\s+"#
+        let thing = #"([a-z]+(?:\s+[a-z]+){0,2})"#
+        let pattern = #"(?i)\b(?:pick|picks|picked|picking) up\s+(?:"# + det + #")?"# + thing
+            + #"|\b(?:pick|picks|picked) "# + det + #"([a-z]+(?:\s+[a-z]+){0,2}?)\s+up\b"#
+            + #"|\b(?:grab|grabs|grabbed|take|takes|took|lift|lifts|lifted|carry|carries|carried|collect|collects|pocket|pockets|gather up|gathers up|scoop up|scoops up)\s+"# + det + thing
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return nil }
+        for m in re.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let whole = Range(m.range, in: text) else { continue }
+            // "I can't take this", "I don't pick up the glass": not taken.
+            let before = String(text[..<whole.lowerBound].suffix(40))
+            if before.range(of: #"(?i)\b(can'?t|cannot|can not|don'?t|do not|won'?t|will not|wouldn'?t|shouldn'?t|not|never|refuse to|rather not)\s+(?:[a-z']+\s+){0,2}$"#, options: .regularExpression) != nil { continue }
+            for g in [1, 2, 3] {
+                guard let r = Range(m.range(at: g), in: text) else { continue }
+                var words = text[r].lowercased().split(separator: " ").map(String.init)
+                // "the stools and hold them", "every single barstool in my hands": stop at a joining word.
+                if let cut = words.firstIndex(where: { joinWords.contains($0) }) { words = Array(words[..<cut]) }
+                guard let first = words.first, let last = words.last, last.count > 2,
+                      !notStarts.contains(first), !notThings.contains(last), !personWords.contains(last) else { continue }
+                // "every single barstool" is all of them.
+                if text[whole].range(of: #"(?i)\b(every|each|all|both|several|two|three|four|five|six|few|couple|pair|handful)\b"#, options: .regularExpression) != nil,
+                   !last.hasSuffix("s") { words[words.count - 1] = last + "s" }
+                return "the " + words.joined(separator: " ")
+            }
         }
         return nil
+    }
+
+    private static let joinWords: Set<String> = ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on", "by", "near", "at", "for", "into", "behind", "under", "i", "so", "over", "across", "around", "while", "as", "of"]
+    private static let notStarts: Set<String> = ["where", "what", "when", "how", "after", "again", "speed", "pace", "right"]
+    /// "Take a seat", "take a sip", "take her hand": not things to carry.
+    private static let notThings: Set<String> = ["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance", "sip", "swig", "gulp", "walk", "stroll", "rest", "break", "bow", "guess", "hint", "note", "notes", "care", "hold", "liking", "stand", "hand", "hands", "arm", "word", "advice", "where", "what", "speed", "pace", "him", "her", "them", "you", "one", "ones", "lot", "bit"]
+
+    /// Words for people, who are walked with or brought along, never carried ("take the bartender").
+    static let personWords: Set<String> = ["bartender", "barkeep", "man", "woman", "men", "women", "lady", "gentleman", "girl", "boy", "guy", "kid", "child", "regular", "stranger", "friend", "waiter", "waitress", "owner", "guard", "officer", "doctor", "captain", "driver", "people", "person", "everyone", "everybody"]
+
+    /// "I take it", "I pick them up", "I pocket it": the player takes what was just put in front of
+    /// them. Returns the prop the last reply named last ("places a small, silver pocket watch on the
+    /// bar" → "silver pocket watch").
+    static func pickedUpIt(_ input: String, lastReply: String, props: [String]) -> String? {
+        let text = input.replacingOccurrences(of: "’", with: "'")
+        guard let r = text.range(of: #"(?i)\b(?:(?:pick|picks|picked) (?:it|them) up|(?:pick|picks|picked) up (?:it|them)|(?:take|takes|took|grab|grabs|grabbed|pocket|pockets|accept|accepts|accepted|keep|keeps) (?:it|them))\b"#, options: .regularExpression) else { return nil }
+        let before = String(text[..<r.lowerBound].suffix(40))
+        if before.range(of: #"(?i)\b(can'?t|cannot|can not|don'?t|do not|won'?t|will not|wouldn'?t|shouldn'?t|not|never|refuse to|rather not)\s+(?:[a-z']+\s+){0,2}$"#, options: .regularExpression) != nil { return nil }
+        let reply = lastReply.lowercased()
+        var best: (String, String.Index)? = nil
+        for p in props {
+            let noun = p.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
+            guard noun.count >= 3, let at = reply.range(of: noun, options: .backwards)?.lowerBound else { continue }
+            if best == nil || at > best!.1 { best = (p, at) }
+        }
+        return best?.0
     }
 
     /// An answer that dodges ("it's complicated", "you'll see", "that's a story for another time").
