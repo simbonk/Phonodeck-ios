@@ -86,7 +86,45 @@ enum PlayScripts {
     static var starters: [PlayScript] { parse(EnginePack.testScripts) }
 
     static let starterText = """
-    # A12 Straight questions
+    # 01 Who do you mean
+    I sit at the bar and nod to the bartender.
+    I watch what the woman in the corner booth is doing.
+    What are you making there?
+    Why that colour?
+    I turn back to the bar. What are you polishing?
+    How long have you been doing that?
+    I look over at the booth again. Is that for someone special?
+    Who is here with me now?
+
+    # 02 Asking a name by her or him
+    I sit at the bar beside the bartender.
+    I walk over to the woman and ask her what her name is.
+    I tell her my name is Sam.
+    I go back to the bar and ask him what his name is.
+    I ask him what her name was again.
+    Who is here with me now?
+
+    # 03 Picking things up
+    I pick up the empty glass from the bar.
+    What am I holding?
+    I pick up a stool and carry it over to the booth.
+    What am I carrying now?
+    I put the stool down and sit on it.
+    I grab the umbrella by the door.
+    What do I have with me?
+    I hand the glass back to the bartender.
+    What am I holding now?
+
+    # 04 True to the year
+    I sit at the bar. What year is it?
+    I ask the bartender how long this place has been open.
+    Do you have a radio in here?
+    What is the newest car you have seen?
+    I ask the woman what she thinks the city will look like in fifty years.
+    What song is playing?
+    What did you do before this?
+
+    # 05 Straight questions
     I sit at the bar beside the nearest regular. Hello, my name is Simon.
     What are you working on there?
     Why are you doing that?
@@ -99,7 +137,7 @@ enum PlayScripts {
     Why is it so quiet in here tonight?
 
 
-    # A1 Back to the bar
+    # 06 Back to the bar
     I sit at the bar and order a coffee.
     I tell them my name is Sam and I am a salesman from Chicago.
     I step out into the flower shop at the front for some air.
@@ -113,7 +151,7 @@ enum PlayScripts {
     I ask the woman at the bar what she is working on.
     I ask them both what they know about me.
 
-    # A2 Down to the cellar and up
+    # 07 Down to the cellar and up
     I sit at the bar and offer to help the bartender.
     I ask him what is down in the cellar.
     I follow him down to the cellar.
@@ -127,7 +165,7 @@ enum PlayScripts {
     I ask the woman at the bar if she saw me working.
     I ask the bartender if I have earned a drink.
 
-    # A6 Someone walks in
+    # 08 Someone walks in
     I sit at the bar and order a coffee.
     I tell them my name is Sam.
     I look to the door as a young man with a violin case comes in.
@@ -139,7 +177,7 @@ enum PlayScripts {
     I ask the bartender if he knows either of them.
     Who is in this room now?
 
-    # A7 Out and about
+    # 09 Out and about
     I sit at the bar and tell the woman next to me my name is Sam.
     I ask her if she would like to take a walk with me.
     We leave together through the flower shop.
@@ -151,7 +189,7 @@ enum PlayScripts {
     Where am I, and who is here?
     I order a drink for both of us.
 
-    # A8 Sitting back down
+    # 10 Sitting back down
     I sit at the bar and order a coffee.
     I go out to the street to look at the rain.
     I walk back to the speakeasy.
@@ -163,7 +201,7 @@ enum PlayScripts {
     Where am I, and who is with me?
     I ask the bartender what time it is.
 
-    # A9 Things left behind
+    # 11 Things left behind
     I take off my hat and put it on the bar next to me.
     I order a whiskey and put a dollar beside it.
     I step out into the flower shop and buy a single red rose.
@@ -176,7 +214,7 @@ enum PlayScripts {
     What is on the bar in front of me?
 
 
-    # A10 Someone leaves
+    # 12 Someone leaves
     I sit at the bar and say hello to both of them.
     I ask the woman what time she has to go home.
     The woman says goodnight, puts on her coat and leaves.
@@ -189,7 +227,7 @@ enum PlayScripts {
     Who is here with me now?
 
 
-    # A11 A name given late
+    # 13 A name given late
     I sit at the bar next to a quiet man in a grey suit.
     I nod to the man in the grey suit and say it is a rough night.
     I ask the bartender who the man in the grey suit is.
@@ -201,7 +239,7 @@ enum PlayScripts {
     Who is here with me now?
     I ask the man what brought him out tonight.
 
-    # 04 The hat I left behind
+    # 14 The hat I left behind
     I take off my hat and my wet coat and hang the coat on the hook by the door.
     I put my hat down on the bar next to me and order a whiskey.
     I take a notebook and a pencil out of my pocket and put them on the bar.
@@ -223,7 +261,7 @@ enum PlayScripts {
     I ask the woman if she still has the page I gave her.
     I put on my coat and sit back down for one more.
 
-    # 05 A long evening
+    # 15 A long evening
     I take a stool. What time is it?
     I order a drink and ask the bartender how his night is going.
     I talk with the bartender about the weather for a good half hour.
@@ -245,7 +283,7 @@ enum PlayScripts {
     I ask what day it is now.
     I pay and say good morning.
 
-    # 07 Paying my way
+    # 16 Paying my way
     I sit at the bar and check my wallet. How much do I have?
     I ask what a drink costs here.
     I order a gin and put a dollar on the bar.
@@ -267,7 +305,7 @@ enum PlayScripts {
     I ask if there is anything else I owe.
     I count out what is in my pockets on the bar.
 
-    # 08 A dance by the gramophone
+    # 17 A dance by the gramophone
     I come in and sit at the bar.
     I ask the bartender what record that is.
     I ask the woman at the bar if she likes this song.
@@ -289,7 +327,7 @@ enum PlayScripts {
     I ask him to dance with her while I watch the bar.
     I go behind the bar and stand where he usually stands.
 
-    # 12 A person of few words
+    # 18 A person of few words
     I sit.
     Coffee.
     Thanks.
@@ -311,7 +349,7 @@ enum PlayScripts {
     I stand up.
     Goodnight.
 
-    # 14 A hand of cards
+    # 19 A hand of cards
     I sit at the bar and ask if anyone plays cards.
     I ask the bartender if he has a deck.
     I shuffle the deck.
@@ -333,7 +371,7 @@ enum PlayScripts {
     I give the deck back to the bartender.
     I ask them who taught them to play.
 
-    # 15 No names tonight
+    # 20 No names tonight
     I come in out of the rain and sit down.
     I ask for a drink without saying who I am.
     I ask the bartender not to ask my name.
@@ -355,7 +393,7 @@ enum PlayScripts {
     I put on my coat.
     I say goodnight without telling them who I was.
 
-    # 16 Things I cannot do
+    # 21 Things I cannot do
     I sit at the bar and order a drink.
     I take a pistol out of my coat and put it on the bar.
     I check my pockets. What do I actually have?
@@ -377,7 +415,7 @@ enum PlayScripts {
     I guess seven.
     I ask them if I have been a nuisance.
 
-    # 17 When the lights go out
+    # 22 When the lights go out
     I sit at the bar and listen to the storm.
     I ask the bartender if the storm is getting worse.
     I look up at the skylight.
@@ -399,7 +437,7 @@ enum PlayScripts {
     I ask what time it is.
     I ask them what they will remember about tonight.
 
-    # 18 Something to give
+    # 23 Something to give
     I sit at the bar with a small parcel under my arm.
     I put the parcel on the bar.
     I ask the bartender for a drink.
@@ -421,7 +459,7 @@ enum PlayScripts {
     What do I have with me now, and what have I given away?
     I ask the bartender not to forget the letter.
 
-    # 19 The records
+    # 24 The records
     I sit at the bar and listen. What is playing?
     I ask the bartender whose records these are.
     I go over to the gramophone and look at it closely.
@@ -443,7 +481,7 @@ enum PlayScripts {
     I ask the bartender what was playing when I came in.
     I ask which record is on the gramophone right now.
 
-    # 20 Closing time and tomorrow
+    # 25 Closing time and tomorrow
     I sit at the bar and ask what time they close.
     I order a last drink.
     I ask the bartender what he does after closing.
@@ -465,7 +503,7 @@ enum PlayScripts {
     I ask what has changed since yesterday.
     I order the same drink as last night.
 
-    # 21 Thinking out loud
+    # 26 Thinking out loud
     So I come in and, uh, I shake off my coat, and I guess I just kind of look around for a second before I sit down at the bar.
     I ask the bartender, you know, what's good here, and I tell him I don't really know what I want, maybe something warm, maybe not.
     I kind of turn to the lady next to me and say hi, and then I ask her if she comes here a lot or if tonight is special.
@@ -487,7 +525,7 @@ enum PlayScripts {
     I say okay, okay, one more song and then I'm going, and I ask them to pick it.
     I say goodnight to both of them, by name, and I tell them I'll remember tonight.
 
-    # 22 People who are not here
+    # 27 People who are not here
     I sit at the bar and order a drink.
     I ask the bartender who owns this place.
     I ask him when the owner comes in.
@@ -509,7 +547,7 @@ enum PlayScripts {
     Who have we talked about that is not in this room?
     Who is actually in this room?
 
-    # 23 Never sitting still
+    # 28 Never sitting still
     I sit at the bar.
     I get up and go to the gramophone.
     I go to the door and look into the flower shop.
@@ -531,7 +569,7 @@ enum PlayScripts {
     Where have I been, in order?
     I promise the bartender I will stay put.
 
-    # 24 Promises
+    # 29 Promises
     I sit at the bar and order a drink.
     I ask the bartender what he is saving for.
     I promise I will be his first customer when he opens his own place.
@@ -553,7 +591,7 @@ enum PlayScripts {
     I ask what I still owe anybody.
     I pay my tab and check that I still have her address.
 
-    # 25 A bit of everything
+    # 30 A bit of everything
     I duck in from the storm, hang my coat by the door and sit at the bar.
     I order something warm and tell the bartender my name is Sam.
     I ask his name and the name of the woman down the bar.

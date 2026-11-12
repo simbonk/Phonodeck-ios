@@ -168,6 +168,13 @@ final class EnginePack: @unchecked Sendable {
         }
     }
 
+    /// Removes a downloaded version from the phone. If it was in use, the built-in engine takes over.
+    static func delete(_ n: Int) {
+        try? FileManager.default.removeItem(at: file(n))
+        try? FileManager.default.removeItem(at: sourceFile(n))
+        if active == n { active = 0 }
+    }
+
     /// The version in use: 0 is the engine built into the app.
     static var active: Int {
         get { UserDefaults.standard.integer(forKey: "engineActive") }
@@ -281,9 +288,17 @@ struct EnginePackView: View {
                         detail: (v.source.isEmpty ? "" : "From " + v.source.replacingOccurrences(of: "https://", with: "") + "\n") + "\(v.changed) of \(v.prompts) parts differ from built-in · " + v.saved.formatted(date: .abbreviated, time: .shortened)
                             + (v.notes.isEmpty ? "" : "\n" + v.notes),
                         number: v.number)
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            EnginePack.delete(v.number)
+                            refresh()
+                        } label: { Label("Delete", systemImage: "trash") }
+                    }
                 }
             } header: {
                 Text("Versions")
+            } footer: {
+                Text("Swipe left on a version to delete it.")
             }
             Section {
                 ShareLink(item: EnginePack.builtInFile()) { Label("Share the built-in engine file", systemImage: "square.and.arrow.up") }

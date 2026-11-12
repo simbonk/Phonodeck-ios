@@ -1176,7 +1176,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-11p"
+    static let build = "build 2026-11-11q"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1342,13 +1342,13 @@ final class StoryEngine {
         prompt += "\n\nWHAT YOU LOOKED UP (from the app; an answer never contradicts it):\n" + (lines.isEmpty ? "- nothing" : lines.joined(separator: "\n"))
         let asked = Self.asks(input)
         prompt += "\n\n" + Prompts.planQuestion
-        if asked { prompt += "\nTHE PLAYER ASKED SOMETHING: \"answer\" must not be empty. Give the real answer, plainly: a reason, a yes or no, a name, a number." }
+        if asked { prompt += "\nTHE PLAYER ASKED SOMETHING: \"answer\" must not be empty. Give the real answer, plainly: a reason, a yes or no, a name, a number. It is what the person asked would say, about what the story already shows (what they are doing, what is around), true to the time and place." }
         prompt += "\nThe form:"
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
                                              options: .init(maxTokens: 200, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.plan(asked: asked)))) ?? ""
         let m = JSONExtract.object(reply) ?? Self.salvageJSON(reply)
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
-        read.answer = Self.echoesPrompt(s("answer")) ? "" : clip(s("answer"), 260)
+        read.answer = Self.echoesPrompt(s("answer")) || Self.outOfTime(s("answer"), a) ? "" : clip(s("answer"), 260)
         // The plan left a question unanswered (a model that ignores grammars, or an answer too
         // vague to use): one short question asks for the answer alone.
         if asked, read.answer.count < 6 || Self.vagueAnswer(read.answer) {
@@ -1358,7 +1358,7 @@ final class StoryEngine {
                                                options: .init(maxTokens: 80, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.text("answer", chars: 200)))) ?? ""
             let am = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
             let got: String = ((am["answer"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if got.count >= 6, !Self.echoesPrompt(got), !Self.vagueAnswer(got) { read.answer = clip(got, 260) }
+            if got.count >= 6, !Self.echoesPrompt(got), !Self.vagueAnswer(got), !Self.outOfTime(got, a) { read.answer = clip(got, 260) }
         }
         read.beat = Self.echoesPrompt(s("beat")) ? "" : clip(s("beat"), 260)
         read.does = Self.echoesPrompt(s("does")) ? "" : clip(s("does"), 200)
@@ -1724,6 +1724,10 @@ final class StoryEngine {
             read = await lookPlayer(a, input: input, context: context)
             guard !Task.isCancelled else { adventure = snapshot; return }
             lap("look")
+            if read != nil, let meant = Self.addressedByDeed(a, input: input), read!.to.caseInsensitiveCompare(meant) != .orderedSame {
+                read!.to = meant
+                step("Who do you mean? → " + meant + " (the one the story just showed doing that)")
+            }
         }
 
         // 2. Settle and look up. Code settles who the player is with and where, then answers each
@@ -2571,7 +2575,7 @@ final class StoryEngine {
         // What someone else is wearing is theirs, and a smell or a light is nothing to carry.
         let theirs: [Set<String>] = start.cast.map { Continuity.wordSet($0.desc) }
         let mineSaid = Continuity.wordSet(playerSaid)
-        let held = checked(strings(cm, "has", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { h in
+        var held = checked(strings(cm, "has", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { h in
             if h.range(of: #"(?i)\b(smell|scent|aroma|odou?r|light|glow|sound|air|warmth|chill|feeling|time|moment|chance|question|idea|plan|thought|memory|patience|courage|nerve|worry)s?\b"#, options: .regularExpression) != nil {
                 refused.append(h + " (not something you carry)")
                 return false
@@ -2585,6 +2589,14 @@ final class StoryEngine {
             if start.carrying.contains(where: { Self.similar($0, h) }) || Continuity.grounded(h, in: inReply) { return true }
             refused.append(h + " (not in this reply)")
             return false
+        }
+        // What the player said they picked up, and the story shows them with, is theirs even when
+        // the answer above missed it ("I pick up all of the stools and hold them").
+        if let taken = Self.pickedUp(playerSaid), Continuity.grounded(taken, in: inReply, share: 0.99),
+           !held.contains(where: { Self.similar($0, taken) || Continuity.wordSet($0).isSuperset(of: Continuity.wordSet(taken)) }),
+           !start.carrying.contains(where: { Self.similar($0, taken) }) {
+            held.append(taken)
+            notes.append("Picked up, from your own words: " + taken)
         }
         asked.append("What do you have? → " + (held.isEmpty ? "nothing new" : held.joined(separator: "; ")))
         commit { now in
@@ -3591,7 +3603,17 @@ final class StoryEngine {
                 let core = Continuity.roleLabel(a.lore[i].role).replacingOccurrences(of: "the ", with: "")
                 return core.count >= 3 && text.contains(core)
             }
-            target = byRole ?? others.first { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? (others.count == 1 ? others[0] : nil)
+            // "I go to the woman and ask her what her name is": "her" is the person they're with
+            // when she is the one asked, or the only one here it fits.
+            let own = hidden.first(where: { lead(a.lore[$0].name) == lead(addressee) })
+            let askedDirect = text.range(of: #"\b(ask|asks|asking|asked)\s+(her|him|them)\b|\b(to|at)\s+(her|him)\b"#, options: .regularExpression) != nil
+            let fitsOwn = own.map { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? false
+            let fitsOther = others.contains { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) }
+            if byRole == nil, let own, fitsOwn, askedDirect || !fitsOther {
+                target = own; ask = "you"
+            } else {
+                target = byRole ?? others.first { (he && !she && uses($0, "he")) || (she && !he && uses($0, "she")) } ?? (others.count == 1 && !fitsOwn ? others[0] : nil)
+            }
             // "I approach the lady and ask for her name": the person asked is the one they're with.
             if target == nil, let own = hidden.first(where: { lead(a.lore[$0].name) == lead(addressee) }) { target = own; ask = "you" }
         }
@@ -3715,6 +3737,61 @@ final class StoryEngine {
         // "I'm freaked out. What happened to my crew".
         let pattern = #"(?i)^(i\s+|we\s+)?(ask|asks|asking|question|wonder|inquire)\b|^(how|what|why|who|whom|whose|where|when|which)\b|\b(tell me|explain)\b|\b(how|what|why|who|where|when|which)\s+(happened|happens|is|are|was|were|did|do|does|can|could|should|will|would|has|have)\b"#
         return t.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// "What are you stitching?" with no name: the one person here the last reply showed doing
+    /// that is who is meant, even when the player was facing someone else.
+    static func addressedByDeed(_ a: Adventure, input: String) -> String? {
+        let said = Continuity.wordSet(input)
+        let namesSomeone = a.cast.contains { c in
+            said.contains(Cards.first(c.name).lowercased()) || Continuity.wordSet(c.role).contains(where: { $0.count > 3 && said.contains($0) })
+        }
+        guard !namesSomeone, let lastGM = a.transcript.last(where: { $0.role == .gm })?.text else { return nil }
+        let common: Set<String> = ["about", "there", "their", "would", "could", "should", "where", "which", "while", "these", "those",
+                                   "thing", "things", "something", "doing", "think", "right", "today", "tonight", "again", "other"]
+        func stems(_ t: String) -> Set<String> {
+            Set(t.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
+                .filter { $0.count >= 5 && !common.contains($0) }.map { String($0.prefix(5)) })
+        }
+        let asked = stems(input)
+        guard !asked.isEmpty else { return nil }
+        var fits: [String] = []
+        for c in a.cast where a.whereabouts.contains(where: { $0.name == c.name && $0.here != false }) {
+            let tags: [String] = [Cards.first(c.name).lowercased()] + Continuity.wordSet(c.role).filter { $0.count > 3 }
+            let about = PresenceFilter.sentences(lastGM).filter { sen in
+                let w = Continuity.wordSet(sen)
+                return tags.contains(where: { w.contains($0) })
+            }.joined(separator: " ")
+            if !asked.isDisjoint(with: stems(about)) { fits.append(c.name) }
+        }
+        return fits.count == 1 ? fits[0] : nil
+    }
+
+    /// An answer that names a year after the story's own (a watch that stopped "in 1954" in a 1925
+    /// story) doesn't belong to it.
+    static func outOfTime(_ s: String, _ a: Adventure) -> Bool {
+        func years(_ t: String) -> [Int] {
+            guard let re = try? NSRegularExpression(pattern: #"\b(1[0-9]{3}|20[0-9]{2})\b"#) else { return [] }
+            return re.matches(in: t, range: NSRange(t.startIndex..., in: t)).compactMap { Range($0.range, in: t).flatMap { Int(t[$0]) } }
+        }
+        guard let now = years(a.bible).first else { return false }
+        return years(s).contains { $0 > now }
+    }
+
+    /// The thing the player says they pick up or take ("I pick up all of the stools" → "the stools").
+    static func pickedUp(_ input: String) -> String? {
+        let pattern = #"(?i)\b(?:pick|picks|picked) up\s+(?:all of\s+|both of\s+|one of\s+)?(?:the|a|an|my|some|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})|\b(?:grab|grabs|take|takes|lift|lifts|carry|carries)\s+(?:all of\s+)?(?:the|a|an|that|this|those|these)\s+([a-z]+(?:\s+[a-z]+){0,2})"#
+        guard let re = try? NSRegularExpression(pattern: pattern),
+              let m = re.firstMatch(in: input, range: NSRange(input.startIndex..., in: input)) else { return nil }
+        for g in [1, 2] {
+            guard let r = Range(m.range(at: g), in: input) else { continue }
+            var words = input[r].lowercased().split(separator: " ").map(String.init)
+            // "the stools and hold them": stop at a joining word.
+            if let cut = words.firstIndex(where: { ["and", "then", "to", "from", "off", "out", "up", "with", "in", "on", "by", "near", "at", "for", "into", "behind", "under", "i", "so"].contains($0) }) { words = Array(words[..<cut]) }
+            guard let last = words.last, last.count > 2, !["seat", "spot", "place", "turn", "time", "look", "step", "breath", "moment", "chance"].contains(last) else { return nil }
+            return "the " + words.joined(separator: " ")
+        }
+        return nil
     }
 
     /// An answer that dodges ("it's complicated", "you'll see", "that's a story for another time").
