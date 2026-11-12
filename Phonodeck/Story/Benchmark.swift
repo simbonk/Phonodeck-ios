@@ -47,10 +47,17 @@ final class ModelBenchmark {
         if let saved = d.stringArray(forKey: "benchModels") {
             chosen = Set(saved)
         } else {
-            // Gemma 4 E4B, Qwen3.5 4B and an uncensored Qwen GGUF, if they are on the phone.
+            // Gemma 4 (E4B where it fits comfortably, otherwise E2B), Qwen3.5 4B and an uncensored
+            // Qwen GGUF, if they are on this device.
             let installed = store.installed
-            var pick = Set(["mlx-community/gemma-4-e4b-it-4bit", "mlx-community/Qwen3.5-4B-MLX-4bit"].filter(installed.contains))
-            if let gguf = store.customModels.first(where: { $0.isGGUF && installed.contains($0.id) && $0.name.lowercased().contains("uncensored") }) {
+            func comfy(_ id: String) -> Bool {
+                guard installed.contains(id), let e = ModelCatalog.entry(id) else { return false }
+                return store.report(for: e).verdict == .comfortable
+            }
+            let e4b = "mlx-community/gemma-4-e4b-it-4bit", e2b = "mlx-community/gemma-4-e2b-it-4bit"
+            var pick = Set(["mlx-community/Qwen3.5-4B-MLX-4bit"].filter(comfy))
+            if comfy(e4b) { pick.insert(e4b) } else if comfy(e2b) { pick.insert(e2b) }
+            if let gguf = store.customModels.first(where: { $0.isGGUF && comfy($0.id) && $0.name.lowercased().contains("uncensored") }) {
                 pick.insert(gguf.id)
             }
             chosen = pick
@@ -61,9 +68,19 @@ final class ModelBenchmark {
         }
     }
 
-    /// Storytellers on this phone, in the order the Models tab lists them.
+    /// Downloaded storytellers that fit this device, in the order the Models tab lists them.
+    /// One over the memory limit would close the app partway through the run.
     var models: [ModelEntry] {
-        (ModelCatalog.language + store.customModels).filter { $0.kind == .language && store.installed.contains($0.id) }
+        (ModelCatalog.language + store.customModels).filter {
+            $0.kind == .language && store.installed.contains($0.id) && store.report(for: $0).verdict != .tooBig
+        }
+    }
+
+    /// Downloaded storytellers left out because they are too big for this device.
+    var tooBig: [ModelEntry] {
+        (ModelCatalog.language + store.customModels).filter {
+            $0.kind == .language && store.installed.contains($0.id) && store.report(for: $0).verdict == .tooBig
+        }
     }
 
     var queueModels: [ModelEntry] { models.filter { chosen.contains($0.id) } }
@@ -412,7 +429,9 @@ struct BenchmarkView: View {
             } header: {
                 Text("Models (\(bench.queueModels.count) on)")
             } footer: {
-                Text("Only downloaded storytellers are listed. A model too big for this phone is skipped with a note.")
+                let left = bench.tooBig.map(\.name)
+                Text("Only downloaded storytellers that fit this \(DeviceFit.deviceWord) are listed."
+                     + (left.isEmpty ? "" : " Left out as too big: " + left.joined(separator: ", ") + "."))
             }
             .disabled(bench.running)
 
