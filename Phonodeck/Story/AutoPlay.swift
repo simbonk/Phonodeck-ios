@@ -858,7 +858,7 @@ struct AutoPlayView: View {
                     } label: {
                         Label("Run \(auto.queue.count) " + (auto.queue.count == 1 ? "story" : "stories"), systemImage: "play.fill")
                     }
-                    .disabled(auto.queue.isEmpty || app.engine.busy)
+                    .disabled(auto.queue.isEmpty || app.engine.busy || app.benchmark.running)
                     if !auto.status.isEmpty { Text(auto.status).font(.subheadline).foregroundStyle(.secondary) }
                 }
                 ForEach(Array(auto.log.enumerated()), id: \.offset) { _, line in
