@@ -791,7 +791,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z11"
+    static let build = "build 2026-11-13z12"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1630,7 +1630,10 @@ final class StoryEngine {
         var gateLog = ""
         // What the yes/no pass let in and left out, for the story export.
         var foveaView: [String] = []
-        var lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
+        // The room as the grid holds it, in plain words (the opening and other briefings get it too).
+        var roomSent: [String] = Fovea.roomView(a)
+        let roomBlock: String = roomSent.isEmpty ? "" : "\n" + roomSent.joined(separator: "\n") + "\nKeep to this layout: who stands where, and what is between you."
+        var lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + roomBlock + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
         if fov {
             // Every card item, marked yes or no for this moment; only the yeses reach the storyteller.
             stage = "What matters right now?"
@@ -1667,6 +1670,7 @@ final class StoryEngine {
             if !foveaTold.isEmpty { events.insert(foveaTold + " Say it in this reply.", at: 0) }
             system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
             lead = Fovea.lead(a, input: input, arrived: arrivedNow, events: events, kept: kept)
+            roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
             let shown: String = kept.isEmpty ? "only the room and who you face" : kept.map { Fovea.clip($0.text, 50) }.joined(separator: "; ")
             step("What matters right now? → " + shown + " (\(items.count - kept.count) of \(items.count) left out)")
             lastRead += "; foveated: \(kept.count) of \(items.count) card items in"
@@ -1857,6 +1861,7 @@ final class StoryEngine {
             let inView: [String] = pick.why.map { "  - " + $0 }
             before.append("IN VIEW:\n" + inView.joined(separator: "\n"))
         }
+        if !roomSent.isEmpty { before.append("THE ROOM AS TOLD (from the map):\n" + roomSent.map { "  " + $0 }.joined(separator: "\n")) }
         let noteLines: [String] = extra.map { clip($0, 90) } + notes.map { clip($0, 90) }
         if !noteLines.isEmpty { before.append("NOTES: " + noteLines.joined(separator: " | ")) }
         let turnTokens = kept.reduce(0) { $0 + Self.tokens($1.text) + 8 }
@@ -2302,7 +2307,7 @@ final class StoryEngine {
                 p.holding = holds.isEmpty ? [] : [clip(holds, 50)]
                 if !doing.isEmpty { p.doing = clip(doing, 100) }
                 Placer.put(&r, p)
-                if !whereSaid.isEmpty, whereSaid != "stays put", let z = Zone.parse(whereSaid) {
+                if !whereSaid.isEmpty, whereSaid != "stays put", let z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
                     let note = Placer.placePerson(&r, p, zone: z)
                     r.log.append("move: " + c.name + " → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
                     if let moved = r.thing(p.id) { r.things[r.index(p.id)!].pastMoves = [z.text] + Array(moved.pastMoves.prefix(7)) }
@@ -2500,6 +2505,10 @@ final class StoryEngine {
             // The light, the air and the room itself are the background, and clothes are their wearer's.
             if e.range(of: #"(?i)\b(light|lamplight|gaslight|candlelight|glow|air|smell|scent|aroma|tang|warmth|chill|silence|stillness|darkness|shadows?|room|backroom|space|music|sound|crackle|steam|clouds?|rain)\b"#, options: .regularExpression) != nil {
                 refused.append(e + " (background, not a thing)")
+                return false
+            }
+            if !Rules.onPlan(e) {
+                refused.append(e + " (not a thing on the floor)")
                 return false
             }
             let w: Set<String> = Continuity.wordSet(e).filter { $0.count > 2 }
@@ -4070,15 +4079,21 @@ extension StoryEngine {
         base += "\n\n" + story + "\n\n"
 
         // 1. The shell.
-        let sizeWords = RoomBuilder.sizes.map { "\($0.0), \($0.1) by \($0.2) metres" }
-        let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nSIZES: " + sizeWords.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"size\":\"one of SIZES\",\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
-        let m1 = await ask("Building the room: walls, doors and windows", q1, JSONGrammar.roomShell(types: RoomBuilder.types, sizes: sizeWords), 260)
+        let q1 = base + "QUESTION: What is this room's type, and how big would a real one like it be, in metres (true to its time and place: a 1920s speakeasy, a ship's cabin, a cathedral)? Width is west to east, depth is north to south. List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"width\":9,\"depth\":7,\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
+        let m1 = await ask("How big is this room, in metres?", q1, JSONGrammar.roomShell(types: RoomBuilder.types), 260)
         guard !Task.isCancelled else { return }
         var type = str(m1, "type").lowercased()
         if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: placeName + " " + about) }
         let tp = RoomBuilder.template(type)
-        let sizeSaid = str(m1, "size")
-        var r = RoomBuilder.shell(name: placeName, type: type, size: sizeSaid.isEmpty ? tp.size : sizeSaid, from: from)
+        func metres(_ k: String) -> Int? {
+            if let n = m1[k] as? Int { return n }
+            if let n = m1[k] as? Double { return Int(n.rounded()) }
+            return Int(str(m1, k).filter(\.isNumber))
+        }
+        let said: (Int, Int)? = metres("width").flatMap { w in metres("depth").map { (w, $0) } }
+        let crowd = 1 + a0.whereabouts.filter { $0.here != false }.count + 6
+        var r = RoomBuilder.shell(name: placeName, type: type, size: tp.size, from: from, crowd: crowd, metres: said)
+        if let said { r.log.append("size: the model said \(said.0) × \(said.1) m; drawn \(r.width) × \(r.depth) m") }
         r.id = roomID
         r.built = true
         r.inside = Self.echoesPrompt(str(m1, "inside")) ? about : str(m1, "inside")
@@ -4109,7 +4124,7 @@ extension StoryEngine {
         if !RoomBuilder.outdoor.contains(type) {
             for w in ((m1["windows"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(2) {
                 // Windows are in the walls; a skylight or anything overhead is not on a floor plan.
-                guard Rules.onPlan(str(w, "view") + " " + str(w, "wall")) || str(w, "view").isEmpty,
+                guard Set(str(w, "view").lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)).isDisjoint(with: Rules.overhead),
                       let wall = Wall(rawValue: str(w, "wall").lowercased()), let at = slot(wall, width: 2) else { continue }
                 windows.append(Opening(wall: wall, at: at, width: 2, view: Self.echoesPrompt(str(w, "view")) ? "" : str(w, "view")))
             }

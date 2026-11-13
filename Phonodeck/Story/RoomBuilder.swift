@@ -76,8 +76,15 @@ enum RoomBuilder {
     }
 
     /// A bare room of a type: walls, one door toward where the player came from, and a window.
-    static func shell(name: String, type: String, size: String, from: String) -> Room {
-        let (w, d) = Self.size(size)
+    static func shell(name: String, type: String, size: String, from: String, crowd: Int = 0, metres: (Int, Int)? = nil) -> Room {
+        var (w, d) = Self.size(size)
+        // The model's own estimate of the real room, in metres, kept on a phone-sized map.
+        if let m = metres, m.0 >= 2, m.1 >= 2 { (w, d) = (min(16, m.0), min(14, m.1)) }
+        // A public room is never a cupboard: a bar, café, shop or hall is at least medium, and any room
+        // grows until it has about four square metres for each person and piece in it.
+        let roomy: Set<String> = ["bar", "café", "shop", "hall", "kitchen", "street", "garden", "clearing", "ship's deck"]
+        if roomy.contains(type) { w = max(w, 7); d = max(d, 6) }
+        for s in sizes where w * d < crowd * 4 && s.1 * s.2 > w * d { (w, d) = (s.1, s.2); if w * d >= crowd * 4 { break } }
         var r = Room(name: name, type: type, width: w, depth: d)
         r.doors = [Opening(wall: .south, at: w / 2, leadsTo: from.isEmpty ? "outside" : from)]
         if !outdoor.contains(type), w >= 4 { r.windows = [Opening(wall: .north, at: max(0, w / 2 - 1 + (w > 6 ? 2 : 0)), width: 2)] }
@@ -225,11 +232,6 @@ extension Adventure {
                     t = r.things.first { $0.id == tid } ?? t
                 }
                 r.log.append("enter: " + name + (engaged ? ", with you" : ""))
-            } else if engaged, RoomGrid.distance(t, pl) > 2.2 {
-                // Turned to: they come within talking distance.
-                let target = Cell(x: pl.x + pl.facing.dx, y: pl.y + pl.facing.dy)
-                Self.standNear(&r, &t, target)
-                r.log.append("move: " + name + " comes over to you")
             }
             Placer.put(&r, t)
             if engaged {

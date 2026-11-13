@@ -174,6 +174,7 @@ struct RoomMapView: View {
         case "enter": return rest.prefix(1).uppercased() + rest.dropFirst()
         case "leave": return rest + " leaves"
         case "edit": return "Edited " + rest
+        case "size": return "Size: " + rest
         default: return l
         }
     }
