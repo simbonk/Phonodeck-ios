@@ -142,6 +142,15 @@ enum Rules {
         }
     }
 
+    /// People who work behind a bar or counter.
+    static func isStaff(_ role: String) -> Bool {
+        let w = Set(role.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+        return !w.isDisjoint(with: ["bartender", "barkeep", "barkeeper", "barman", "barmaid", "publican", "innkeeper", "shopkeeper", "clerk",
+                                    "cashier", "cook", "chef", "pharmacist", "teller", "receptionist", "landlord", "landlady", "baker", "grocer"])
+    }
+    /// The bar or counter staff work behind, if the room has one.
+    static func staffPost(_ room: Room) -> Thing? { room.objects.first { staffed.contains($0.icon) && $0.on == nil } }
+
     /// Words for what people wear: never an object on the floor.
     static let clothing: Set<String> = ["coat", "overcoat", "raincoat", "jacket", "vest", "waistcoat", "overalls", "dress", "gown", "shirt",
         "blouse", "skirt", "trousers", "pants", "jeans", "boots", "shoes", "heels", "hat", "fedora", "cap", "scarf", "gloves", "cloak",
@@ -290,6 +299,11 @@ enum Placer {
     static func breaks(_ s: Spot, rule r: Rule, thing t: Thing, room: Room) -> String? {
         let cells = s.cells
         guard cells.allSatisfy({ room.contains($0) }) else { return "there's no room there" }
+        // The strip behind a bar is for whoever works there.
+        for post in room.objects where Rules.staffed.contains(post.icon) && post.on == nil && post.id != t.id {
+            let strip = Set(Self.cells(.behind(post.name), in: room))
+            if cells.contains(where: { strip.contains($0) }) { return "that's behind the " + Zone.short(post.name) + ", where staff work" }
+        }
         let flushN = s.y == 0, flushS = s.y + s.d == room.depth, flushW = s.x == 0, flushE = s.x + s.w == room.width
         let long = s.w != s.d
         // Long things run along their wall.

@@ -174,7 +174,7 @@ struct RoomMapView: View {
         case "move": return "Moved " + rest
         case "refuse": return "Refused " + rest
         case "ask": return "Asked again: " + rest
-        case "enter": return rest.prefix(1).uppercased() + rest.dropFirst()
+        case "enter": return rest.contains(" ") ? rest.prefix(1).uppercased() + rest.dropFirst() : rest + " comes in"
         case "leave": return rest + " leaves"
         case "edit": return "Edited " + rest
         case "size": return "Size: " + rest
@@ -377,7 +377,7 @@ struct RoomMapView: View {
                     .offset(x: size * 0.5)
                     .rotationEffect(.radians(p.facing.angle - .pi / 2 + .pi / 3))
             }
-            Text(me ? "You" : label(p.name)).font(.system(size: 9, weight: me ? .bold : .regular)).foregroundStyle(Theme.fg)
+            Text(me ? "You" : label(Cards.first(p.name))).lineLimit(1).font(.system(size: 9, weight: me ? .bold : .regular)).foregroundStyle(Theme.fg)
                 .lineLimit(1).fixedSize()
                 .offset(y: size * 0.5 + 7)
         }
@@ -389,7 +389,7 @@ struct RoomMapView: View {
     /// A count badge on squares holding more than one thing.
     private func badges(_ room: Room, s: CGFloat, ox: CGFloat, oy: CGFloat) -> some View {
         var counts: [Cell: Int] = [:]
-        for t in room.things { for c in t.cells { counts[c, default: 0] += 1 } }
+        for t in room.things where t.icon != "rug" { for c in t.cells { counts[c, default: 0] += 1 } }
         // A big piece of furniture alone doesn't count as a stack.
         let stacked = counts.filter { $0.value > 1 }.map(\.key).sorted { ($0.y, $0.x) < ($1.y, $1.x) }
         return ForEach(stacked, id: \.self) { c in
@@ -460,10 +460,7 @@ struct RoomMapView: View {
         let me = room.player
         var spot: String = Fovea.gridSpot(a, t.name) ?? ""
         if t.kind == .player {
-            var bits: [String] = []
-            if let seat = room.thing(t.on) { bits.append("on " + seat.name) }
-            if let f = room.people.first(where: { $0.id != t.id && RoomGrid.faces(t, $0) }) { bits.append("facing " + f.name) } else { bits.append("facing " + t.facing.word) }
-            spot = bits.joined(separator: ", ")
+            spot = Fovea.youAt(room, t)
         } else if me == nil {
             spot = "at \(t.x), \(t.y)"
         }

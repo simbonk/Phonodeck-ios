@@ -118,13 +118,7 @@ enum Fovea {
     static func roomView(_ a: Adventure) -> [String] {
         guard let r = a.room, let me = r.player else { return [] }
         var l: [String] = ["THE ROOM: " + roomLine(a)]
-        var you = "YOU: "
-        if let seat = r.thing(me.on) { you += "sitting on " + bare(seat.name) } else if let by = r.objects.filter({ $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" })
-            .min(by: { RoomGrid.distance($0, me) < RoomGrid.distance($1, me) }), RoomGrid.distance(by, me) < 1.6 {
-            you += "at " + bare(by.name)
-        } else { you += "standing in the room" }
-        if let f = r.people.filter({ $0.id != me.id }).first(where: { RoomGrid.faces(me, $0) }) { you += ", facing " + f.name } else { you += ", facing " + me.facing.word }
-        l.append(you + ".")
+        l.append("YOU: " + youAt(r, me) + ".")
         for p in r.people where p.id != me.id {
             switch RoomGrid.seen(r, from: me, to: p) {
             case .hidden(let by): l.append(p.name + ": out of sight behind " + bare(by) + ".")
@@ -137,6 +131,17 @@ enum Fovea {
         }.sorted { RoomGrid.distance($0, me) < RoomGrid.distance($1, me) }
         if !inView.isEmpty { l.append("IN VIEW: " + inView.prefix(6).map { $0.name + " (" + (gridSpot(a, $0.name) ?? "") + ")" }.joined(separator: "; ") + ".") }
         return l
+    }
+
+    /// Where the player is, in words: "at the long mahogany bar, facing the bartender".
+    static func youAt(_ r: Room, _ me: Thing) -> String {
+        var you: String
+        if let seat = r.thing(me.on) { you = "sitting on " + bare(seat.name) } else if let by = r.objects.filter({ $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" })
+            .min(by: { RoomGrid.distance($0, me) < RoomGrid.distance($1, me) }), RoomGrid.distance(by, me) < 1.6 {
+            you = "at " + bare(by.name)
+        } else { you = "standing in the room" }
+        if let f = r.people.filter({ $0.id != me.id }).first(where: { RoomGrid.faces(me, $0) }) { you += ", facing " + f.name } else { you += ", facing " + me.facing.word }
+        return you
     }
 
     /// Every card item that could matter to this moment, for the gate to mark.
