@@ -804,7 +804,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z35"
+    static let build = "build 2026-11-13z36"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -4368,7 +4368,12 @@ extension StoryEngine {
                 headOK = await yesNo("Could you walk up to the " + name + " and lay your hand on it, the way you could a bar, a table or a chair, and not the way you could a smell, a sound or a glow?") == true
             }
         }
-        if said.isEmpty || said.hasPrefix("none") || !fromName || !headOK {
+        // No noun from its own words ("coins", "tray" can come back as none): the plain hand question
+        // gets the last word, so one slip can't refuse a solid thing.
+        if headOK, said.isEmpty || said.hasPrefix("none") || !fromName {
+            headOK = await yesNo("Could you walk up to the " + name + " and lay your hand on it, the way you could a tray, a book or a chair, and not the way you could a smell, a sound, a glow or a mood?") == true
+        }
+        if !headOK {
             what = "not an object (a material, smell, sound, light or feeling)"
         } else {
             let checks: [(String, String)] = [
@@ -4695,7 +4700,15 @@ extension StoryEngine {
                     r.log.append("ask: does " + name + " work behind the " + worksBehind + "? → " + (staff ? "yes" : "no"))
                     if !staff { worksBehind = "nothing" }
                 }
-                let sitting = str(m, "posture").lowercased().hasPrefix("sit")
+                var sitting = str(m, "posture").lowercased().hasPrefix("sit")
+                // Standing, and not staff: asked again plainly, since a guest who has settled in for
+                // the evening is usually sitting, with a seat under them.
+                if !sitting, worksBehind == "nothing" {
+                    let sq = "Has " + who + " settled in here for a while, so that they would be sitting down rather than standing?"
+                    let sm = await ask(clip(sq, 70), base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                    sitting = str(sm, "answer").lowercased().hasPrefix("y")
+                    r.log.append("ask: has " + name + " settled in, sitting? → " + (sitting ? "yes" : "no"))
+                }
                 var seatName = str(m, "seat")
                 if ["none", "nothing", ""].contains(seatName.lowercased()) || Self.echoesPrompt(seatName) { seatName = sitting ? "chair" : "" }
                 // "Sitting on a table" means at one: a chair goes under them and the table beside them.
@@ -4746,7 +4759,7 @@ extension StoryEngine {
                 // Then, as a person would: what do they have with them, and what would they need
                 // close by for it? The things may be ones the story never names; they only need to
                 // be near the person who has them.
-                func isObject(_ item: String) async -> Bool {
+                func isObject(_ item: String) async -> String? {
                     let what = await Self.whatIs(item, noun: { q in
                         let m = await ask("What object is " + clip(item, 40) + "?", base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
                         return str(m, "object")
@@ -4758,8 +4771,14 @@ extension StoryEngine {
                         let v = str(m, "answer").lowercased()
                         return v.isEmpty ? nil : v.hasPrefix("y")
                     })
-                    if !(what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn")) { r.log.append("refuse: " + item + " (" + what + ")"); return false }
-                    return true
+                    if !(what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn")) { r.log.append("refuse: " + item + " (" + what + ")"); return nil }
+                    if what.hasPrefix("worn") {
+                        // Worn on the body (glasses, a hat, a ring) is clothing, not a thing set down.
+                        let wq = "Does " + who + " wear the " + item + " on their body, the way you wear glasses, a hat or a ring, rather than carry it?"
+                        let wm = await ask(clip(wq, 70), base + "QUESTION: " + wq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                        if str(wm, "answer").lowercased().hasPrefix("y") { return "worn" }
+                    }
+                    return "thing"
                 }
                 // 1. What they have.
                 let hq = base + "QUESTION: What is " + who + " doing as the story opens, " + (sitting ? "sitting" : "standing") + ", and what do they have with them for it, in hand or close by (a glass and a cloth, a needle and fabric, a book)? Up to 3 short names of real objects; they may be things the story doesn't name.\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
@@ -4767,7 +4786,12 @@ extension StoryEngine {
                 var has: [String] = []
                 for item in ((hm["things"] as? [Any]) ?? []).compactMap({ $0 as? String }).map({ $0.trimmingCharacters(in: .whitespaces) }).prefix(3)
                 where item.count >= 3 && !Self.echoesPrompt(item) {
-                    if await isObject(item) { has.append(item) }
+                    let kind = await isObject(item)
+                    if kind == "worn", let i = r.index(p.id) {
+                        let on = r.things[i].wearing
+                        if !on.lowercased().contains(item.lowercased()) { r.things[i].wearing = on.isEmpty ? item : on + ", " + item }
+                        r.log.append("edit: " + item + " → worn by " + name)
+                    } else if kind != nil { has.append(item) }
                 }
                 r.log.append("ask: what does " + name + " have? → " + (has.isEmpty ? "nothing" : has.joined(separator: ", ")))
                 // 2. What they would need close by for it.
@@ -4806,12 +4830,26 @@ extension StoryEngine {
                     }
                 }
                 // 3. What they have goes close to them: on the surface in reach, or in their hands.
+                // With nothing to set things on, the model says whether they'd hold it all or put
+                // it down; down means a table beside them.
+                if surfaceNear() == nil, !has.isEmpty {
+                    let dq = who + " has " + has.joined(separator: ", ") + ". Would they set some of these down on a table beside them, rather than hold them all in their hands?"
+                    let dm = await ask("Would " + Cards.first(name) + " set things down?", base + "QUESTION: " + dq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                    let down = str(dm, "answer").lowercased().hasPrefix("y") || has.count > 2
+                    r.log.append("ask: would " + name + " set things down? → " + (down ? "yes" : "no"))
+                    if down {
+                        let tb = Thing(kind: .object, name: Cards.first(name) + "'s table", icon: "table")
+                        let out = Placer.place(&r, tb, zone: .beside(name))
+                        if !out.placed { Placer.fallback(&r, tb, near: .beside(name)) }
+                        r.log.append("place: " + tb.name + " → beside " + name)
+                    }
+                }
                 let rest = surfaceNear()
                 for item in has {
                     if let s = rest, Placer.place(&r, Thing(kind: .object, name: item, icon: "small"), zone: .on(Zone.short(s.name))).placed {
                         r.log.append("place: " + item + " → on the " + Zone.short(s.name))
-                    } else if let i = r.index(p.id) {
-                        r.things[i].holding = Array((r.things[i].holding + [item]).prefix(2))
+                    } else if let i = r.index(p.id), r.things[i].holding.count < 2 {
+                        r.things[i].holding.append(item)
                         r.log.append("edit: " + item + " → in " + name + "'s hands")
                     }
                 }
