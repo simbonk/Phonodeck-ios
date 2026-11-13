@@ -196,6 +196,43 @@ enum Fovea {
 
     /// The private note before the player's words: when and where, who they face, this turn's
     /// events from code, and the items marked yes.
+    /// Line first: the facing person's reaction alone, as JSON {"does", "says"}, from the same
+    /// moment the storyteller will see.
+    static func linePrompt(_ a: Adventure, input: String, lead: String, lastReply: String, name: String) -> String {
+        var l: [String] = []
+        if !lastReply.isEmpty { l.append("THE STORY SO FAR (last reply): " + clip(lastReply, 500)) }
+        l.append(lead)
+        l.append("")
+        l.append("Write only how " + name + " reacts to the player's message, as JSON: \"does\" is one short action (what they do), \"says\" is what they say, one to three sentences, under 45 words, in their own voice.")
+        l.append("Rules: answer what the player said or did; never repeat their words back as a question. Use only what is written above. Point only to people listed above; if they do not know, they say so. Keep their private hopes and plans to themselves unless the player asked about their life. Never speak for the player.")
+        return l.joined(separator: "\n")
+    }
+
+    /// The drafted action as a sentence about `name`: "Smiles." → "Dolores smiles."; one that already
+    /// names them or starts with a pronoun is kept as written.
+    static func action(_ does: String, by name: String) -> String {
+        let t = lowerFirst(does)
+        if t.isEmpty { return name + " turns to you." }
+        let low = t.lowercased()
+        let first = Cards.first(name).lowercased()
+        if (!first.isEmpty && low.hasPrefix(first)) || low.hasPrefix("he ") || low.hasPrefix("she ") || low.hasPrefix("they ") || low.hasPrefix("the ") {
+            return t.prefix(1).uppercased() + t.dropFirst()
+        }
+        return name + " " + t
+    }
+
+    /// "Smiles." → "smiles.", so an action reads after a name.
+    static func lowerFirst(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return "" }
+        if !t.hasSuffix(".") && !t.hasSuffix("!") { t += "." }
+        let first = t.prefix(1)
+        let second = t.dropFirst().prefix(1)
+        // Leave a name or "I" alone; lower only an ordinary first word.
+        if first == "I" && (second == " " || second == "'") { return t }
+        return first.lowercased() + t.dropFirst()
+    }
+
     static func lead(_ a: Adventure, input: String, arrived: Bool, events: [String], kept: [Item]) -> String {
         var l: [String] = ["[FOR THIS MOMENT: private, never mention it]", "WHEN AND WHERE: " + whenWhere(a)]
         if arrived, let card = Cards.placeCard(a), !card.desc.isEmpty {
@@ -212,5 +249,58 @@ enum Fovea {
         if !kept.isEmpty { l.append("ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
         l.append("[END]")
         return l.joined(separator: "\n") + "\n\nTHE PLAYER: " + input
+    }
+}
+
+/// Line first: the storyteller marks where the facing person speaks with [LINE], and their checked
+/// words go there exactly as written, before anything is shown or read out.
+struct LineSlot {
+    let words: String
+    private var buf = ""
+    /// The marker was found and filled.
+    private(set) var used = false
+    static let marker = "[LINE]"
+
+    init(words: String) { self.words = words }
+
+    /// Takes the next piece of the stream; returns what may go on, with the marker filled in.
+    /// A piece that might be the start of the marker is held until the next one.
+    mutating func feed(_ piece: String) -> String {
+        buf += piece
+        fill()
+        // Hold back a tail that could still become the marker ("[", "[LI", or an opening quote).
+        var hold = 0
+        let m = Array(Self.marker.lowercased())
+        let tail = Array(buf.lowercased().suffix(m.count))
+        for k in stride(from: min(tail.count, m.count - 1), through: 1, by: -1) where Array(tail.suffix(k)) == Array(m.prefix(k)) {
+            hold = k
+            break
+        }
+        if hold == 0, let last = buf.last, last == "\"" || last == "“" { hold = 1 }
+        let out = String(buf.dropLast(hold))
+        buf = String(buf.suffix(hold))
+        return out
+    }
+
+    /// The end of the stream: whatever was held back.
+    mutating func finish() -> String {
+        fill()
+        // A half-written marker at the very end is dropped, never read out.
+        let out = buf.hasPrefix("[") && Self.marker.lowercased().hasPrefix(buf.lowercased()) ? "" : buf
+        buf = ""
+        return out
+    }
+
+    private mutating func fill() {
+        while let r = buf.range(of: Self.marker, options: .caseInsensitive) {
+            if used { buf.replaceSubrange(r, with: ""); continue }
+            let before = buf[..<r.lowerBound].last
+            let after = buf[r.upperBound...].first
+            var w = words
+            if let a = after, ",.!?;".contains(a) { w = String(w.trimmingCharacters(in: CharacterSet(charactersIn: ",.!?;… "))) }
+            let opened = before == "\"" || before == "“"
+            buf.replaceSubrange(r, with: opened ? w : "“" + w + "”")
+            used = true
+        }
     }
 }
