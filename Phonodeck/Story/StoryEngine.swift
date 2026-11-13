@@ -56,10 +56,6 @@ final class StoryEngine {
     /// for this moment, and the storyteller sees only the year, the time, the room, the person the
     /// player faces and the items marked yes (see `Fovea`). No plan writes the next beat.
     var foveated: Bool { didSet { UserDefaults.standard.set(foveated, forKey: "foveatedStory") } }
-    /// Line first (on the foveated story): before the scene is written, the person the player faces
-    /// gets their reaction drafted on its own (what they do, what they say), checked in code, and
-    /// the scene is then written around those exact words.
-    var lineFirst: Bool { didSet { UserDefaults.standard.set(lineFirst, forKey: "lineFirstStory") } }
     /// How far the current reasoning step is toward its room to think (0 to 1), or nil when
     /// nothing is reasoning. About 4 characters a token.
     var thinkingProgress: Double? {
@@ -110,7 +106,6 @@ final class StoryEngine {
         deepThinking = UserDefaults.standard.object(forKey: "deepThinking") as? Bool ?? true
         grounded = UserDefaults.standard.object(forKey: "groundedEngine") as? Bool ?? true
         foveated = UserDefaults.standard.object(forKey: "foveatedStory") as? Bool ?? true
-        lineFirst = UserDefaults.standard.object(forKey: "lineFirstStory") as? Bool ?? true
         narrator.onFinished = { [weak self] in self?.narrationFinished() }
         dictation.onSend = { [weak self] text in self?.send(text) }
     }
@@ -706,7 +701,7 @@ final class StoryEngine {
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
         let engineLine: String = grounded
-            ? (foveated && gmPlans ? "Foveated story (read, yes/no pass, " + (lineFirst ? "their line, " : "") + "paint, lean rebuild)" : "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off"))
+            ? (foveated && gmPlans ? "Foveated story (read, yes/no pass, paint, lean rebuild)" : "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off"))
             : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
         out.append(engineLine + " · " + Self.build)
         if grounded {
@@ -1203,7 +1198,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z7"
+    static let build = "build 2026-11-13z5b"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -1805,7 +1800,7 @@ final class StoryEngine {
                 a.spot = clip(r.spot, 90)
                 actsNow.append("You are now → " + r.spot)
             }
-            if !r.tells.isEmpty, Continuity.grounded(r.tells, in: said, share: 0.6), Self.worthKnowing(r.tells) {
+            if !r.tells.isEmpty, Continuity.grounded(r.tells, in: said, share: 0.6) {
                 let heard: [String] = r.to.isEmpty
                     ? a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
                     : [r.to]
@@ -2097,9 +2092,6 @@ final class StoryEngine {
         let card = Cards.briefing(a, pick: pick, looked: lookedLines, extra: extra, notes: notes, moment: moment)
         // The yes/no pass's question and answer, for "Copy with prompts".
         var gateLog = ""
-        // Line first: the facing person's checked reaction, and what was tried, for the export.
-        var line: (name: String, does: String, says: String)? = nil
-        var lineLog = ""
         // What the yes/no pass let in and left out, for the story export.
         var foveaView: [String] = []
         var lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
@@ -2142,47 +2134,6 @@ final class StoryEngine {
             let shown: String = kept.isEmpty ? "only the room and who you face" : kept.map { Fovea.clip($0.text, 50) }.joined(separator: "; ")
             step("What matters right now? → " + shown + " (\(items.count - kept.count) of \(items.count) left out)")
             lastRead += "; foveated: \(kept.count) of \(items.count) card items in"
-            // Line first: the facing person's reaction is drafted alone, checked, then written around.
-            if lineFirst, let who = Fovea.facing(a).first {
-                stage = "What do they say?"
-                lapFrom = Date()
-                let name: String = Cards.card(for: who, in: a)?.name ?? who.name
-                let probe = PresenceFilter(absent: absentPeople(a, input: input, plan: moment), player: input,
-                                           secrets: a.cast.map(\.privateLife).filter { !$0.isEmpty },
-                                           lifeAsked: PresenceFilter.asksAboutLife(input),
-                                           roles: a.cast.map(\.role) + a.cast.map(\.name))
-                var why = ""
-                var tries: [String] = []
-                for attempt in 0..<2 {
-                    var ask = Fovea.linePrompt(a, input: input, lead: lead, lastReply: lastGMBefore, name: name)
-                    if !why.isEmpty { ask += "\nThe last try was wrong: " + why + " Write it again." }
-                    if a.nameless { ask = Continuity.unnamed(ask, in: a, playerTold: nameTold(a)) }
-                    let raw = (try? await llm.complete(system: nil, prompt: ask,
-                                                       options: .init(maxTokens: 110, temperature: attempt == 0 ? 0.8 : 0.6, repetitionPenalty: 1.05,
-                                                                      grammar: JSONGrammar.pair("does", 110, "says", 240)))) ?? ""
-                    guard !Task.isCancelled else { adventure = snapshot; return }
-                    let m: [String: Any] = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
-                    let does: String = ((m["does"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    let says: String = ((m["says"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " \n\"“”"))
-                    guard !says.isEmpty else { why = "they said nothing."; tries.append("(nothing)"); continue }
-                    tries.append(does + " / \"" + says + "\"")
-                    why = probe.problems(does: does, says: says)
-                    if why.isEmpty {
-                        line = (name, does, says)
-                        break
-                    }
-                }
-                lineLog = tries.joined(separator: " → ") + (line == nil ? " · dropped (" + why + ")" : (tries.count > 1 ? " · drafted twice" : " · checked"))
-                if let l = line {
-                    lead = lead.replacingOccurrences(of: "\n\nTHE PLAYER: ", with: "\nTHEIR REACTION (decided and checked: use it as is): " + Fovea.action(l.does, by: l.name)
-                        + " Then they speak. Their words are already written and checked: where they speak, write the marker [LINE] once, and the app puts their exact words there (\"" + l.says + "\"). Write no other words for them. Write the moment around it.\n[END]\n\nTHE PLAYER: ")
-                    lead = lead.replacingOccurrences(of: "\n[END]\nTHEIR REACTION", with: "\nTHEIR REACTION")
-                    step("What do they say? → " + l.name + ": \"" + Fovea.clip(l.says, 80) + "\"")
-                } else {
-                    step("What do they say? → no line passed the check; the storyteller writes it freely")
-                }
-                lap("their line")
-            }
         }
         // The story's own last turns keep its voice and thread: as many of the last four as fit.
         // Anything older is reached with a "remember" lookup.
@@ -2210,7 +2161,6 @@ final class StoryEngine {
         var sent: [String] = ["SYSTEM:\n" + system]
         for t in history { sent.append((t.role == .user ? "USER" : "ASSISTANT") + ":\n" + t.text) }
         if !gateLog.isEmpty { sent.insert("YES/NO PASS (asked before the reply):\n" + gateLog, at: 0) }
-        if !lineLog.isEmpty { sent.insert("THEIR LINE (drafted before the reply): " + lineLog, at: gateLog.isEmpty ? 0 : 1) }
         let sentPrompt: String = sent.joined(separator: "\n\n")
         stage = "The storyteller is writing"
         a.gmWait = Date().timeIntervalSince(ticked)
@@ -2221,25 +2171,13 @@ final class StoryEngine {
         var interrupted = false
         var presence: PresenceFilter? = nil
         var redrawn = false
-        // Line first: the checked words go where the storyteller writes [LINE].
-        var slot: LineSlot? = line.map { LineSlot(words: $0.says) }
-        // Checked in code, sentence by sentence, before anything is read out: people known to be elsewhere,
-        // lines copied from earlier replies or asking the player's words back, someone made up on the
-        // spot, and private hopes nobody asked about (in the opening too).
-        let secrets: [String] = a.cast.map(\.privateLife).filter { !$0.isEmpty }
-        let roles: [String] = a.cast.map(\.role) + a.cast.map(\.name)
-        if opening {
-            let f = PresenceFilter(absent: [], secrets: secrets, roles: roles, opening: true)
-            if !f.idle { presence = f }
-        } else if !hidden {
+        if !opening, !hidden {
             let f = PresenceFilter(absent: absentPeople(a, input: input, plan: moment),
-                                   earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input,
-                                   secrets: secrets, lifeAsked: PresenceFilter.asksAboutLife(input), roles: roles)
+                                   earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input)
             if !f.idle { presence = f }
         }
         do {
-            for try await raw in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
-                let piece: String = slot == nil ? raw : slot!.feed(raw)
+            for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
                 if firstWord {
                     firstWord = false
                     lap("first word of the reply")
@@ -2259,21 +2197,6 @@ final class StoryEngine {
                     if narrate { narrator.feed(piece) }
                 }
             }
-            if slot != nil {
-                let rest = slot!.finish()
-                if !rest.isEmpty {
-                    if presence != nil {
-                        let ok = presence!.feed(rest)
-                        reply = presence!.accepted
-                        streaming = presence!.preview
-                        if narrate, !ok.isEmpty { narrator.feed(ok) }
-                    } else {
-                        reply += rest
-                        streaming = reply
-                        if narrate { narrator.feed(rest) }
-                    }
-                }
-            }
             if presence != nil {
                 let ok = presence!.finish(restore: false)
                 reply = presence!.accepted
@@ -2287,31 +2210,16 @@ final class StoryEngine {
                         note += out.joined(separator: " and ") + (out.count == 1 ? " is" : " are")
                         note += " not part of this scene: do not show or quote them. "
                     }
-                    if !presence!.invented.isEmpty {
-                        note += "Bring in no one new: point only to people already in the scene, or say plainly that you do not know. "
-                    }
-                    if presence!.leaked > 0 { note += "Keep everyone's private hopes and plans to themselves. " }
-                    if presence!.parroted > 0 { note += "Do not repeat the player's words back; answer them. " }
                     note += "Stay with the player and whoever they are with. Use new sentences, none from earlier replies.)"
                     var again = history
                     if let last = again.popLast() { again.append(ChatTurn(role: .user, text: last.text + "\n\n" + note)) }
-                    var second = opening
-                        ? PresenceFilter(absent: [], secrets: secrets, roles: roles, opening: true)
-                        : PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input,
-                                         secrets: secrets, lifeAsked: PresenceFilter.asksAboutLife(input), roles: roles)
+                    var second = PresenceFilter(absent: presence!.absent, earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input)
                     let left = reply.trimmingCharacters(in: .whitespacesAndNewlines)
                     let survived = left.split(whereSeparator: \.isWhitespace).count < 12 ? "" : left
-                    var slot2: LineSlot? = line.map { LineSlot(words: $0.says) }
-                    for try await raw in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
-                        let piece: String = slot2 == nil ? raw : slot2!.feed(raw)
+                    for try await piece in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
                         let ok = second.feed(piece)
                         streaming = (survived.isEmpty ? "" : survived + "\n\n") + second.preview
                         if narrate, !ok.isEmpty { narrator.feed(ok) }
-                    }
-                    if slot2 != nil {
-                        let ok = second.feed(slot2!.finish())
-                        if narrate, !ok.isEmpty { narrator.feed(ok) }
-                        if slot2!.used { slot = slot2 }
                     }
                     let tail = second.finish(restore: false)
                     if narrate, !tail.isEmpty { narrator.feed(tail) }
@@ -2342,14 +2250,6 @@ final class StoryEngine {
             interruptedTurn = (input, hidden, forceFinal)
             return
         }
-        // Line first: if the storyteller left no place for their words and wrote none of its own, they go at the end.
-        var lineAdded = false
-        if let l = line, let sl = slot, !sl.used, !reply.contains("\""), !reply.contains("“") {
-            let add = "\n\n“" + l.says + "”"
-            reply += add
-            lineAdded = true
-            if narrate { narrator.feed(add) }
-        }
         if narrate { narrator.finish() }
         if !narrate || !narrator.speaking { ComputerSounds.shared.stopHum() }
         stage = ""
@@ -2363,7 +2263,6 @@ final class StoryEngine {
             return
         }
         if let now = adventure, now.id == a.id { a.takeMemory(from: now) }
-        if let l = line { a.reaction[l.name.lowercased()] = [l.does, l.says] }
         if opening { checkPronouns(&a, texts: [a.bible, reply]) }
         // A name the storyteller made up for the person the player is with is put right in code.
         var nameFix = ""
@@ -2381,12 +2280,6 @@ final class StoryEngine {
             a.fixes += continuitySlips(a, reply: reply).map { Self.checked + $0 }
             for p in presence?.caught ?? [] {
                 a.fixes.append(Self.checked + "\(p.name) is not with the player: \(p.name) is \(Continuity.placed(p.at)) and stays out of the scene until the story shows them arriving.")
-            }
-            if !(presence?.invented.isEmpty ?? true) {
-                a.fixes.append(Self.checked + "Bring in no one new to answer the player: point only to people already in the scene, or say plainly that you do not know.")
-            }
-            if (presence?.parroted ?? 0) > 0 {
-                a.fixes.append(Self.checked + "Answer what the player says or does; do not repeat their words back to them as a question.")
             }
         }
         a.scene = Cards.sceneLine(a)
@@ -2439,21 +2332,9 @@ final class StoryEngine {
             var why: [String] = f.caught.map { "\($0.name) is \(Continuity.placed($0.at)), not with the player" }
             if f.echoes > 0 { why.append("\(f.echoes) sentence\(f.echoes == 1 ? "" : "s") copied from earlier replies") }
             if f.spokeForPlayer > 0 { why.append("the reply put words in the player's mouth") }
-            if f.parroted > 0 { why.append("asked the player's own words back") }
-            if !f.invented.isEmpty { why.append("made up someone not in the scene (" + f.invented.joined(separator: ", ") + ")") }
-            if f.leaked > 0 { why.append("gave away a private hope nobody asked about") }
             let cut = clip(f.dropped.joined().trimmingCharacters(in: .whitespacesAndNewlines), 300)
             before.append("REPLY CHECK: " + (redrawn ? "too little was left, so the reply was written again. Left out first: " + cut
                                                 : why.joined(separator: "; ") + ". Left out: " + cut))
-        }
-        if !lineLog.isEmpty {
-            var said = lineLog
-            if let l = line {
-                if slot?.used == true { said += " · put in word for word" }
-                else if lineAdded { said += " · no place was marked, so it went at the end" }
-                else { said += Continuity.grounded(l.says, in: Continuity.wordSet(reply), share: 0.8) ? " · no place was marked; the storyteller wrote it in itself" : " · no place was marked; the storyteller wrote other words" }
-            }
-            before.append("THEIR LINE: " + said)
         }
         let took = String(format: "%.1fs", Date().timeIntervalSince(turnBegan))
         before.append("TIMES: " + times.joined(separator: " · ") + " · total " + took + " before the rebuild")
@@ -3376,17 +3257,6 @@ final class StoryEngine {
     /// Whether the message goes to a place by name: a going word, then the place's last word
     /// within a few words ("I returned back into the velvet thorn", "head to the jazz club").
     /// "A young man with a violin case", "the stranger": someone the story may be bringing in.
-    /// Whether what the player told someone is a fact worth that person remembering. A passing need,
-    /// feeling, request or confusion ("I need to rest", "I don't understand", "you want to hear about
-    /// the folks in here") is not: filed, it comes back as an echo or a "fact".
-    static func worthKnowing(_ tells: String) -> Bool {
-        let t = tells.lowercased().replacingOccurrences(of: "’", with: "'").trimmingCharacters(in: .whitespacesAndNewlines)
-        let passing = #"^(i|you|they|the player)\s+(really\s+|just\s+)?(need|needs|want|wants|would like|'d like|'m tired|am tired|'m confused|am confused|feel|feels|don't|do not|can't|cannot|didn't|wonder|wonders|are tired|are confused|is tired|is confused|like to|hope|hopes)\b"#
-        if t.range(of: passing, options: .regularExpression) != nil { return false }
-        if t.range(of: #"\b(understand|confused|what do you mean|sorry|thank|thanks|hello|hi there|goodbye)\b"#, options: .regularExpression) != nil { return false }
-        return t.split(separator: " ").count >= 2
-    }
-
     static let someoneNew = #"(?i)\b(a|an|another|the)\s+(?:[a-z]+\s+){0,2}?(man|woman|stranger|boy|girl|waiter|waitress|guard|clerk|doorman|driver|officer|policeman|musician|singer|pianist|violinist|gentleman|lady|fellow|sailor|couple)\b"#
 
     /// The newcomer a message brings in by description ("a young man with a violin case comes

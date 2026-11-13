@@ -95,14 +95,12 @@ struct SettingsView: View {
                         .disabled(!engine.gmPlans)
                     Toggle("Foveated story", isOn: $engine.foveated)
                         .disabled(!engine.gmPlans || !engine.grounded)
-                    Toggle("Line first", isOn: $engine.lineFirst)
-                        .disabled(!engine.gmPlans || !engine.grounded || !engine.foveated)
                     NavigationLink("Test scenarios") { AutoPlayView() }
                     NavigationLink("Model benchmark") { BenchmarkView() }
                 } header: {
                     Text("Game Master")
                 } footer: {
-                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen through MLX), which can take up to about a minute a turn. GGUF storytellers skip it: they always answer straight away. Grounded engine: the world stays in the app. Before each reply the storyteller looks up only what your action needs (who is here, what you have, a card, an earlier moment); after it, short questions rebuild the world piece by piece. The World panel's turn guide shows each turn. Foveated story: after your words are read, every item on the cards is marked yes or no for this moment, and the storyteller sees only the year, the time, the room, the person you face and the yeses. No plan decides the next beat. Line first: before the scene is written, the person you face gets their reaction drafted alone (what they do, then what they say), checked in code for answering you without echoing you, inventing no one and keeping private hopes private, and the scene is written around those exact words. About a second or two more per turn.")
+                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen through MLX), which can take up to about a minute a turn. GGUF storytellers skip it: they always answer straight away. Grounded engine: the world stays in the app. Before each reply the storyteller looks up only what your action needs (who is here, what you have, a card, an earlier moment); after it, short questions rebuild the world piece by piece. The World panel's turn guide shows each turn. Foveated story: after your words are read, every item on the cards is marked yes or no for this moment, and the storyteller sees only the year, the time, the room, the person you face and the yeses. No plan decides the next beat.")
                 }
 
     }
