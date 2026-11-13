@@ -288,9 +288,10 @@ enum JSONGrammar {
 
     /// The room builder, question 3: where each person is and who or what they face.
     /// One person as the room opens: with the others or apart, sitting or standing, and on what.
-    static func personSetup() -> String {
+    static func personSetup(work: [String]) -> String {
         [
-            "root ::= \"{\" ws " + [key("company") + " co", key("posture") + " po", key("seat") + " s30"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            "root ::= \"{\" ws " + [key("company") + " co", key("posture") + " po", key("seat") + " s30", key("works_behind") + " wk"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("wk", work),
             choice("co", ["with the others", "apart"]),
             choice("po", ["sitting", "standing"]),
             capped("s30", 30),

@@ -797,7 +797,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z21"
+    static let build = "build 2026-11-13z22"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2327,7 +2327,6 @@ final class StoryEngine {
                 Placer.put(&r, p)
                 if !whereSaid.isEmpty, whereSaid != "stays put", var z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
                     if case .at(let n) = z, let was = t.pastMoves.first, was.hasPrefix("behind"), was.contains(Zone.short(n)) { z = .behind(n) }
-                    if Rules.isStaff(c.role), let post = Rules.staffPost(r), z.text.contains(Zone.short(post.name)) { z = .behind(post.name) }
                     if z.text == t.pastMoves.first { now.room = r; return }
                     let note = Placer.placePerson(&r, p, zone: z)
                     r.log.append("move: " + c.name + " → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
@@ -4242,9 +4241,11 @@ extension StoryEngine {
             if ["in front", "behind", "all round"].contains(sp), !Rules.rule(kind).small { t.space = sp }
             wanted.append(t)
         }
-        // The room's centrepiece (a bar's bar, a bedroom's bed) is never left out.
+        // A room of this type usually has its centrepiece (a bar's bar, a bedroom's bed): the model
+        // says whether this one needs it.
         if let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
-            wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0)
+            let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: Does this story need " + lead.name + " in this room?\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+            if str(nm, "answer").lowercased() == "yes" { wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0) }
         }
         // Big furniture first, small things last, so "on the bar" has a bar to go on.
         func rank(_ icon: String) -> Int {
@@ -4333,10 +4334,12 @@ extension StoryEngine {
             for name in here {
                 guard !Task.isCancelled else { return }
                 let card = a0.cast.first { $0.name == name }
+                let workSpots = ["nothing"] + r.objects.filter { $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" }.map { Zone.short($0.name) }
                 let who = name + ((card?.role ?? "").isEmpty ? "" : " (" + Continuity.roleLabel(card!.role) + ")")
                 let q = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + (r.people.count > 1 ? "; already placed: " + r.people.filter { $0.kind == .person }.map(\.name).joined(separator: ", ") : "") + ".\n"
-                    + "QUESTION: About " + who + " as the story opens: are they with the others, or apart on their own (a separate conversation the player can go to)? Are they sitting or standing, and on what (a stool, a chair, a booth, a bench; none if standing)?\nOutput ONLY one JSON object:\n{\"company\":\"with the others or apart\",\"posture\":\"sitting or standing\",\"seat\":\"what they sit on, or none\"}\nThe form:"
-                let m = await ask("Is " + Cards.first(name) + " with the others, or apart?", q, JSONGrammar.personSetup(), 50)
+                    + "QUESTION: About " + who + " as the story opens: are they with the others, or apart on their own (a separate conversation the player can go to)? Are they sitting or standing, and on what (a stool, a chair, a booth, a bench; none if standing)? Do they work behind something here (WORK SPOTS), or nothing?\nWORK SPOTS: " + workSpots.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"company\":\"with the others or apart\",\"posture\":\"sitting or standing\",\"seat\":\"what they sit on, or none\",\"works_behind\":\"one of WORK SPOTS\"}\nThe form:"
+                let m = await ask("Is " + Cards.first(name) + " with the others, or apart?", q, JSONGrammar.personSetup(work: workSpots), 60)
+                let worksBehind = str(m, "works_behind")
                 let apart = str(m, "company").lowercased().hasPrefix("apart")
                 let sitting = str(m, "posture").lowercased().hasPrefix("sit")
                 var seatName = str(m, "seat")
@@ -4356,8 +4359,9 @@ extension StoryEngine {
                 }
                 var z: Zone
                 var faceSaid = "you"
-                if let c = card, Rules.isStaff(c.role), let post = Rules.staffPost(r) {
+                if worksBehind != "nothing", let post = r.named(worksBehind) {
                     z = .behind(post.name)
+                    r.log.append("ask: " + name + " works behind the " + Zone.short(post.name))
                 } else {
                     let wq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: Where is " + who + (apart ? ", off on their own" : "") + ", and who or what do they face?\nPLACES: " + menu.joined(separator: "; ") + "\nFACES: " + faces.filter { $0 != name }.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\",\"facing\":\"one of FACES\"}\nThe form:"
                     let wm = await ask("Where is " + Cards.first(name) + "?", wq, JSONGrammar.personPlace(zones: menu, faces: faces.filter { $0 != name }), 50)
@@ -4399,7 +4403,7 @@ extension StoryEngine {
             if let z = Adventure.zone(from: opening, in: r) {
                 let note = Placer.placePerson(&r, me, zone: z)
                 r.log.append("move: you → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
-                let staff = r.people.first { p in p.kind == .person && a.cast.contains { $0.name == p.name && Rules.isStaff($0.role) } }
+                let staff = r.people.first { p in p.kind == .person && (p.pastMoves.first ?? "").hasPrefix("behind") }
                 if let first = staff ?? r.people.first(where: { $0.kind == .person && $0.id != me.id }) { Placer.turn(&r, me.id, toward: first.name) }
             }
         }

@@ -221,11 +221,7 @@ extension Adventure {
             let engaged = w.engaged == true
             let behind = Cards.behindPlayer(w)
             if isNew {
-                if let c = card, Rules.isStaff(c.role), let post = Rules.staffPost(r) {
-                    Placer.placePerson(&r, t, zone: .behind(post.name))
-                    let tid = t.id
-                    t = r.things.first { $0.id == tid } ?? t
-                } else if behind {
+                if behind {
                     let target = Cell(x: pl.x - pl.facing.dx * 2, y: pl.y - pl.facing.dy * 2)
                     Self.standNear(&r, &t, target)
                 } else if engaged {

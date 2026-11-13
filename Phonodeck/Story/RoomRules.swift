@@ -124,7 +124,8 @@ enum Rules {
 
     static func rule(_ icon: String) -> Rule {
         switch icon {
-        case "bar", "counter": Rule(w: 3, d: 1, place: .staffWall, blocks: .way)
+        // Where a bar goes, and whether someone works behind it, is the model's call (its zone and its space).
+        case "bar", "counter": Rule(w: 3, d: 1, place: .anywhere, blocks: .way)
         case "bed": Rule(w: 2, d: 2, place: .wall, blocks: .way, awayFromDoor: true)
         case "sofa", "bench": Rule(w: 2, d: 1, place: .wall, blocks: .way)
         case "fireplace": Rule(w: 2, d: 1, place: .bareWall, blocks: .way)
