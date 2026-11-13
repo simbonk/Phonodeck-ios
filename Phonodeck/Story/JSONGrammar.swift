@@ -299,6 +299,29 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// The moment's plan for the person the player faces: stay or get up, where to, what they
+    /// reach for, and one short sentence of what they do.
+    static func momentPlan(zones: [String], reach: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [key("moves") + " mv", key("to") + " zn", key("reach") + " rc", key("does") + " s120"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("mv", ["stays", "gets up"]),
+            choice("zn", zones),
+            choice("rc", reach),
+            capped("s120", 120),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// What a person needs around them for what they are doing: two picks from a short list.
+    static func personNeeds(options: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [key("doing") + " s60", key("first") + " nd", key("second") + " nd"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("nd", options),
+            capped("s60", 60),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// One person's place and what they face.
     static func personPlace(zones: [String], faces: [String]) -> String {
         [
