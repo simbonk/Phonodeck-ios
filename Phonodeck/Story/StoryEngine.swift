@@ -797,7 +797,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z18"
+    static let build = "build 2026-11-13z19"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2520,16 +2520,7 @@ final class StoryEngine {
         // 5. What is around? Only what this reply showed, kept with the place.
         let tm = await ask("What is around?", Prompts.rebuildThings, JSONGrammar.strings("things", max: 6, chars: 60), 120)
         guard tm != nil else { return }
-        let around = checked(strings(tm, "things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
-            // The light, the air and the room itself are the background, and clothes are their wearer's.
-            if e.range(of: #"(?i)\b(light|lamplight|gaslight|candlelight|glow|air|smell|scent|aroma|tang|warmth|chill|silence|stillness|darkness|shadows?|room|backroom|space|music|sound|crackle|steam|clouds?|rain)\b"#, options: .regularExpression) != nil {
-                refused.append(e + " (background, not a thing)")
-                return false
-            }
-            if !Rules.onPlan(e) {
-                refused.append(e + " (not a thing on the floor)")
-                return false
-            }
+        let candidates = checked(strings(tm, "things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
             let w: Set<String> = Continuity.wordSet(e).filter { $0.count > 2 }
             if w.count >= 2, theirs.contains(where: { w.intersection($0).count >= 2 }) {
                 refused.append(e + " (someone's own)")
@@ -2538,6 +2529,16 @@ final class StoryEngine {
             if Continuity.grounded(e, in: inReply) { return true }
             refused.append(e)
             return false
+        }
+        // Each one, the model says what it is: a thing in the room, something someone wears or
+        // carries, a sound, smell, light or mood, or part of the building or the sky.
+        var around: [String] = []
+        for e in candidates {
+            let km = await ask("What is " + clip(e, 40) + "?", "In this story, what is \"" + e + "\"?\nCHOICES: " + Self.whatIsChoices.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"is\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("is", from: Self.whatIsChoices), 20)
+            let what = ((km?["is"] as? String) ?? "").lowercased()
+            if what.isEmpty || what.hasPrefix("a thing") { around.append(e); asked.append("What is " + e + "? → a thing in the room"); continue }
+            refused.append(e + " (" + what + ")")
+            asked.append("What is " + e + "? → " + what)
         }
         asked.append("What is around? → " + (around.isEmpty ? "nothing new" : around.joined(separator: "; ")))
         commit { now in
@@ -4056,6 +4057,8 @@ extension StoryEngine {
     /// held to a grammar so the model only picks from lists, then one push-back question for any
     /// object whose spot broke a rule. Code places everything; every decision goes on the room's
     /// log and shows on the map as it happens. Whatever the model can't answer comes from the template.
+    static let whatIsChoices = ["a thing in the room", "worn or carried by someone", "a sound, smell, light or mood", "part of the building or the sky"]
+
     fileprivate func furnishRoom(story: String) async {
         // A room is drawn once: only a place with no room yet is laid out, and never again after.
         guard let a0 = adventure, !a0.location.isEmpty,
@@ -4160,10 +4163,22 @@ extension StoryEngine {
         guard !Task.isCancelled else { return }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
         var wanted: [Thing] = []
+        var worn: [(String, String)] = []
         for d in ((m2["things"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(5) {
             let name = str(d, "name")
-            guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()), Rules.onPlan(name),
+            guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()),
                   !wanted.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
+            // The model says what it is before anything is drawn.
+            let km = await ask("What is " + clip(name, 40) + "?", base + "QUESTION: In this story, what is \"" + name + "\"?\nCHOICES: " + Self.whatIsChoices.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"is\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("is", from: Self.whatIsChoices), 20)
+            let what = str(km, "is").lowercased()
+            if what.hasPrefix("worn") {
+                let who = ["you"] + a0.cast.filter { !$0.isPlayer }.map(\.name)
+                let wm = await ask("Who has " + clip(name, 40) + "?", base + "QUESTION: Who wears or carries \"" + name + "\"?\nCHOICES: " + who.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"who\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("who", from: who), 20)
+                let owner = str(wm, "who")
+                if !owner.isEmpty { worn.append((owner, name)); r.log.append("edit: " + name + " → worn by " + owner) }
+                continue
+            }
+            if !what.isEmpty, !what.hasPrefix("a thing") { r.log.append("refuse: " + name + " (" + what + ")"); continue }
             var kind = str(d, "kind").lowercased()
             if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: name) }
             var t = Thing(kind: .object, name: name, icon: kind)
@@ -4294,6 +4309,12 @@ extension StoryEngine {
                 r.log.append("enter: " + name)
             }
             for (id, f) in facing where !f.isEmpty { Placer.turn(&r, id, toward: f) }
+        }
+        // What people wear or carry goes with them, not on the floor.
+        for (owner, item) in worn {
+            let who: Thing? = owner == "you" ? r.player : r.named(owner)
+            guard let t = who, let i = r.index(t.id) else { continue }
+            if r.things[i].wearing.isEmpty { r.things[i].wearing = item } else if !r.things[i].wearing.contains(item) { r.things[i].wearing += ", " + item }
         }
         // You start where the opening puts you ("on a stool at the long mahogany bar").
         if let a = adventure, let me = r.player {
