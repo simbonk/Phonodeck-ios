@@ -54,13 +54,13 @@ enum Zone: Hashable {
         if s.contains("far corner") || s == "corner" || s.hasSuffix(" corner") { return .farCorner }
         if s.contains("centre") || s.contains("center") || s.contains("middle") { return .centre }
         func rest(_ p: String) -> String? {
-            guard let r = s.range(of: p) else { return nil }
-            let n = String(s[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+            guard s.hasPrefix(p) else { return nil }
+            let n = String(s.dropFirst(p.count)).trimmingCharacters(in: .whitespaces)
             let bare = n.hasPrefix("the ") ? String(n.dropFirst(4)) : n
             return bare.isEmpty ? nil : bare
         }
         if let n = rest("behind ") { return .behind(n) }
-        if let n = rest("on ") ?? rest("sitting on ") ?? rest("at ") { return .on(n) }
+        if let n = rest("sitting on ") ?? rest("on top of ") ?? rest("on ") ?? rest("at ") { return .on(n) }
         if let n = rest("beside ") ?? rest("next to ") ?? rest("near ") ?? rest("by ") { return .beside(n) }
         if s == "anywhere" { return .anywhere }
         return nil

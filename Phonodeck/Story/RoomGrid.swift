@@ -130,12 +130,19 @@ struct Room: Codable, Hashable, Identifiable {
     func index(_ id: UUID) -> Int? { things.firstIndex { $0.id == id } }
     /// A thing by name (whole name, then first word), people and objects alike.
     func named(_ name: String) -> Thing? {
-        let n = name.lowercased().trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty else { return nil }
-        let bare = n.hasPrefix("the ") ? String(n.dropFirst(4)) : n
-        return things.first { $0.name.lowercased() == n || $0.name.lowercased() == bare }
-            ?? things.first { $0.name.lowercased().split(separator: " ").first.map(String.init) == bare.split(separator: " ").first.map(String.init) && $0.isPerson }
-            ?? things.first { !$0.isPerson && ($0.name.lowercased().contains(bare) || bare.contains($0.name.lowercased())) }
+        func strip(_ x: String) -> String {
+            let l = x.lowercased().trimmingCharacters(in: .whitespaces)
+            for p in ["the ", "a ", "an "] where l.hasPrefix(p) { return String(l.dropFirst(p.count)) }
+            return l
+        }
+        let bare = strip(name)
+        guard !bare.isEmpty else { return nil }
+        let firstWord = bare.split(separator: " ").first.map(String.init) ?? bare
+        return things.first { strip($0.name) == bare }
+            ?? things.first { $0.isPerson && (strip($0.name).split(separator: " ").first.map(String.init) ?? "") == firstWord }
+            ?? things.first { !$0.isPerson && $0.icon == bare }
+            ?? things.first { !$0.isPerson && strip($0.name).hasSuffix(bare) }
+            ?? things.first { !$0.isPerson && (strip($0.name).contains(bare) || bare.contains(strip($0.name))) }
     }
 
     func contains(_ c: Cell) -> Bool { c.x >= 0 && c.y >= 0 && c.x < width && c.y < depth }
