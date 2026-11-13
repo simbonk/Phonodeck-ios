@@ -290,6 +290,31 @@ enum Placer {
         }
     }
 
+    /// The squares kept clear around a thing: in front (the side facing into the room), behind
+    /// (the side toward its nearest wall) or all round. Squares outside the room are included,
+    /// so a thing whose space would fall outside can't go there.
+    static func pad(x: Int, y: Int, w: Int, d: Int, space: String?, room: Room) -> Set<Cell> {
+        guard let sp = space?.lowercased(), !sp.isEmpty, sp != "none" else { return [] }
+        var sides: [(Int, Int)] = []
+        if sp.contains("all") || sp.contains("round") || sp.contains("around") {
+            sides = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        } else {
+            // The nearest wall decides which way is "behind".
+            let dN = y, dS = room.depth - (y + d), dW = x, dE = room.width - (x + w)
+            let m = min(dN, dS, dW, dE)
+            let back: (Int, Int) = m == dN ? (0, -1) : m == dS ? (0, 1) : m == dW ? (-1, 0) : (1, 0)
+            sides = [sp.contains("behind") ? back : (-back.0, -back.1)]
+        }
+        var out = Set<Cell>()
+        for (dx, dy) in sides {
+            for i in 0..<max(1, w) { for j in 0..<max(1, d) {
+                let c = Cell(x: x + i + dx, y: y + j + dy)
+                if !(c.x >= x && c.x < x + w && c.y >= y && c.y < y + d) { out.insert(c) }
+            } }
+        }
+        return out
+    }
+
     static func centroid(_ cells: [Cell]) -> (Double, Double) {
         guard !cells.isEmpty else { return (0, 0) }
         return (Double(cells.map(\.x).reduce(0, +)) / Double(cells.count) + 0.5, Double(cells.map(\.y).reduce(0, +)) / Double(cells.count) + 0.5)
@@ -299,10 +324,18 @@ enum Placer {
     static func breaks(_ s: Spot, rule r: Rule, thing t: Thing, room: Room) -> String? {
         let cells = s.cells
         guard cells.allSatisfy({ room.contains($0) }) else { return "there's no room there" }
-        // The strip behind a bar is for whoever works there.
-        for post in room.objects where Rules.staffed.contains(post.icon) && post.on == nil && post.id != t.id {
-            let strip = Set(Self.cells(.behind(post.name), in: room))
-            if cells.contains(where: { strip.contains($0) }) { return "that's behind the " + Zone.short(post.name) + ", where staff work" }
+        // The space the model said people need around a thing is kept clear of other things.
+        for o in room.objects where o.space != nil && o.on == nil && o.id != t.id {
+            let pad = Self.pad(x: o.x, y: o.y, w: o.w, d: o.d, space: o.space, room: room)
+            if cells.contains(where: { pad.contains($0) }) { return "that's the space kept clear " + (o.space ?? "") + " the " + Zone.short(o.name) }
+        }
+        // And this thing's own space has to be in the room and free.
+        if t.space != nil {
+            let pad = Self.pad(x: s.x, y: s.y, w: s.w, d: s.d, space: t.space, room: room)
+            let taken = room.floorTaken(except: [t.id]).union(room.doorClear)
+            if pad.isEmpty || pad.contains(where: { !room.contains($0) || taken.contains($0) }) {
+                return "it needs space " + (t.space ?? "") + " it for people to walk or work"
+            }
         }
         let flushN = s.y == 0, flushS = s.y + s.d == room.depth, flushW = s.x == 0, flushE = s.x + s.w == room.width
         let long = s.w != s.d

@@ -68,6 +68,9 @@ struct Thing: Codable, Hashable, Identifiable {
     /// The thing this one stands, sits or lies on (a person on a stool, a glass on the bar).
     var on: UUID?
     var blocks: Blocks = .none
+    /// Where people need room to walk or work around it, as the model said ("in front", "behind",
+    /// "all round"; nil for none). Nothing else is placed there.
+    var space: String?
 
     // People
     var expression = ""
