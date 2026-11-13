@@ -791,7 +791,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z12"
+    static let build = "build 2026-11-13z13"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2291,7 +2291,8 @@ final class StoryEngine {
             }
             let doing = field("doing")
             let face = field("expression")
-            let holds = field("holding")
+            var holds = field("holding")
+            if holds.contains("(") || holds.lowercased().contains("hand") || holds.lowercased().contains("implied") { holds = "" }
             let whereSaid = field("where")
             let facingSaid = field("facing")
             asked.append(c.name + " now? → " + [doing, face, whereSaid == "stays put" ? "" : whereSaid, facingSaid.isEmpty ? "" : "facing " + facingSaid]
@@ -2307,7 +2308,9 @@ final class StoryEngine {
                 p.holding = holds.isEmpty ? [] : [clip(holds, 50)]
                 if !doing.isEmpty { p.doing = clip(doing, 100) }
                 Placer.put(&r, p)
-                if !whereSaid.isEmpty, whereSaid != "stays put", let z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
+                if !whereSaid.isEmpty, whereSaid != "stays put", var z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
+                    if case .at(let n) = z, let was = t.pastMoves.first, was.hasPrefix("behind"), was.contains(Zone.short(n)) { z = .behind(n) }
+                    if z.text == t.pastMoves.first { now.room = r; return }
                     let note = Placer.placePerson(&r, p, zone: z)
                     r.log.append("move: " + c.name + " → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
                     if let moved = r.thing(p.id) { r.things[r.index(p.id)!].pastMoves = [z.text] + Array(moved.pastMoves.prefix(7)) }
@@ -4253,6 +4256,15 @@ extension StoryEngine {
                 r.log.append("enter: " + name)
             }
             for (id, f) in facing where !f.isEmpty { Placer.turn(&r, id, toward: f) }
+        }
+        // You start where the opening puts you ("on a stool at the long mahogany bar").
+        if let a = adventure, let me = r.player {
+            let opening = [a.spot, a.scene].first { !$0.isEmpty } ?? ""
+            if let z = Adventure.zone(from: opening, in: r) {
+                let note = Placer.placePerson(&r, me, zone: z)
+                r.log.append("move: you → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
+                if let first = r.people.first(where: { $0.kind == .person && $0.id != me.id }) { Placer.turn(&r, me.id, toward: first.name) }
+            }
         }
         r.log = Array(r.log.suffix(80))
         await show(r, pause: 0)

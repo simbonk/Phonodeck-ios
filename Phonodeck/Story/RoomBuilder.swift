@@ -125,6 +125,11 @@ enum RoomBuilder {
         case .open, .openFar: return .centre
         case .anywhere:
             if Rules.rule(icon).small, let s = r.objects.first(where: { Rules.surfaces.contains($0.icon) }) { return .on(s.name) }
+            if Rules.seats.contains(icon) {
+                // A stool goes by the bar, a chair by a table.
+                let want: [String] = icon == "stool" ? ["bar", "counter", "table"] : ["table", "desk", "bar", "counter"]
+                for k in want { if let s = r.objects.first(where: { $0.icon == k }) { return k == "bar" || k == "counter" ? .at(s.name) : .beside(s.name) } }
+            }
             return .centre
         }
     }
@@ -272,6 +277,7 @@ extension Adventure {
             if s.contains(key) || s.contains(o.icon) {
                 if s.contains("behind"), Rules.staffed.contains(o.icon) { return .behind(o.name) }
                 if Rules.seats.contains(o.icon), s.contains("on") || s.contains("sit") { return .on(o.name) }
+                if Rules.surfaces.contains(o.icon) { return .at(o.name) }
                 return .beside(o.name)
             }
         }

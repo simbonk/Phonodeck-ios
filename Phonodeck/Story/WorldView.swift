@@ -475,7 +475,7 @@ struct LoreEditor: View {
 }
 
 /// One row of the turn guide's world card. It lights up when its value changes, then settles.
-private struct FlashRow: View {
+struct FlashRow: View {
     let label: String
     let value: String
     /// How many lines the value may take (nil: all of them).
