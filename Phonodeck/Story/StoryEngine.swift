@@ -325,19 +325,13 @@ final class StoryEngine {
             var a = Adventure(setup: e, title: e.title.isEmpty ? "Untitled" : e.title, minutes: max(5, e.minutes))
             a.playerName = player.name
             a.nameless = true
-            // The grounded engine asks only for what the opening needs: no secrets, beats or roadmap.
-            let base = built ? Prompts.architectGrounded : Prompts.architect
-            let sim = built ? Prompts.architectSimulatorGrounded : Prompts.architectSimulator
-            var request = e.simulator ? base + "\n" + sim : base
+            // The architect asks only for what the opening needs: no secrets, beats or roadmap.
+            var request = e.simulator ? Prompts.architectGrounded + "\n" + Prompts.architectSimulatorGrounded : Prompts.architectGrounded
             if source != nil { request += "\n" + Prompts.continuation }
             request += "\n" + Prompts.architectNameless(playerNamed: !player.name.isEmpty)
             var prompt = "PLAYER'S ANSWERS\n" + e.answers(player: player)
                 + "\n\nFEELING TO ACHIEVE: " + (e.feeling.isEmpty ? "surprise me" : e.feeling)
                 + "\nPLAY MODE: " + (e.simulator ? "experience (no plot)" : "story")
-            if !built {
-                prompt += "\nSESSION LENGTH: \(a.minutes) minutes (about \(max(3, a.minutes * 60 / 90)) player replies)."
-                if a.isShort { prompt += "\nThis is a SHORT story: a small cast, 2-3 places, 3 acts, one clear goal." }
-            }
             var ending: Ending?
             if let src = source {
                 stage = "Reading how the last part ended"
@@ -536,6 +530,76 @@ final class StoryEngine {
             guard let g = r["goal"] as? String else { return nil }
             return Act(from: (r["from"] as? NSNumber)?.doubleValue ?? 0, to: (r["to"] as? NSNumber)?.doubleValue ?? Double(a.minutes), goal: g)
         }
+        // An experience has no acts: what the player does decides what happens next.
+        if e.simulator {
+            a.beats = []
+            a.roadmap = []
+        }
+        a.facts += ((plan["facts"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(10)
+        a.facts = Array(a.facts.prefix(14))
+        a.storyTime = clip(str("time"), 160)
+        if let m = Continuity.minutes(in: a.storyTime) {
+            a.clock = m
+            a.storyTime = Continuity.storyTime(clock: m, old: a.storyTime)
+        }
+        a.timeline = ((plan["timeline"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }.prefix(5).map { clip($0, 200) }
+        a.whereabouts = Self.whereabouts(plan["people"]).filter { w in
+            w.name.caseInsensitiveCompare(playerName) != .orderedSame && w.name.caseInsensitiveCompare("you") != .orderedSame
+        }.map { w in
+            // Everyone the architect places is in the opening place (the regular in the corner booth
+            // is in the room, not elsewhere); "with the player" only says who the player is dealing with.
+            var w = w
+            w.engaged = w.here
+            w.here = true
+            return w
+        }
+        // The opening scene: the room, its props and who is in it, set before the first line so
+        // the globe and the storyteller start from the same place.
+        a.scene = clip(str("scene"), 280)
+        let props = ((plan["things"] as? [Any]) ?? []).compactMap { $0 as? String }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        a.things = Array(props.prefix(6)).map { clip($0, 60) }
+        if !a.location.isEmpty, !a.things.isEmpty { a.placeThings[a.location.lowercased()] = a.things }
+        checkPronouns(&a, texts: [a.bible, a.scene])
+        a.secrets = (plan["secrets"] as? [String]) ?? []
+        if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
+    }
+
+    /// Adds an entry, or updates the one with the same name (the player's own edits always win).
+    @discardableResult
+    /// `lately`: the entry is news from the latest exchange, not a new description of who a person is.
+    private func addLore(_ a: inout Adventure, _ e: LoreEntry, lately: Bool = false) -> Int {
+        let key = e.name.lowercased()
+        if let i = a.lore.firstIndex(where: { $0.name.lowercased() == key || (e.kind == .person && !e.role.isEmpty && !$0.known && $0.role.lowercased() == e.role.lowercased()) }) {
+            if !a.lore[i].byPlayer {
+                if !e.desc.isEmpty {
+                    if lately, a.lore[i].kind == .person, !a.lore[i].desc.isEmpty {
+                        // Who someone is stays; what they are up to now is kept after it.
+                        let base = a.lore[i].desc.components(separatedBy: " Lately: ").first ?? a.lore[i].desc
+                        a.lore[i].desc = base + " Lately: " + e.desc
+                    } else {
+                        a.lore[i].desc = e.desc
+                    }
+                }
+                if !e.wants.isEmpty { a.lore[i].wants = e.wants }
+                if !e.role.isEmpty, a.lore[i].role.isEmpty { a.lore[i].role = e.role }
+                if a.lore[i].kind == .other { a.lore[i].kind = e.kind }
+            }
+            return i
+        }
+        a.lore.append(e)
+        return a.lore.count - 1
+    }
+
+    // MARK: Editing the world (the World panel)
+
+    func saveLore(_ e: LoreEntry) {
+        guard var a = adventure else { return }
+        var e = e
+        e.byPlayer = true
+        if let i = a.lore.firstIndex(where: { $0.id == e.id }) { a.lore[i] = e } else { a.lore.append(e) }
+        if e.isPlayer { a.playerName = e.name == "You" ? "" : e.name.trimmingCharacters(in: .whitespaces) }
+        a.notesStale = a.notes != nil   // so the cast agendas stop describing the old version
         adventure = a
         library.save(a)
         refreshVocabulary()
@@ -3760,17 +3824,6 @@ final class StoryEngine {
         for i in a.lore.indices where a.lore[i].kind == .person && !a.lore[i].known {
             let first = a.lore[i].name.split(separator: " ").first.map(String.init) ?? a.lore[i].name
             if told.contains(a.lore[i].name) || (first.count > 2 && told.contains(first)) { a.lore[i].known = true }
-        }
-        for done in (m["beats_done"] as? [String]) ?? [] {
-            if let i = a.beats.firstIndex(where: { !$0.done && ($0.text.localizedCaseInsensitiveContains(done) || done.localizedCaseInsensitiveContains($0.text)) }) {
-                a.beats[i].done = true
-            }
-        }
-        if let mood = m["mood"] as? [String: Any] {
-            a.mood = Mood(
-                feeling: (mood["feeling"] as? NSNumber)?.intValue,
-                enjoying: mood["enjoying"] as? String ?? "",
-                leavingPlot: mood["leaving_plot"] as? Bool ?? false)
         }
 
         // Fold old turns into a chapter summary so the prompt stays short.
