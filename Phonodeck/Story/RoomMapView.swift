@@ -14,11 +14,24 @@ struct RoomMapView: View {
     @State private var looks: [UUID: String] = [:]
     @State private var lit: Set<UUID> = []
     @State private var beat = 0
+    /// The map's zoom and pan (pinch and drag on the map only).
+    @State private var zoom: CGFloat = 1
+    @State private var pan: CGSize = .zero
+    @GestureState private var pinch: CGFloat = 1
+    @GestureState private var drag: CGSize = .zero
 
     struct StackPick: Identifiable { var id: String { "\(cell.x),\(cell.y)" }; var cell: Cell }
 
     var body: some View {
-        if let a = app.engine.adventure, !a.rooms.isEmpty {
+        if let a = app.engine.adventure, !a.location.isEmpty, !a.rooms.contains(where: { $0.name.caseInsensitiveCompare(a.location) == .orderedSame }) {
+            HStack(spacing: 8) {
+                HoloCore(size: 16)
+                Text("Drawing " + a.location + "…").font(.subheadline).foregroundStyle(Theme.fg)
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+        } else if let a = app.engine.adventure, !a.rooms.isEmpty {
             let here = a.room
             let room = a.rooms.first { $0.id == (shownID ?? here?.id) } ?? here ?? a.rooms[0]
             VStack(alignment: .leading, spacing: 8) {
@@ -148,6 +161,32 @@ struct RoomMapView: View {
                 if stack.count == 1 { editing = stack[0] } else if stack.count > 1 { stackAt = StackPick(cell: c) }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: room.things.map(\.look))
+            // Pinch to zoom and drag to look around, on the map only; double-tap to fit it again.
+            .scaleEffect(zoom * pinch)
+            .offset(x: pan.width + drag.width, y: pan.height + drag.height)
+            .gesture(
+                MagnifyGesture()
+                    .updating($pinch) { v, st, _ in st = v.magnification }
+                    .onEnded { v in
+                        zoom = min(4, max(1, zoom * v.magnification))
+                        if zoom == 1 { withAnimation(.snappy) { pan = .zero } }
+                    }
+            )
+            // Dragging pans only while zoomed in, so the page still scrolls otherwise.
+            .gesture(
+                DragGesture(minimumDistance: 8)
+                    .updating($drag) { v, st, _ in st = v.translation }
+                    .onEnded { v in pan.width += v.translation.width; pan.height += v.translation.height },
+                including: zoom > 1 ? .all : .subviews
+            )
+            .simultaneousGesture(TapGesture(count: 2).onEnded { withAnimation(.snappy) { zoom = 1; pan = .zero } })
+        }
+        .clipped()
+        .overlay(alignment: .bottomTrailing) {
+            if zoom > 1 {
+                Text(String(format: "%.1f×", zoom)).font(.caption2.monospacedDigit()).foregroundStyle(Theme.dim)
+                    .padding(.horizontal, 6).padding(.vertical, 2).background(Theme.bg.opacity(0.8), in: Capsule()).padding(4)
+            }
         }
         .aspectRatio(CGFloat(max(1, room.width)) / (CGFloat(max(1, room.depth)) + 0.8), contentMode: .fit)
         .frame(maxHeight: 44 * CGFloat(room.depth) + 26)
@@ -245,8 +284,9 @@ struct RoomMapView: View {
                 .frame(width: w - 3, height: d - 3)
             VStack(spacing: 0) {
                 Image(systemName: Rules.symbol(t.icon)).font(.system(size: min(14, s * 0.4))).foregroundStyle(Theme.dim)
-                Text(label(t.name)).font(.system(size: 8)).foregroundStyle(Theme.fg.opacity(0.85)).lineLimit(1).minimumScaleFactor(0.6)
-                    .frame(maxWidth: max(w, s * 1.4))
+                Text(label(t.name)).font(.system(size: 8)).foregroundStyle(Theme.fg.opacity(0.85))
+                    .lineLimit(w > s ? 1 : 2).minimumScaleFactor(0.5).multilineTextAlignment(.center)
+                    .frame(maxWidth: w - 4)
             }
         }
         .scaleEffect(on ? 1.06 : 1)

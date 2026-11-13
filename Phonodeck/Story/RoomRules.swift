@@ -14,6 +14,8 @@ enum Zone: Hashable {
     case beside(String)
     case on(String)
     case behind(String)
+    /// At a bar, table or desk, on the open side (where a customer or guest would be).
+    case at(String)
     case anywhere
 
     var text: String {
@@ -26,6 +28,7 @@ enum Zone: Hashable {
         case .beside(let n): "beside the \(n)"
         case .on(let n): "on the \(n)"
         case .behind(let n): "behind the \(n)"
+        case .at(let n): "at the \(n)"
         case .anywhere: "anywhere"
         }
     }
@@ -37,11 +40,25 @@ enum Zone: Hashable {
         if !room.doors.isEmpty { out.append(.doorCorner) }
         out += [.farCorner, .centre]
         for o in room.objects where o.on == nil && !Rules.rule(o.icon).small {
-            out.append(.beside(o.name.lowercased()))
-            if Rules.surfaces.contains(o.icon) || (people && Rules.seats.contains(o.icon)) { out.append(.on(o.name.lowercased())) }
-            if people, Rules.staffed.contains(o.icon) { out.append(.behind(o.name.lowercased())) }
+            out.append(.beside(Self.short(o.name)))
+            let n = Self.short(o.name)
+            if people {
+                // People sit on seats, stand at a bar or table, and work behind a counter; they never stand on furniture.
+                if Rules.seats.contains(o.icon) { out.append(.on(n)) }
+                if Rules.surfaces.contains(o.icon) { out.append(.at(n)) }
+                if Rules.staffed.contains(o.icon) { out.append(.behind(n)) }
+            } else if Rules.surfaces.contains(o.icon) {
+                out.append(.on(n))
+            }
         }
         return out.map(\.text)
+    }
+
+    /// A name without its article, lowercased ("The long mahogany bar" → "long mahogany bar").
+    static func short(_ name: String) -> String {
+        let l = name.lowercased().trimmingCharacters(in: .whitespaces)
+        for p in ["the ", "a ", "an "] where l.hasPrefix(p) { return String(l.dropFirst(p.count)) }
+        return l
     }
 
     /// Reads a zone back from the model's words ("by the north wall", "on the bar", "beside Dolores").
@@ -60,7 +77,8 @@ enum Zone: Hashable {
             return bare.isEmpty ? nil : bare
         }
         if let n = rest("behind ") { return .behind(n) }
-        if let n = rest("sitting on ") ?? rest("on top of ") ?? rest("on ") ?? rest("at ") { return .on(n) }
+        if let n = rest("at ") { return .at(n) }
+        if let n = rest("sitting on ") ?? rest("on top of ") ?? rest("on ") { return .on(n) }
         if let n = rest("beside ") ?? rest("next to ") ?? rest("near ") ?? rest("by ") { return .beside(n) }
         if s == "anywhere" { return .anywhere }
         return nil
@@ -122,6 +140,20 @@ enum Rules {
         case "small": Rule(w: 1, d: 1, place: .anywhere, blocks: .none, windowOK: true, small: true)
         default: Rule(w: 1, d: 1, place: .anywhere, blocks: .none)
         }
+    }
+
+    /// Words for what people wear: never an object on the floor.
+    static let clothing: Set<String> = ["coat", "overcoat", "raincoat", "jacket", "vest", "waistcoat", "overalls", "dress", "gown", "shirt",
+        "blouse", "skirt", "trousers", "pants", "jeans", "boots", "shoes", "heels", "hat", "fedora", "cap", "scarf", "gloves", "cloak",
+        "uniform", "apron", "suit", "tie", "sweater", "cardigan", "shawl", "stockings", "robe", "tunic", "bonnet", "veil"]
+    /// Words for what is on the ceiling or above: not on a floor plan.
+    static let overhead: Set<String> = ["skylight", "skylights", "ceiling", "chandelier", "rafters", "beams", "roof", "sky", "stars", "moon"]
+
+    /// Whether a name belongs on the floor plan (not clothing, not something overhead, not a sound or a smell).
+    static func onPlan(_ name: String) -> Bool {
+        let words = Set(name.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
+        let senses: Set<String> = ["smell", "scent", "sound", "music", "hum", "light", "glow", "air", "smoke", "rain", "noise", "silence"]
+        return words.isDisjoint(with: clothing) && words.isDisjoint(with: overhead) && words.isDisjoint(with: senses)
     }
 
     /// The kind of object a name most likely is ("a dusty upright piano" is a piano).
@@ -218,6 +250,16 @@ enum Placer {
             return all
         case .on(let n):
             return room.named(n)?.cells ?? []
+        case .at(let n):
+            guard let t = room.named(n) else { return [] }
+            let mine = Set(t.cells)
+            let side = Array(Set(t.cells.flatMap { near($0, 1) })).filter { !mine.contains($0) }
+            if Rules.staffed.contains(t.icon) {
+                let staff = Set(cells(.behind(n), in: room))
+                let open = side.filter { !staff.contains($0) }
+                return open.isEmpty ? side : open
+            }
+            return side
         case .behind(let n):
             guard let t = room.named(n) else { return [] }
             // The side of it that faces its nearest wall (the staff side of a bar).
@@ -297,8 +339,11 @@ enum Placer {
     }
 
     /// Every spot that keeps the rules, in either orientation.
-    static func legal(_ t: Thing, rule r: Rule, room: Room) -> [Spot] {
+    static func legal(_ t: Thing, rule given: Rule, room: Room) -> [Spot] {
         var out: [Spot] = []
+        var r = given
+        // A bar or counter runs along most of its wall in a bigger room.
+        if r.place == .staffWall { r.w = max(r.w, min(6, max(room.width, room.depth) / 2)) }
         let sizes = Set([[r.w, r.d], [r.d, r.w]].map { $0 })
         for sz in sizes {
             let w = min(sz[0], room.width), d = min(sz[1], room.depth)
@@ -437,6 +482,9 @@ enum Placer {
         var p = p
         var note = ""
         p.on = nil
+        var zone = zone
+        // Nobody stands on a bar or a table: they stand at it.
+        if case .on(let n) = zone, let thing = room.named(n), !thing.isPerson, !Rules.seats.contains(thing.icon) { zone = .at(n) }
         if case .on(let n) = zone, let seat = room.named(n), !seat.isPerson {
             let sitting = Set(room.people.filter { $0.on == seat.id && $0.id != p.id }.map { Cell(x: $0.x, y: $0.y) })
             if let c = seat.cells.first(where: { !sitting.contains($0) }) {

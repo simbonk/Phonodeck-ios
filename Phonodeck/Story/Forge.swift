@@ -25,10 +25,13 @@ final class Forge {
         Stage(title: "Mapping the world", keys: ["location", "places"], why: "Where you begin."),
         Stage(title: "Establishing characters and lore", keys: ["player", "lore"], why: "A world that remembers everyone you meet."),
         Stage(title: "Setting the scene", keys: ["facts", "time", "timeline", "people", "scene", "things"], why: "Who is where, and what is around you."),
+        Stage(title: "Drawing the room", keys: [], why: "Walls, doors and windows, then everything in it, placed square by square."),
         Stage(title: "Raising the curtain", keys: [], why: "Your opening scene is being written."),
     ]
 
     var stages: [Stage] { Self.stages }
+    /// The stage that draws the first room.
+    static var roomStage: Int { stages.count - 2 }
     /// An experience lives in one place: the map shows only that, whatever else the model listed.
     private let onePlace: Bool
 
@@ -165,6 +168,10 @@ struct ForgeView: View {
                     .padding(.top, 6)
                 ShimmerBar(fraction: forge.fraction).padding(.vertical, 20)
                 steps
+                // The first room, drawn live: every wall, door, window and placement as it is decided.
+                if forge.at >= Forge.roomStage {
+                    RoomMapView().padding(.bottom, 12).transition(.opacity)
+                }
                 TimelineView(.periodic(from: .now, by: 1)) { ctx in
                     Text("\(Int(ctx.date.timeIntervalSince(forge.started)))s")
                         .font(.footnote.monospacedDigit()).foregroundStyle(Theme.dim)

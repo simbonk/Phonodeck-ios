@@ -154,19 +154,13 @@ extension Adventure {
         let beforeRooms = rooms
         let beforeID = roomID
         let previous = room
-        var r: Room
-        if let found = rooms.first(where: { $0.name.caseInsensitiveCompare(place) == .orderedSame }) {
-            r = found
-        } else {
-            let about: String = Cards.placeCard(self)?.desc ?? ""
-            r = RoomBuilder.fromTemplate(name: place, about: about, from: previous?.name ?? "")
-        }
-        let moved = previous.map { $0.id != r.id } ?? true
-
-        // The player leaves the room they were in and comes in through the door.
-        if moved, var old = previous {
-            old.things.removeAll { $0.kind == .player }
-            if let i = rooms.firstIndex(where: { $0.id == old.id }) { rooms[i] = old }
+        // A room is drawn once, by the room builder; until then the map waits for it.
+        guard let found = rooms.first(where: { $0.name.caseInsensitiveCompare(place) == .orderedSame }) else { return false }
+        var r = found
+        roomID = r.id
+        // The player is only ever in one room.
+        for i in rooms.indices where rooms[i].id != r.id && rooms[i].player != nil {
+            rooms[i].things.removeAll { $0.kind == .player }
         }
         let me = playerName.isEmpty ? "You" : playerName
         var player: Thing
@@ -174,7 +168,7 @@ extension Adventure {
             player = p
         } else {
             player = Thing(kind: .player, name: me)
-            let c = RoomBuilder.entrance(r, from: previous?.name ?? "")
+            let c = RoomBuilder.entrance(r, from: previous.map { $0.id == r.id ? "" : $0.name } ?? "")
             player.x = c.x; player.y = c.y
             player.facing = Facing.toward(dx: r.width / 2 - c.x, dy: r.depth / 2 - c.y) ?? .n
             r.things.append(player)
@@ -249,7 +243,7 @@ extension Adventure {
         }
 
         // The things the story has shown here.
-        for item in Cards.props(self).prefix(8) where r.named(item) == nil {
+        for item in Cards.props(self).prefix(8) where r.named(item) == nil && Rules.onPlan(item) {
             let icon = Rules.icon(for: item)
             let z = RoomBuilder.defaultZone(icon, in: r)
             let t = Thing(kind: .object, name: item, icon: icon)
