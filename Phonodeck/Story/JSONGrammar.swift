@@ -258,6 +258,19 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// The room builder: the things the story needs, without where they go (each is asked after).
+    static func roomList(kinds: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + key("things") + " things ws \"}\"",
+            #"things ::= "[" ws ( th ( "," ws th ){0,4} )? ws "]""#,
+            "th ::= \"{\" ws " + [key("name") + " s40", key("kind") + " kd", key("made_of") + " s40"]
+                .joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("kd", kinds),
+            capped("s40", 40),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// The room builder, question 3: where each person is and who or what they face.
     static func roomPeople(names: [String], zones: [String], faces: [String]) -> String {
         let n = max(1, safe(names, max: 60).count)

@@ -303,7 +303,7 @@ enum Fovea {
 
     /// The private note before the player's words: when and where, who they face, this turn's
     /// events from code, and the items marked yes.
-    static func lead(_ a: Adventure, input: String, arrived: Bool, events: [String], kept: [Item]) -> String {
+    static func lead(_ a: Adventure, input: String, arrived: Bool, events: [String], kept: [Item], instruction: Bool = false) -> String {
         var l: [String] = ["[FOR THIS MOMENT: private, never mention it]", "WHEN AND WHERE: " + whenWhere(a)]
         let room = roomLine(a)
         if !room.isEmpty { l.append("THE ROOM: " + room) }
@@ -320,6 +320,6 @@ enum Fovea {
         if !events.isEmpty { l += events.map { "- " + $0 } }
         if !kept.isEmpty { l.append("ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
         l.append("[END]")
-        return l.joined(separator: "\n") + "\n\nTHE PLAYER: " + input
+        return l.joined(separator: "\n") + "\n\n" + (instruction ? "INSTRUCTION: " : "THE PLAYER: ") + input
     }
 }
