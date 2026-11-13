@@ -393,6 +393,20 @@ final class StoryEngine {
             // The first room is drawn now, on the build screen, before the opening is written;
             // it is never redrawn after.
             forge.reach(Forge.roomStage)
+            // The plan sometimes comes back with nobody placed. Whoever the premise or the opening
+            // scene names is in the opening room (else the whole cast, up to three), so the map and
+            // the storyteller both have them.
+            let me1 = Cards.first(a.playerName).lowercased()
+            let others = a.cast.filter { !$0.isPlayer && Cards.first($0.name).lowercased() != me1 }
+            if !others.isEmpty, !a.whereabouts.contains(where: { $0.here != false }) {
+                let text = a.bible + " " + a.scene + " " + a.setup.place
+                let named = others.filter { Cards.mentions($0, in: text) }
+                for c in (named.isEmpty ? Array(others.prefix(3)) : named) where !a.whereabouts.contains(where: { $0.name == c.name }) {
+                    a.whereabouts.append(Whereabout(name: c.name, at: a.location.isEmpty ? "here" : a.location, here: true, engaged: false))
+                }
+                adventure = a
+                library.save(a)
+            }
             var scene = "THE STORY: " + clip(a.bible, 700)
             let held = Cards.props(a)
             if !held.isEmpty { scene += "\nTHINGS HERE: " + held.prefix(8).joined(separator: "; ") }
@@ -791,7 +805,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z14"
+    static let build = "build 2026-11-13z15"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
