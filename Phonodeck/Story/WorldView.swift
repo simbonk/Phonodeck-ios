@@ -76,7 +76,6 @@ struct WorldView: View {
     private func world(_ a: Adventure) -> some View {
         RoomMapView()
         if !a.frames.isEmpty { turnGuide(a) }
-        VStack(alignment: .leading, spacing: 6) { attributes(a) }
         Button {
             editing = LoreEntry(name: "", kind: .person)
         } label: {
@@ -130,7 +129,6 @@ struct WorldView: View {
         let asking: String = live ? (app.engine.rebuildStep.isEmpty ? app.engine.stage : app.engine.rebuildStep) : ""
         let pre: [String] = f.pre ?? []
         let all: [String] = pre + f.asked
-        let lastChanges: Int = f.asked.isEmpty ? 0 : ((f.steps ?? []).last?.count ?? 0)
         let busy = live && !asking.isEmpty
         HStack(spacing: 8) {
             Button { withAnimation(.snappy) { frameAt = max(0, k - 1) } } label: { Image(systemName: "chevron.left") }
@@ -149,54 +147,6 @@ struct WorldView: View {
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
-
-        // The ticker: the answer that just landed, then the question being asked now.
-        VStack(alignment: .leading, spacing: 3) {
-            if let done = all.last {
-                tickerLine(done, changes: lastChanges, a)
-                    .id("done-\(f.turn)-\(all.count)")
-                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
-                                            removal: .move(edge: .top).combined(with: .opacity)))
-            }
-            if !asking.isEmpty {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text(Continuity.unnamed(asking, in: a)).font(.footnote.bold()).foregroundStyle(Theme.accent).lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .id("asking-" + asking)
-                .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
-                                        removal: .move(edge: .top).combined(with: .opacity)))
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 38, alignment: .topLeading)
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Theme.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-        .clipped()
-        .animation(.spring(duration: 0.35), value: all.count)
-        .animation(.spring(duration: 0.35), value: asking)
-
-        // The world this turn. A row lights up when its value changes.
-        card {
-            VStack(alignment: .leading, spacing: 1) {
-                FlashRow(label: "Place", value: f.place.isEmpty ? "On the way somewhere new" : f.place, lines: wide ? nil : 1)
-                FlashRow(label: "You are", value: f.spot ?? "", lines: wide ? nil : 1)
-                FlashRow(label: "You feel", value: f.body ?? "", lines: wide ? nil : 1)
-                FlashRow(label: "Time", value: f.time, lines: wide ? nil : 1)
-                FlashRow(label: "Facing", value: f.with.isEmpty ? "Nobody in particular" : f.with.map { Continuity.unnamed($0, in: a) }.joined(separator: "\n"), lines: wide ? nil : 1)
-                FlashRow(label: "They feel", value: (f.feelings ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: " · "), lines: wide ? nil : 1)
-                FlashRow(label: "They want", value: (f.wants ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
-                FlashRow(label: "They know", value: (f.knows ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
-                FlashRow(label: "In the room", value: f.room.map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 2)
-                FlashRow(label: "You have", value: f.have.joined(separator: "; "), lines: wide ? nil : 1)
-                FlashRow(label: "Around", value: f.around.joined(separator: "; "), lines: wide ? nil : 2)
-                FlashRow(label: "Background", value: f.sound ?? "", lines: wide ? nil : 2)
-                FlashRow(label: "Goal", value: (f.goal ?? []).joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 1)
-                FlashRow(label: "Hanging", value: (f.pending ?? []).map { Continuity.unnamed($0, in: a) }.joined(separator: wide ? "\n" : " · "), lines: wide ? nil : 2)
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { withAnimation(.snappy) { wide.toggle() } }
 
         // Every step of the turn, folded away until asked for.
         Button {

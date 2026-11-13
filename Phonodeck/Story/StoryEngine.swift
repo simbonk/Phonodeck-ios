@@ -386,11 +386,21 @@ final class StoryEngine {
                 carryOver(from: src, into: &a, link: link)
                 if let ending, !link.lowercased().contains("later") { startAtEnding(ending, into: &a) }
             }
-            forge.reach(forge.stages.count - 1)
             adventure = a
             undoSnapshot = nil
             refreshVocabulary()
             library.save(a)
+            // The first room is drawn now, on the build screen, before the opening is written;
+            // it is never redrawn after.
+            forge.reach(Forge.roomStage)
+            var scene = "THE STORY: " + clip(a.bible, 700)
+            let held = Cards.props(a)
+            if !held.isEmpty { scene += "\nTHINGS HERE: " + held.prefix(8).joined(separator: "; ") }
+            let people = a.whereabouts.filter { $0.here != false }.map { w in w.name + (w.at.isEmpty ? "" : " (" + w.at + ")") }
+            if !people.isEmpty { scene += "\nPEOPLE HERE: " + people.joined(separator: "; ") }
+            await furnishRoom(story: scene)
+            guard !Task.isCancelled else { return }
+            forge.reach(forge.stages.count - 1)
 
             var told = ending?.recap ?? ""
             if told.count <= 40 { told = ((plan?["recap"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -781,7 +791,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z9"
+    static let build = "build 2026-11-13z11"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -4019,16 +4029,25 @@ extension StoryEngine {
     /// object whose spot broke a rule. Code places everything; every decision goes on the room's
     /// log and shows on the map as it happens. Whatever the model can't answer comes from the template.
     fileprivate func furnishRoom(story: String) async {
-        guard let a0 = adventure, let old = a0.room, !old.built else { return }
-        let roomID = old.id
-        let from: String = old.doors.first?.leadsTo ?? ""
-        let fromName = from == "outside" ? "" : from
+        // A room is drawn once: only a place with no room yet is laid out, and never again after.
+        guard let a0 = adventure, !a0.location.isEmpty,
+              !a0.rooms.contains(where: { $0.name.caseInsensitiveCompare(a0.location) == .orderedSame }) else { return }
+        let placeName = a0.location
+        let roomID = UUID()
+        let previous: Room? = a0.room
+        let from: String = previous?.name ?? ""
+        let fromName = from
         defer { rebuildStep = "" }
 
-        /// Shows the room as it stands, so the map follows each decision.
-        func show(_ r: Room, pause: Double = 0.25) async {
-            guard var a = adventure, let i = a.rooms.firstIndex(where: { $0.id == roomID }) else { return }
-            a.rooms[i] = r
+        /// Shows the room as it stands, so the map follows each decision. The first show makes it
+        /// the player's room (and takes the player out of the one they left).
+        func show(_ r: Room, pause: Double = 0.4) async {
+            guard var a = adventure else { return }
+            if let i = a.rooms.firstIndex(where: { $0.id == roomID }) { a.rooms[i] = r } else {
+                for k in a.rooms.indices { a.rooms[k].things.removeAll { $0.kind == .player } }
+                a.rooms.append(r)
+            }
+            a.roomID = roomID
             adventure = a
             if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
         }
@@ -4043,7 +4062,7 @@ extension StoryEngine {
 
         let about: String = Cards.placeCard(a0)?.desc ?? ""
         var base = "You lay out a room for an audio story, as a top-down plan. Answer only from the lists given; be true to the story, its time and place."
-        base += "\n\nTHE ROOM: " + old.name
+        base += "\n\nTHE ROOM: " + placeName
         if !about.isEmpty { base += "\nWHAT IT IS LIKE: " + clip(about, 240) }
         if !fromName.isEmpty { base += "\nTHE PLAYER CAME FROM: " + fromName }
         let world = [a0.setup.world, a0.setup.place].filter { !$0.isEmpty }.joined(separator: ". ")
@@ -4052,17 +4071,16 @@ extension StoryEngine {
 
         // 1. The shell.
         let sizeWords = RoomBuilder.sizes.map { "\($0.0), \($0.1) by \($0.2) metres" }
-        let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nSIZES: " + sizeWords.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"size\":\"one of SIZES\",\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
+        let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nSIZES: " + sizeWords.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"size\":\"one of SIZES\",\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
         let m1 = await ask("Building the room: walls, doors and windows", q1, JSONGrammar.roomShell(types: RoomBuilder.types, sizes: sizeWords), 260)
         guard !Task.isCancelled else { return }
         var type = str(m1, "type").lowercased()
-        if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: old.name + " " + about) }
+        if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: placeName + " " + about) }
         let tp = RoomBuilder.template(type)
         let sizeSaid = str(m1, "size")
-        var r = RoomBuilder.shell(name: old.name, type: type, size: sizeSaid.isEmpty ? tp.size : sizeSaid, from: from)
+        var r = RoomBuilder.shell(name: placeName, type: type, size: sizeSaid.isEmpty ? tp.size : sizeSaid, from: from)
         r.id = roomID
         r.built = true
-        r.log = old.log
         r.inside = Self.echoesPrompt(str(m1, "inside")) ? about : str(m1, "inside")
         r.outside = Self.echoesPrompt(str(m1, "outside")) ? "" : str(m1, "outside")
         // Doors and windows, spread along their walls so none overlap.
@@ -4090,7 +4108,9 @@ extension StoryEngine {
         var windows: [Opening] = []
         if !RoomBuilder.outdoor.contains(type) {
             for w in ((m1["windows"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(2) {
-                guard let wall = Wall(rawValue: str(w, "wall").lowercased()), let at = slot(wall, width: 2) else { continue }
+                // Windows are in the walls; a skylight or anything overhead is not on a floor plan.
+                guard Rules.onPlan(str(w, "view") + " " + str(w, "wall")) || str(w, "view").isEmpty,
+                      let wall = Wall(rawValue: str(w, "wall").lowercased()), let at = slot(wall, width: 2) else { continue }
                 windows.append(Opening(wall: wall, at: at, width: 2, view: Self.echoesPrompt(str(w, "view")) ? "" : str(w, "view")))
             }
         }
@@ -4105,14 +4125,14 @@ extension StoryEngine {
         for k in ["bar", "counter", "table", "desk", "shelf"] { zones.append("on the " + k) }
         let q2 = base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres, doors on the " + doors.map(\.wall.rawValue).joined(separator: " and ")
             + " wall" + (windows.isEmpty ? "" : ", windows on the " + windows.map(\.wall.rawValue).joined(separator: " and ") + " wall") + ".\n"
-            + "QUESTION: List up to 8 things in this room that the story shows or that a room like this would have: the big furniture first, then smaller things. For each: a short name in the story's words, its kind from KINDS, what it is made of, and where it goes in general from PLACES.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nPLACES: " + zones.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"where\":\"one of PLACES\"}]}\nThe form:"
+            + "QUESTION: List up to 8 things standing in this room that the story shows or that a room like this would have: the big furniture first, then smaller things. Only things on the floor or on furniture: no clothing anyone wears, nothing on the ceiling, no sounds or smells. For each: a short name in the story's words, its kind from KINDS, what it is made of, and where it goes in general from PLACES.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nPLACES: " + zones.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"where\":\"one of PLACES\"}]}\nThe form:"
         let m2 = await ask("Building the room: what is in it", q2, JSONGrammar.roomThings(kinds: Rules.kinds, zones: zones), 420)
         guard !Task.isCancelled else { return }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
         var wanted: [(Thing, Zone)] = []
         for d in ((m2["things"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(8) {
             let name = str(d, "name")
-            guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()),
+            guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()), Rules.onPlan(name),
                   !wanted.contains(where: { $0.0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
             var kind = str(d, "kind").lowercased()
             if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: name) }
@@ -4173,12 +4193,17 @@ extension StoryEngine {
 
         // 4. The people: where each one is, and who or what they face.
         let myFirst = Cards.first(a0.playerName).lowercased()
-        let here: [String] = (adventure ?? a0).whereabouts.filter { w in
+        let hereListed: [String] = (adventure ?? a0).whereabouts.filter { w in
             let f = Cards.first(w.name).lowercased()
             return w.here != false && !f.isEmpty && f != myFirst && f != "you"
         }.map { w in Cards.card(for: w, in: a0)?.name ?? w.name }
+        // And anyone the story itself shows in the room who isn't placed anywhere yet.
+        var here = hereListed
+        for c in a0.cast where !here.contains(c.name) && Cards.mentions(c, in: story) {
+            here.append(c.name)
+        }
         let entry = RoomBuilder.entrance(r, from: from)
-        var me = old.player ?? Thing(kind: .player, name: a0.playerName.isEmpty ? "You" : a0.playerName)
+        var me = Thing(kind: .player, name: a0.playerName.isEmpty ? "You" : a0.playerName)
         me.x = entry.x; me.y = entry.y; me.on = nil
         me.facing = Facing.toward(dx: r.width / 2 - entry.x, dy: r.depth / 2 - entry.y) ?? .n
         Placer.put(&r, me)
@@ -4200,15 +4225,14 @@ extension StoryEngine {
                 guard here.contains(name), !placed.contains(name) else { continue }
                 placed.insert(name)
                 let z = Zone.parse(str(d, "where")) ?? .farCorner
-                var p = old.people.first { $0.name == name } ?? Thing(kind: .person, name: name)
-                p.id = old.people.first { $0.name == name }?.id ?? p.id
+                let p = Thing(kind: .person, name: name)
                 let note = Placer.placePerson(&r, p, zone: z)
                 r.log.append("enter: " + name + " " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
                 facing.append((p.id, str(d, "facing")))
                 await show(r)
             }
             for name in here where !placed.contains(name) {
-                let p = old.people.first { $0.name == name } ?? Thing(kind: .person, name: name)
+                let p = Thing(kind: .person, name: name)
                 Placer.placePerson(&r, p, zone: .farCorner)
                 facing.append((p.id, "you"))
                 r.log.append("enter: " + name)
@@ -4217,6 +4241,17 @@ extension StoryEngine {
         }
         r.log = Array(r.log.suffix(80))
         await show(r, pause: 0)
+        // Everyone placed here is in the room as far as the story is concerned too.
+        if var a = adventure {
+            for name in here {
+                if let i = a.whereabouts.firstIndex(where: { Cards.card(for: $0, in: a)?.name == name || $0.name == name }) {
+                    if a.whereabouts[i].here == false { a.whereabouts[i].here = true; a.whereabouts[i].leftAt = nil; a.whereabouts[i].at = placeName }
+                } else {
+                    a.whereabouts.append(Whereabout(name: name, at: placeName, here: true, engaged: false))
+                }
+            }
+            adventure = a
+        }
         if let a = adventure { library.save(a) }
     }
 }
