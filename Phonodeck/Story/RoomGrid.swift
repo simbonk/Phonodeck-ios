@@ -327,18 +327,46 @@ enum RoomGrid {
 
     /// The room as text, for the story export: one character per square.
     static func ascii(_ room: Room) -> String {
+        // Columns and rows are numbered (x across from the west wall, y down from the north wall).
         var rows = Array(repeating: Array(repeating: Character("."), count: room.width), count: room.depth)
-        for o in room.windows { for c in room.cells(of: o) where room.contains(c) { rows[c.y][c.x] = "=" } }
-        for o in room.doors { for c in room.cells(of: o) where room.contains(c) { rows[c.y][c.x] = "D" } }
-        for t in room.objects where t.on == nil { for c in t.cells where room.contains(c) { rows[c.y][c.x] = t.icon == "rug" ? "~" : "#" } }
-        for t in room.objects where t.on != nil { if room.contains(Cell(x: t.x, y: t.y)) { rows[t.y][t.x] = "o" } }
         var key: [String] = []
+        for o in room.windows { for c in room.cells(of: o) where room.contains(c) { rows[c.y][c.x] = "=" } }
+        for o in room.doors { for c in room.cells(of: o) where room.contains(c) { rows[c.y][c.x] = "+" } }
+        let letters = Array("abcdefghijklmnopqrstuvwxyz")
+        var letterOf: [UUID: Character] = [:]
+        for (n, t) in room.objects.enumerated() {
+            let ch = n < letters.count ? letters[n] : "#"
+            letterOf[t.id] = ch
+        }
+        for t in room.objects where t.on == nil { for c in t.cells where room.contains(c) { rows[c.y][c.x] = letterOf[t.id] ?? "#" } }
+        for t in room.objects where t.on != nil { if room.contains(Cell(x: t.x, y: t.y)) { rows[t.y][t.x] = letterOf[t.id] ?? "o" } }
+        var used: Set<Character> = Set(letters)
+        used.formUnion(["+", "=", ".", "@", "#"])
         for t in room.people {
             guard room.contains(Cell(x: t.x, y: t.y)) else { continue }
-            let ch: Character = t.kind == .player ? "@" : (t.name.uppercased().first ?? "P")
+            var ch: Character = "@"
+            if t.kind != .player {
+                let initial = t.name.uppercased().first ?? "P"
+                ch = used.contains(initial) ? (Array("PQRSTUVWXYZ").first { !used.contains($0) } ?? "P") : initial
+                used.insert(ch)
+            }
             rows[t.y][t.x] = ch
-            key.append("\(ch) \(t.kind == .player ? "you" : t.name), facing \(t.facing.word)")
+            var line = "\(ch) \(t.kind == .player ? "you" : t.name) at (\(t.x),\(t.y)), facing \(t.facing.word)"
+            if let seat = room.thing(t.on) { line += ", on " + seat.name }
+            if !t.holding.isEmpty { line += ", holding " + t.holding.joined(separator: ", ") }
+            key.append(line)
         }
-        return rows.map { String($0) }.joined(separator: "\n") + "\n" + key.joined(separator: "; ")
+        for t in room.objects {
+            var line = "\(letterOf[t.id] ?? "#") \(t.name) [\(t.icon)] at (\(t.x),\(t.y))"
+            if t.w > 1 || t.d > 1 { line += ", \(t.w)×\(t.d) m" }
+            if let base = room.thing(t.on) { line += ", on " + base.name }
+            switch t.blocks { case .both: line += ", blocks way and view"; case .way: line += ", blocks the way"; case .view: line += ", blocks the view"; case .none: break }
+            key.append(line)
+        }
+        for d in room.doors { key.append("+ door, \(d.wall.rawValue) wall at \(d.at)" + (d.leadsTo.isEmpty ? "" : " → " + d.leadsTo)) }
+        for w in room.windows { key.append("= window, \(w.wall.rawValue) wall at \(w.at)" + (w.view.isEmpty ? "" : ": " + w.view)) }
+        let head = "   " + (0..<room.width).map { String($0 % 10) }.joined()
+        let body = rows.enumerated().map { String(format: "%2d ", $0.offset) + String($0.element) }
+        return ([head] + body).joined(separator: "\n") + "\n" + key.joined(separator: "\n")
     }
 }

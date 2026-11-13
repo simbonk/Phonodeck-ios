@@ -152,8 +152,16 @@ enum Rules {
     /// Whether a name belongs on the floor plan (not clothing, not something overhead, not a sound or a smell).
     static func onPlan(_ name: String) -> Bool {
         let words = Set(name.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
-        let senses: Set<String> = ["smell", "scent", "sound", "music", "hum", "light", "glow", "air", "smoke", "rain", "noise", "silence"]
-        return words.isDisjoint(with: clothing) && words.isDisjoint(with: overhead) && words.isDisjoint(with: senses)
+        let senses: Set<String> = ["smell", "smells", "scent", "aroma", "odour", "odor", "stench", "perfume", "sound", "sounds", "music", "hum", "light",
+            "lamplight", "candlelight", "glow", "air", "smoke", "rain", "noise", "silence", "warmth", "heat", "chill", "cold", "damp", "darkness",
+            "shadow", "shadows", "steam", "mist", "fog", "haze", "laughter", "chatter", "voices", "murmur", "jazz", "melody", "tune", "rhythm",
+            "drumming", "crackle", "crackling", "thunder", "lightning", "storm", "wind", "breeze", "atmosphere", "mood", "feeling"]
+        // A material on its own is what something is made of, not a thing ("polished wood", "brass tiles").
+        let stuff: Set<String> = ["wood", "wool", "dust", "tiles", "tile", "brass", "leather", "velvet", "silk", "stone", "marble", "iron",
+            "copper", "tin", "plaster", "paint", "wallpaper", "floorboards", "floor", "floors", "wall", "walls", "dirt", "mud", "grime", "polish",
+            "varnish", "tobacco", "whiskey", "gin", "linen", "cotton", "satin", "lace", "mahogany", "oak", "pine"]
+        let last = name.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? ""
+        return words.isDisjoint(with: clothing) && words.isDisjoint(with: overhead) && words.isDisjoint(with: senses) && !stuff.contains(last)
     }
 
     /// The kind of object a name most likely is ("a dusty upright piano" is a piano).
