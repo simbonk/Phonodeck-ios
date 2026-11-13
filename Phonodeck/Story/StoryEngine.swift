@@ -1685,7 +1685,7 @@ final class StoryEngine {
             // where, who you are, and a few lines on how to open. No long rulebook.
             let items: [Fovea.Item] = Fovea.items(a, input: "", asking: false)
             let kept: [Fovea.Item] = Array(items.filter { ["you", "other", "person", "have", "around"].contains($0.kind) }.prefix(10))
-            foveaView = items.map { (kept.contains(where: { k in k.text == $0.text }) ? "  + " : "  - ") + Fovea.clip($0.text, 90) }
+            foveaView = items.map { it in (kept.contains(where: { $0.text == it.text }) ? "  + " : "  - ") + Fovea.clip(it.text, 90) }
             system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
             lead = Fovea.lead(a, input: input, arrived: true, events: extra + notes, kept: kept, instruction: true)
             roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
