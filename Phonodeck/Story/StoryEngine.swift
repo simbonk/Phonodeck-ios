@@ -49,6 +49,8 @@ final class StoryEngine {
     /// This turn's plan, by person: true when they stay where they are, false when the plan moved them.
     /// The rebuild leaves a planned person where the plan put them.
     private var plannedThisTurn: [String: Bool] = [:]
+    /// The one person the player turned to this turn. The rebuild only looks between you and them.
+    private var focusThisTurn = ""
 
     /// Read replies aloud as they are written.
     var narrate: Bool { didSet { UserDefaults.standard.set(narrate, forKey: "narrate") } }
@@ -802,7 +804,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z33"
+    static let build = "build 2026-11-13z34"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1291,6 +1293,7 @@ final class StoryEngine {
         putDownThisTurn = []
         walkedThisTurn = false
         plannedThisTurn = [:]
+        focusThisTurn = ""
         var introduced = hidden ? false : learnPlayerName(&a, input: input)
         // "I walk over to introduce myself": the player gives the name the story already knows.
         // With no name known yet, the person they turn to still gives theirs.
@@ -2039,6 +2042,12 @@ final class StoryEngine {
         let lean = foveaUsed
         let wanted = foveaYes
         let plannedNow = plannedThisTurn
+        // Foveated: after a turn spent with one person, only the space between you and them is
+        // looked at again. Everyone else stays as they were (no questions spent on them).
+        let focus = lean ? focusThisTurn : ""
+        func inFocus(_ name: String) -> Bool {
+            focus.isEmpty || Cards.first(name).lowercased() == Cards.first(focus).lowercased() || plannedNow[name] != nil
+        }
 
         func roleOf(_ c: LoreEntry) -> String { c.role.isEmpty ? "" : " (the story may call them \"" + Continuity.roleLabel(c.role) + "\")" }
         var base = Prompts.rebuildIntro
@@ -2304,6 +2313,7 @@ final class StoryEngine {
         for w in mid.whereabouts where w.here != false {
             let f = Cards.first(w.name).lowercased()
             guard f != me, f != "you", let c = Cards.card(for: w, in: mid), Cards.mentions(c, in: reply) else { continue }
+            if !inFocus(c.name) { times.append(c.name + " skipped (outside the fovea)"); continue }
             inView.append(c)
         }
         // Each of them on the grid: what they are doing, their expression, what they hold, where
@@ -2376,7 +2386,7 @@ final class StoryEngine {
         }
 
         // How the people the player is with feel about them now: a word or two each.
-        let facingNow: [LoreEntry] = mid.whereabouts.filter { $0.here != false && $0.engaged == true }.compactMap { Cards.card(for: $0, in: mid) }
+        let facingNow: [LoreEntry] = mid.whereabouts.filter { $0.here != false && $0.engaged == true }.compactMap { Cards.card(for: $0, in: mid) }.filter { inFocus($0.name) }
         for c in facingNow.prefix(2) {
             let fm = await ask("How does " + c.name + " feel about you?", Prompts.rebuildFeeling(c.name + roleOf(c)), JSONGrammar.text("feels", chars: 30), 20)
             guard fm != nil else { return }
@@ -2542,7 +2552,8 @@ final class StoryEngine {
         }
 
         // 5. What is around? Only what this reply showed, kept with the place.
-        let tm = await ask("What is around?", Prompts.rebuildThings, JSONGrammar.strings("things", max: 6, chars: 60), 120)
+        let between = focus.isEmpty ? "" : "Only things between you and " + focus + ", or on your way to them; leave out the rest of the room.\n"
+        let tm = await ask("What is around?", between + Prompts.rebuildThings, JSONGrammar.strings("things", max: 6, chars: 60), 120)
         guard tm != nil else { return }
         let candidates = checked(strings(tm, "things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
             let w: Set<String> = Continuity.wordSet(e).filter { $0.count > 2 }
@@ -2660,6 +2671,38 @@ final class StoryEngine {
             guard !sound.isEmpty, !now.location.isEmpty else { return }
             if now.ambience[now.location.lowercased()] != sound { filed.append("Background: " + sound) }
             now.ambience[now.location.lowercased()] = clip(sound, 110)
+        }
+
+        // The room card: the weather outside and the air inside stay as they were drawn, unless
+        // the story says outright that they changed ("it stops raining", "the smoke clears").
+        if let g = (adventure ?? start).room, !(g.outside.isEmpty && g.inside.isEmpty) {
+            let card = "THE ROOM CARD: outside: " + (g.outside.isEmpty ? "(not set)" : g.outside) + "; inside: " + (g.inside.isEmpty ? "(not set)" : g.inside) + ".\n"
+            let cq = card + "Does THE STORY or THE PLAYER say outright that the weather outside or the air inside has changed (for example: the rain stops, the smoke clears)? Only an outright change counts.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
+            let cm = await ask("Did the weather or the air change?", cq, JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+            guard cm != nil else { return }
+            var changed = ((cm?["answer"] as? String) ?? "") == "yes"
+            asked.append("Did the weather or the air change? → " + (changed ? "yes" : "no"))
+            if changed {
+                let nq = card + "Write the room card as it is now, after the change THE STORY tells. Keep whatever did not change exactly as it was.\nOutput ONLY one JSON object:\n{\"outside\":\"the weather and the world outside, a few words\",\"inside\":\"the air and feel inside, a few words\"}\nThe form:"
+                let nm = await ask("What is the room like now?", nq, JSONGrammar.pair("outside", 80, "inside", 80), 50)
+                let words: Set<String> = Continuity.wordSet(playerSaid + " " + reply + " " + g.outside + " " + g.inside)
+                func fresh(_ k: String, _ old: String) -> String {
+                    let v = ((nm?[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+                    guard v.count > 3, !Self.echoesPrompt(v), Continuity.grounded(v, in: words, share: 0.5) else { return old }
+                    return clip(v, 90)
+                }
+                let out = fresh("outside", g.outside), ins = fresh("inside", g.inside)
+                changed = out != g.outside || ins != g.inside
+                asked.append("What is the room like now? → " + (changed ? "outside: " + out + "; inside: " + ins : "no change kept"))
+                commit { now in
+                    guard changed, var r = now.room else { return }
+                    if r.outside != out { filed.append("Outside now: " + out) }
+                    if r.inside != ins { filed.append("Inside now: " + ins) }
+                    r.outside = out
+                    r.inside = ins
+                    now.room = r
+                }
+            }
         }
 
         // What is still hanging: kept until the story settles it.
@@ -2882,6 +2925,7 @@ final class StoryEngine {
         // 2. The person you face: what they do, given where everyone is.
         guard let w = target, let p = r.named(w.name), p.isPerson else { return ([], log.joined(separator: "; ")) }
         let who = w.name
+        focusThisTurn = who
         let first = Cards.first(who)
         let near: [Thing] = r.objects.filter { $0.icon != "rug" && RoomGrid.distance($0, p) < 2.2 }
             .sorted { RoomGrid.distance($0, p) < RoomGrid.distance($1, p) }
@@ -2982,7 +3026,7 @@ final class StoryEngine {
         case "What do you have?":
             return !wanted.contains("have") && putDownThisTurn.isEmpty && Self.pickedUp(playerSaid) == nil
         case "What is around?":
-            return !wanted.contains("around") && !moved
+            return !wanted.contains("around") && !moved && !walkedThisTurn
         case "What's the background like?":
             let known = !(start.ambience[start.location.lowercased()] ?? "").isEmpty
             return known && !moved && !wanted.contains("sound")
