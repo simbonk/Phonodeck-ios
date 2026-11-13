@@ -804,7 +804,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z37"
+    static let build = "build 2026-11-13z38"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2644,9 +2644,11 @@ final class StoryEngine {
                 if ["in front", "behind", "all round"].contains(sp) { t.space = sp }
                 let rr = Rules.rule(kind)
                 if t.w != t.d || rr.w != rr.d {
-                    let lq = Self.alongQuestion(e)
-                    let lm = await ask("Does the " + clip(short, 30) + " run along a wall?", lq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-                    if ((lm?["answer"] as? String) ?? "").lowercased().hasPrefix("y") { t.along = "wall" }
+                    let opts = Self.wallSides.map(\.0)
+                    let lm = await ask("Which side of the " + clip(short, 30) + " goes to the wall?", Self.alongQuestion(e) + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
+                    t.along = Self.wallSide((lm?["answer"] as? String) ?? "")
+                    if t.along == "staff" { t.space = "behind" }
+                    asked.append("Which side of the " + short + " goes to the wall? → " + Self.wallSideLabel(t.along))
                 }
             }
             asked.append("What kind of thing is the " + short + "? → " + kind + (t.w > 1 || t.d > 1 ? ", \(t.w) by \(t.d) m" : ""))
@@ -4336,7 +4338,21 @@ extension StoryEngine {
 
     /// Whether a long thing runs lengthwise along a wall.
     static func alongQuestion(_ name: String) -> String {
-        "Does the long side of the \"" + name + "\" run along a wall, the way a bar, a counter, a bookcase or a sofa does, rather than standing out into the room end-on?"
+        "Which side of the \"" + name + "\" goes against a wall, if any?"
+    }
+
+    /// The answers to the wall question, and what each means on the grid.
+    static let wallSides: [(String, String?)] = [
+        ("a long side, right up against the wall (like a dresser, a sofa or a bookcase)", "flush"),
+        ("a long side, with a walkway between it and the wall for whoever works behind it (like a bar, a shop counter or a sales desk)", "staff"),
+        ("one end, with its head against the wall (like a bed)", "end"),
+        ("none, it stands free in the room (like a dining table)", nil),
+    ]
+    static func wallSide(_ answer: String) -> String? {
+        wallSides.first { $0.0 == answer }?.1 ?? nil
+    }
+    static func wallSideLabel(_ along: String?) -> String {
+        switch along { case "flush": "long side against the wall"; case "staff": "long side to the wall, walkway behind"; case "end": "end against the wall"; default: "stands free" }
     }
 
     static func whatIs(_ name: String, noun: (String) async -> String, choose: (String, [String]) async -> String, yesNo: (String) async -> Bool?) async -> String {
@@ -4545,10 +4561,11 @@ extension StoryEngine {
             if ["in front", "behind", "all round"].contains(sp), !Rules.rule(kind).small { t.space = sp }
             let rr = Rules.rule(kind)
             if !rr.small, t.w != t.d || rr.w != rr.d {
-                let lq = Self.alongQuestion(name)
-                let lm = await ask("Does the " + clip(Zone.short(name), 30) + " run along a wall?", base + "QUESTION: " + lq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-                if str(lm, "answer").lowercased().hasPrefix("y") { t.along = "wall" }
-                r.log.append("ask: does the " + Zone.short(name) + " run along a wall? → " + (t.along == nil ? "no" : "yes"))
+                let opts = Self.wallSides.map(\.0)
+                let lm = await ask("Which side of the " + clip(Zone.short(name), 30) + " goes to the wall?", base + "QUESTION: " + Self.alongQuestion(name) + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
+                t.along = Self.wallSide(str(lm, "answer"))
+                if t.along == "staff" { t.space = "behind" }
+                r.log.append("ask: which side of the " + Zone.short(name) + " goes to the wall? → " + Self.wallSideLabel(t.along))
             }
             wanted.append(t)
         }
