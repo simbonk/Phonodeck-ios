@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z25"
+    static let build = "build 2026-11-13z26"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2857,56 +2857,94 @@ final class StoryEngine {
         // 2. The person you face: what they do, given where everyone is.
         guard let w = target, let p = r.named(w.name), p.isPerson else { return ([], log.joined(separator: "; ")) }
         let who = w.name
-        let near: [String] = r.objects.filter { $0.icon != "rug" && RoomGrid.distance($0, p) < 2.2 }
-            .sorted { RoomGrid.distance($0, p) < RoomGrid.distance($1, p) }.map { Fovea.bare($0.name) }
-        let reach: [String] = Array(Array(Set(p.holding + near)).sorted().prefix(8)) + ["nothing"]
-        let places: [String] = ["where they are"] + Zone.menu(r, people: true)
-        var q = "You plan one moment of an interactive story before it is written, so it fits the room.\n"
-        q += Fovea.roomView(a).joined(separator: "\n") + "\n"
-        q += who.uppercased() + ": " + (Fovea.gridSpot(a, who) ?? "in the room") + (w.doing.isEmpty ? "" : ", " + clip(w.doing, 80)) + ".\n"
-        q += "WITHIN " + Cards.first(who).uppercased() + "'S REACH: " + reach.joined(separator: "; ") + "\n"
-        q += "PLACES: " + places.joined(separator: "; ") + "\n"
-        q += "THE PLAYER JUST SAID: " + clip(input, 300) + "\n\n"
-        q += "QUESTION: What does " + who + " do in answer, given where everyone is? People mostly stay where they are; they get up only when what they do truly needs it. They can only use what is within their reach unless they get up for it.\n"
-        q += "Output ONLY one JSON object:\n{\"moves\":\"stays or gets up\",\"to\":\"one of PLACES (where they are, if they stay)\",\"reach\":\"one of WITHIN REACH\",\"does\":\"one short sentence: what they do\"}\nThe form:"
-        rebuildStep = "Planning " + Cards.first(who) + "'s moment"
-        let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 90, temperature: 0.2, repetitionPenalty: 1.1,
-                                                                                   grammar: JSONGrammar.momentPlan(zones: places, reach: reach)))) ?? ""
-        rebuildStep = ""
-        let m: [String: Any] = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
-        func str(_ k: String) -> String { ((m[k] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
-        var does = str("does").trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-        if Self.echoesPrompt(does) { does = "" }
-        var reached = str("reach")
-        if !reach.contains(reached) || reached == "nothing" { reached = "" }
-        // The code checks the plan against the map: a move needs a real place with room for them.
+        let first = Cards.first(who)
+        let near: [Thing] = r.objects.filter { $0.icon != "rug" && RoomGrid.distance($0, p) < 2.2 }
+            .sorted { RoomGrid.distance($0, p) < RoomGrid.distance($1, p) }
+        let reach: [String] = Array(Array(Set(p.holding + near.map { Fovea.bare($0.name) })).sorted().prefix(8))
+        let places: [String] = Zone.menu(r, people: true)
+        // A short chain of questions, the way a person thinks before acting: what am I doing, what
+        // did they just do, do I want to engage, do I need to move, do I need something, is it here.
+        var ctx = "You think through one moment of an interactive story as " + who + ", before it is written, so it fits the room.\n"
+        ctx += Fovea.roomView(a).joined(separator: "\n") + "\n"
+        ctx += who.uppercased() + " NOW: " + (Fovea.gridSpot(a, who) ?? "in the room") + (w.doing.isEmpty ? "" : ", " + clip(w.doing, 80)) + ".\n"
+        ctx += "WITHIN " + first.uppercased() + "'S REACH: " + (reach.isEmpty ? "nothing" : reach.joined(separator: "; ")) + "\n"
+        ctx += "THE PLAYER JUST SAID: " + clip(input, 300) + "\n\nQUESTION: "
+        var chain: [String] = []
+        func ask(_ label: String, _ q: String, _ grammar: String, _ tokens: Int) async -> [String: Any] {
+            guard !Task.isCancelled else { return [:] }
+            stage = label
+            let raw = (try? await llm.complete(system: nil, prompt: ctx + q, options: .init(maxTokens: tokens, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+            return JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+        }
+        func yes(_ label: String, _ q: String) async -> Bool? {
+            let m = await ask(label, q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+            let v = ((m["answer"] as? String) ?? "").lowercased()
+            return v.isEmpty ? nil : v.hasPrefix("y")
+        }
+        func text(_ label: String, _ q: String, _ k: String, _ n: Int) async -> String {
+            let m = await ask(label, q + "\nOutput ONLY one JSON object:\n{\"" + k + "\":\"a few words\"}\nThe form:", JSONGrammar.text(k, chars: n), n / 2 + 12)
+            let v = ((m[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+            return Self.echoesPrompt(v) ? "" : v
+        }
+        // 1. What did the player just do, to them?
+        let theyDid = await text("What did you just do to " + first + "?", "In a few words, what did the player just do or ask, as " + who + " sees it?", "did", 60)
+        if !theyDid.isEmpty { chain.append("you: " + theyDid) }
+        // 2. Do they want to engage? Most people do, and stay where they are to do it.
+        let engage = await yes("Does " + first + " want to engage?", "Does " + who + " want to engage with the player right now (answer them, talk with them)? Someone walking off from a person who just spoke to them is avoiding them.") ?? true
+        chain.append(engage ? "engages" : "would rather not engage")
+        // 3. Do they need to move? Only when what they do truly needs it.
         var moved: Zone? = nil
-        if str("moves") == "gets up", let z = Zone.parse(str("to")), places.contains(str("to")) {
-            var test = r
-            let note = Placer.placePerson(&test, p, zone: z)
-            if note.isEmpty, let after = test.named(who), RoomGrid.distance(after, p) >= 1 {
-                r = test
-                if let i = r.index(p.id) { r.things[i].pastMoves = [z.text] + Array(p.pastMoves.prefix(7)) }
-                Placer.turn(&r, p.id, toward: "you")
-                r.log.append("plan: " + who + " gets up → " + z.text)
-                moved = z
-            } else {
-                r.log.append("plan: " + who + " stays (no room " + z.text + ")")
+        let getsUp = await yes("Does " + first + " need to get up?", "To " + (engage ? "answer the player" : "keep to themselves") + ", does " + who + " truly need to get up and go somewhere else in the room? People answering someone who came up to them stay where they are and turn to them.") ?? false
+        if getsUp {
+            let m = await ask("Where does " + first + " go?", "Where does " + who + " go?\nPLACES: " + places.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: places), 30)
+            let said = (m["where"] as? String) ?? ""
+            // The code checks the move against the map: a real place with room for them.
+            if let z = Zone.parse(said), places.contains(said) {
+                var test = r
+                let note = Placer.placePerson(&test, p, zone: z)
+                if note.isEmpty, let after = test.named(who), RoomGrid.distance(after, p) >= 1 {
+                    r = test
+                    if let i = r.index(p.id) { r.things[i].pastMoves = [z.text] + Array(p.pastMoves.prefix(7)) }
+                    r.log.append("plan: " + who + " gets up → " + z.text)
+                    moved = z
+                } else {
+                    r.log.append("plan: " + who + " stays (no room " + z.text + ")")
+                }
             }
+        }
+        chain.append(moved.map { "gets up → " + $0.text } ?? "stays put")
+        if engage { Placer.turn(&r, p.id, toward: "you") }
+        // 4. Do they need something in their hands? Then, is it within reach on the map?
+        var reached = ""
+        var missing = ""
+        let need = await text("Does " + first + " need anything?", "Does " + who + " need to pick up or use something for this, like a pencil, a glass or a cloth? Name it in a few words, or say nothing.", "needs", 40)
+        if !need.isEmpty, !["nothing", "none", "no"].contains(need.lowercased()) {
+            let nw = Continuity.wordSet(need).filter { $0.count > 2 }
+            if let hit = reach.first(where: { !Continuity.wordSet($0).filter { $0.count > 2 }.isDisjoint(with: nw) }) {
+                reached = hit
+            } else if !reach.isEmpty {
+                let opts = reach + ["none of these"]
+                let m = await ask("Is a " + clip(need, 30) + " within reach?", first + " wants " + need + ". Which of WITHIN REACH could serve for it, if any?\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"use\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("use", from: opts), 30)
+                let use = (m["use"] as? String) ?? ""
+                if reach.contains(use) { reached = use } else { missing = need }
+            } else {
+                missing = need
+            }
+            chain.append(reached.isEmpty ? need + ": not within reach" : "uses " + reached)
         }
         a.room = r
         plannedThisTurn[who] = moved == nil
         let spot = Fovea.gridSpot(a, who) ?? "where they are"
-        var line = "PLAN FOR " + who + " (keep to it): " + (does.isEmpty ? "they answer the player" : does) + "."
+        var line = "PLAN FOR " + who + " (keep to it): " + (engage ? "they engage with the player" : "they would rather keep to themselves") + "."
         if let z = moved {
-            line += " They get up and go " + z.text + ": show them getting up and crossing the room before anything else."
+            line += " They get up and go " + z.text + ": show them getting up and crossing the room."
         } else {
-            line += " They stay where they are (" + clip(spot, 80) + "): they do not get up or cross the room."
+            line += " They stay where they are (" + clip(spot, 80) + ")" + (engage ? " and turn to the player" : "") + ": they do not get up or cross the room."
         }
-        let inReach = Array(reach.dropLast())
-        line += inReach.isEmpty ? " Nothing is within their reach but what the story already gave them." : " Within their reach: " + inReach.joined(separator: ", ") + "; anything else is out of reach" + (moved == nil ? "." : " until they get there.")
-        if !reached.isEmpty { line += " They reach for " + reached + "." }
-        log.append(who + (moved.map { " gets up → " + $0.text } ?? " stays") + (reached.isEmpty ? "" : ", reaches for " + reached) + (does.isEmpty ? "" : ": " + does))
+        if !reached.isEmpty { line += " They use " + reached + ", which is within reach." }
+        if !missing.isEmpty { line += " There is no " + missing + " within reach: they do without it." }
+        line += reach.isEmpty ? " Nothing else is within their reach." : " Within their reach: " + reach.joined(separator: ", ") + "; anything else is out of reach."
+        log.append(who + ": " + chain.joined(separator: " · "))
         return ([line], log.joined(separator: "; "))
     }
 
