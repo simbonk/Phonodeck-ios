@@ -16,6 +16,7 @@ struct RoomMapView: View {
     @State private var looks: [UUID: String] = [:]
     @State private var lit: Set<UUID> = []
     @State private var beat = 0
+    @State private var tickerOpen = false
     /// The map's zoom and pan (pinch and drag on the map only).
     @State private var zoom: CGFloat = 1
     @State private var pan: CGSize = .zero
@@ -117,49 +118,68 @@ struct RoomMapView: View {
         return out
     }
 
+    private static let answerColor = Color(hex: 0xF2B66D)
+
+    private static func split(_ t: String) -> (String, String) {
+        // Only a question splits: "What is the bar? → a thing in the room". A change stays one line.
+        if let r = t.range(of: " → "), t[..<r.lowerBound].hasSuffix("?") { return (String(t[..<r.lowerBound]), String(t[r.upperBound...])) }
+        return ("", t)
+    }
+
+    private func pair(_ q: String, _ ans: String, kind: Int, live: Bool) -> some View {
+        let answerColor = Self.answerColor
+        return VStack(alignment: .leading, spacing: 3) {
+            if !q.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Q").font(.caption2.bold().monospaced()).foregroundStyle(Theme.accent)
+                    Text(q).font(.caption.bold()).foregroundStyle(Theme.accent).lineLimit(2)
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(q.isEmpty ? "✦" : "A").font(.caption2.bold().monospaced())
+                    .foregroundStyle(kind == 2 ? Color.red.opacity(0.9) : answerColor)
+                if live {
+                    HoloCore(size: 12)
+                    Text("thinking…").font(.caption).foregroundStyle(Theme.dim)
+                } else {
+                    Text(ans).font(.caption).foregroundStyle(kind == 2 ? Color.red.opacity(0.9) : (q.isEmpty ? Theme.fg : answerColor)).lineLimit(2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The question being asked, or the last one answered, as two lines: the question in one
+    /// colour, the answer under it in another. Tap for the last few.
     @ViewBuilder
     private func ticker(_ a: Adventure, _ room: Room) -> some View {
         let asking = app.engine.rebuildStep.isEmpty ? app.engine.stage : app.engine.rebuildStep
         let items = feed(a, room)
         if !items.isEmpty || !asking.isEmpty {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(items.enumerated()), id: \.offset) { i, item in
-                            HStack(spacing: 4) {
-                                Image(systemName: item.kind == 1 ? "checkmark" : (item.kind == 2 ? "xmark" : "sparkle"))
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(item.kind == 2 ? Color.red.opacity(0.9) : (item.kind == 1 ? Theme.dim : Theme.accent))
-                                Text(item.text).font(.caption)
-                                    .foregroundStyle(item.kind == 2 ? Color.red.opacity(0.9) : Theme.fg)
-                                    .lineLimit(1)
-                            }
-                            .padding(.horizontal, 8).padding(.vertical, 5)
-                            .background(Theme.accent.opacity(item.kind == 0 ? 0.12 : 0.06), in: Capsule())
-                            .id(i)
-                        }
-                        if !asking.isEmpty {
-                            HStack(spacing: 4) {
-                                HoloCore(size: 14)
-                                Text(Continuity.unnamed(asking, in: a)).font(.caption.bold()).foregroundStyle(Theme.accent).lineLimit(1)
-                            }
-                            .padding(.horizontal, 8).padding(.vertical, 5)
-                            .background(Theme.accent.opacity(0.15), in: Capsule())
-                            .id(-1)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                        }
+            VStack(alignment: .leading, spacing: 8) {
+                if tickerOpen {
+                    ForEach(Array(items.suffix(8).dropLast(asking.isEmpty ? 1 : 0).enumerated()), id: \.offset) { _, item in
+                        let qa = Self.split(item.text)
+                        pair(qa.0, qa.1, kind: item.kind, live: false).opacity(0.7)
                     }
-                    .padding(.horizontal, 2)
                 }
-                .onAppear { proxy.scrollTo(asking.isEmpty ? items.count - 1 : -1, anchor: .trailing) }
-                .onChange(of: items.count) { _, n in
-                    withAnimation(.snappy) { proxy.scrollTo(asking.isEmpty ? n - 1 : -1, anchor: .trailing) }
+                Group {
+                    if !asking.isEmpty {
+                        pair(Continuity.unnamed(asking, in: a), "", kind: 1, live: true)
+                    } else if let last = items.last {
+                        let qa = Self.split(last.text)
+                        pair(qa.0, qa.1, kind: last.kind, live: false)
+                    }
                 }
-                .onChange(of: asking) { _, q in
-                    withAnimation(.snappy) { proxy.scrollTo(q.isEmpty ? items.count - 1 : -1, anchor: .trailing) }
-                }
+                .id(asking.isEmpty ? (items.last?.text ?? "") : asking)
+                .transition(.opacity)
             }
-            .animation(.snappy, value: asking)
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation(.snappy) { tickerOpen.toggle() } }
+            .animation(.easeInOut(duration: 0.25), value: asking)
+            .animation(.easeInOut(duration: 0.25), value: items.count)
         }
     }
 
@@ -173,7 +193,7 @@ struct RoomMapView: View {
         case "place": return "Placed " + rest
         case "move": return "Moved " + rest
         case "refuse": return "Refused " + rest
-        case "ask": return "Asked again: " + rest
+        case "ask": return rest.prefix(1).uppercased() + rest.dropFirst()
         case "enter": return rest.contains(" ") ? rest.prefix(1).uppercased() + rest.dropFirst() : rest + " comes in"
         case "leave": return rest + " leaves"
         case "edit": return "Edited " + rest
