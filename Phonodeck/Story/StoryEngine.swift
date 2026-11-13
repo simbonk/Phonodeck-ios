@@ -4051,7 +4051,7 @@ extension StoryEngine {
         base += "\n\n" + story + "\n\n"
 
         // 1. The shell.
-        let sizeWords = RoomBuilder.sizes.map { "\($0.0) (\($0.1) by \($0.2) metres)" }
+        let sizeWords = RoomBuilder.sizes.map { "\($0.0), \($0.1) by \($0.2) metres" }
         let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nSIZES: " + sizeWords.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"size\":\"one of SIZES\",\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
         let m1 = await ask("Building the room: walls, doors and windows", q1, JSONGrammar.roomShell(types: RoomBuilder.types, sizes: sizeWords), 260)
         guard !Task.isCancelled else { return }
