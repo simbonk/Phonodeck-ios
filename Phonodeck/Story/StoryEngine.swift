@@ -390,9 +390,8 @@ final class StoryEngine {
             undoSnapshot = nil
             refreshVocabulary()
             library.save(a)
-            // The first room is drawn now, on the build screen, before the opening is written;
+            // The first room is drawn after the opening is written, from what the story dreamed up;
             // it is never redrawn after.
-            forge.reach(Forge.roomStage)
             // The plan sometimes comes back with nobody placed. Whoever the premise or the opening
             // scene names is in the opening room (else the whole cast, up to three), so the map and
             // the storyteller both have them.
@@ -407,13 +406,6 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
-            var scene = "THE STORY: " + clip(a.bible, 700)
-            let held = Cards.props(a)
-            if !held.isEmpty { scene += "\nTHINGS HERE: " + held.prefix(8).joined(separator: "; ") }
-            let people = a.whereabouts.filter { $0.here != false }.map { w in w.name + (w.at.isEmpty ? "" : " (" + w.at + ")") }
-            if !people.isEmpty { scene += "\nPEOPLE HERE: " + people.joined(separator: "; ") }
-            await furnishRoom(story: scene)
-            guard !Task.isCancelled else { return }
             forge.reach(forge.stages.count - 1)
 
             var told = ending?.recap ?? ""
@@ -805,7 +797,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z16"
+    static let build = "build 2026-11-13z17"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -4163,7 +4155,7 @@ extension StoryEngine {
 
         // 2. The things: only what the story needs, at most five (no decoration for its own sake).
         let q2 = base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres.\n"
-            + "QUESTION: List only the things this story needs in the room, at most 5: the things the story names, and the one or two pieces of furniture the scene can't do without (a bar to sit at, a bed to sleep in). Leave out lamps, plants, rugs and decoration unless the story names them. Only things on the floor or on furniture: no clothing, nothing on the ceiling, no sounds or smells. For each: a short name in the story's words, its kind from KINDS, and what it is made of.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\"}]}\nThe form:"
+            + "QUESTION: List only the things this story needs in the room, at most 5: the things the story names, and the one or two pieces of furniture the scene can't do without (a bar to sit at, a bed to sleep in). Leave out lamps, plants, rugs and decoration unless the story names them. Only things on the floor or on furniture: no clothing, nothing on the ceiling, no sounds or smells. For each: a short name in the story's words, its kind from KINDS, what it is made of, and its real size in whole metres seen from above (length and width; 1 for anything small).\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"length\":2,\"width\":1}]}\nThe form:"
         let m2 = await ask("What does the story need in this room?", q2, JSONGrammar.roomList(kinds: Rules.kinds), 260)
         guard !Task.isCancelled else { return }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
@@ -4176,6 +4168,16 @@ extension StoryEngine {
             if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: name) }
             var t = Thing(kind: .object, name: name, icon: kind)
             t.makeup = Self.echoesPrompt(str(d, "made_of")) ? "" : str(d, "made_of")
+            // The model's own sense of its size, kept to what fits the room; small things stay one square.
+            func metres(_ k: String) -> Int {
+                if let n = d[k] as? Int { return n }
+                if let n = d[k] as? Double { return Int(n.rounded()) }
+                return Int(str(d, k).filter(\.isNumber)) ?? 1
+            }
+            if !Rules.rule(kind).small {
+                let l = max(1, min(metres("length"), max(r.width, r.depth) - 2, 6)), w = max(1, min(metres("width"), 3))
+                t.w = max(l, w); t.d = min(l, w)
+            }
             wanted.append(t)
         }
         // The room's centrepiece (a bar's bar, a bedroom's bed) is never left out.

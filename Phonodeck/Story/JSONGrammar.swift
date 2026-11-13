@@ -263,8 +263,9 @@ enum JSONGrammar {
         [
             "root ::= \"{\" ws " + key("things") + " things ws \"}\"",
             #"things ::= "[" ws ( th ( "," ws th ){0,4} )? ws "]""#,
-            "th ::= \"{\" ws " + [key("name") + " s40", key("kind") + " kd", key("made_of") + " s40"]
+            "th ::= \"{\" ws " + [key("name") + " s40", key("kind") + " kd", key("made_of") + " s40", key("length") + " num", key("width") + " num"]
                 .joined(separator: " \",\" ws ") + " ws \"}\"",
+            #"num ::= [1-9]"#,
             choice("kd", kinds),
             capped("s40", 40),
             common,

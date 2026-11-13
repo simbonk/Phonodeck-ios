@@ -364,6 +364,8 @@ enum Placer {
     static func legal(_ t: Thing, rule given: Rule, room: Room) -> [Spot] {
         var out: [Spot] = []
         var r = given
+        // The model's own size for it, when it gave one.
+        if t.w > 1 || t.d > 1 { r.w = max(t.w, t.d); r.d = min(t.w, t.d) }
         // A bar or counter runs along most of its wall in a bigger room.
         if r.place == .staffWall { r.w = max(r.w, min(6, max(room.width, room.depth) / 2)) }
         let sizes = Set([[r.w, r.d], [r.d, r.w]].map { $0 })
