@@ -426,6 +426,18 @@ enum Placer {
                     let gaps = [(s.y, true), (room.depth - s.y - s.d, true), (s.x, false), (room.width - s.x - s.w, false)]
                     guard let near = gaps.min(by: { $0.0 < $1.0 }), near.0 <= 2, near.1 == (w > d) else { continue }
                 }
+                // The side the model put to the wall: the gap to the nearest wall parallel to the long
+                // side (or, for an end, to the nearest wall across it).
+                if let side = t.along, side != "wall", w != d {
+                    let toLong = w > d ? min(s.y, room.depth - s.y - s.d) : min(s.x, room.width - s.x - s.w)
+                    let toEnd = w > d ? min(s.x, room.width - s.x - s.w) : min(s.y, room.depth - s.y - s.d)
+                    switch side {
+                    case "flush": if toLong != 0 { continue }
+                    case "staff": if toLong != 1 { continue }
+                    case "end": if toEnd != 0 { continue }
+                    default: break
+                    }
+                }
                 if breaks(s, rule: r, thing: t, room: room) == nil { out.append(s) }
             } }
         }
