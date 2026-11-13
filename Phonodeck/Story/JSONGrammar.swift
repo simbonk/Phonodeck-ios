@@ -258,6 +258,19 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// One thing, as the model sees it: its kind, what it is made of, its size and the space it needs.
+    static func thingInfo(kinds: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [key("kind") + " kd", key("made_of") + " s40", key("length") + " num", key("width") + " num", key("space") + " sp"]
+                .joined(separator: " \",\" ws ") + " ws \"}\"",
+            #"num ::= [1-9]"#,
+            choice("sp", ["none", "in front", "behind", "all round"]),
+            choice("kd", kinds),
+            capped("s40", 40),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// The room builder: the things the story needs, without where they go (each is asked after).
     static func roomList(kinds: [String]) -> String {
         [
@@ -274,6 +287,28 @@ enum JSONGrammar {
     }
 
     /// The room builder, question 3: where each person is and who or what they face.
+    /// One person as the room opens: with the others or apart, sitting or standing, and on what.
+    static func personSetup(work: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [key("company") + " co", key("posture") + " po", key("seat") + " s30", key("works_behind") + " wk"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("wk", work),
+            choice("co", ["with the others", "apart"]),
+            choice("po", ["sitting", "standing"]),
+            capped("s30", 30),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// One person's place and what they face.
+    static func personPlace(zones: [String], faces: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + key("where") + " zn \",\" ws " + key("facing") + " fc ws \"}\"",
+            choice("zn", zones),
+            choice("fc", faces),
+            common,
+        ].joined(separator: "\n")
+    }
+
     static func roomPeople(names: [String], zones: [String], faces: [String]) -> String {
         let n = max(1, safe(names, max: 60).count)
         return [

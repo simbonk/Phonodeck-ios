@@ -797,7 +797,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z19"
+    static let build = "build 2026-11-13z22"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2301,7 +2301,9 @@ final class StoryEngine {
             let dm = await ask(c.name + " now?", q, JSONGrammar.personNow(zones: personZones, faces: faceList), 110)
             guard let dm else { return }
             func field(_ k: String) -> String {
-                let v = ((dm[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+                // A note in brackets ("(implied from the bartender)") is the model thinking aloud, not an answer.
+                let raw = ((dm[k] as? String) ?? "").replacingOccurrences(of: #"\s*\([^)]*\)?"#, with: "", options: .regularExpression)
+                let v = raw.trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
                 return v.count > 2 && !Self.echoesPrompt(v) && !["nothing", "none", "n/a"].contains(v.lowercased()) ? v : ""
             }
             let doing = field("doing")
@@ -2325,7 +2327,6 @@ final class StoryEngine {
                 Placer.put(&r, p)
                 if !whereSaid.isEmpty, whereSaid != "stays put", var z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
                     if case .at(let n) = z, let was = t.pastMoves.first, was.hasPrefix("behind"), was.contains(Zone.short(n)) { z = .behind(n) }
-                    if Rules.isStaff(c.role), let post = Rules.staffPost(r), z.text.contains(Zone.short(post.name)) { z = .behind(post.name) }
                     if z.text == t.pastMoves.first { now.room = r; return }
                     let note = Placer.placePerson(&r, p, zone: z)
                     r.log.append("move: " + c.name + " → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
@@ -2550,6 +2551,49 @@ final class StoryEngine {
             if !key.isEmpty { now.placeThings[key] = merged }
             let added = around.filter { n in !had.contains { Self.similar($0, n) } }
             if !added.isEmpty { filed.append("Props here: " + added.joined(separator: "; ")) }
+        }
+
+        // Each new thing the story showed goes on the map only through the model: what kind of thing
+        // it is, its size, the space people need by it, and where it goes (with a where-else when the
+        // rules say no). Small things go on whatever they sit on.
+        for e in around.prefix(3) {
+            guard var r = adventure?.room, r.named(e) == nil else { continue }
+            let short = Zone.short(e)
+            let im = await ask("What kind of thing is the " + clip(short, 40) + "?", "About \"" + e + "\" in this room: what kind of thing is it (from KINDS), what is it made of, its real size in whole metres seen from above (1 for anything small), and where people need space by it.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"length\":1,\"width\":1,\"space\":\"none, in front, behind or all round\"}\nThe form:", JSONGrammar.thingInfo(kinds: Rules.kinds), 60)
+            guard let im else { return }
+            var kind = ((im["kind"] as? String) ?? "").lowercased()
+            if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: e) }
+            var t = Thing(kind: .object, name: e, icon: kind)
+            t.makeup = ((im["made_of"] as? String) ?? "")
+            func metres(_ k: String) -> Int { (im[k] as? Int) ?? Int(((im[k] as? String) ?? "").filter(\.isNumber)) ?? 1 }
+            if !Rules.rule(kind).small {
+                let l = max(1, min(metres("length"), max(r.width, r.depth) - 2, 6)), w = max(1, min(metres("width"), 3))
+                t.w = max(l, w); t.d = min(l, w)
+                let sp = ((im["space"] as? String) ?? "").lowercased()
+                if ["in front", "behind", "all round"].contains(sp) { t.space = sp }
+            }
+            asked.append("What kind of thing is the " + short + "? → " + kind + (t.w > 1 || t.d > 1 ? ", \(t.w) by \(t.d) m" : ""))
+            let menu = Zone.menu(r)
+            let wm = await ask("Where does the " + clip(short, 40) + " go?", "THE ROOM: " + r.name + ", \(r.width) by \(r.depth) metres, with " + r.objects.map(\.name).joined(separator: ", ") + ".\nWhere does the " + short + " go?\nPLACES: " + menu.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: menu), 30)
+            guard let wm else { return }
+            let z = Zone.parse((wm["where"] as? String) ?? "") ?? RoomBuilder.defaultZone(kind, in: r)
+            let out = Placer.place(&r, t, zone: z)
+            if out.placed {
+                r.log.append("place: " + e + " → " + z.text)
+            } else {
+                r.log.append("refuse: " + e + " " + z.text + " (" + out.reason + ")")
+                let ok = Placer.allowed(t, in: r)
+                var done = false
+                if !ok.isEmpty {
+                    r.log.append("ask: where else for " + e + "?")
+                    let em = await ask("Where else for the " + clip(short, 40) + "?", "The " + short + " can't go " + z.text + ", because " + out.reason + ".\nWhere else does it go?\nPLACES: " + ok.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: ok), 30)
+                    let said = (em?["where"] as? String) ?? ""
+                    if let z2 = Zone.parse(said), ok.contains(said), Placer.place(&r, t, zone: z2).placed { r.log.append("place: " + e + " → " + z2.text); done = true }
+                }
+                if !done { Placer.fallback(&r, t, near: z); r.log.append("move: " + e + " → nearest allowed spot") }
+            }
+            let placed = r
+            commit { now in now.room = placed }
         }
 
         // The background of the place: its sounds and light, kept with the place.
@@ -4197,9 +4241,11 @@ extension StoryEngine {
             if ["in front", "behind", "all round"].contains(sp), !Rules.rule(kind).small { t.space = sp }
             wanted.append(t)
         }
-        // The room's centrepiece (a bar's bar, a bedroom's bed) is never left out.
+        // A room of this type usually has its centrepiece (a bar's bar, a bedroom's bed): the model
+        // says whether this one needs it.
         if let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
-            wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0)
+            let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: Does this story need " + lead.name + " in this room?\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+            if str(nm, "answer").lowercased() == "yes" { wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0) }
         }
         // Big furniture first, small things last, so "on the bar" has a bar to go on.
         func rank(_ icon: String) -> Int {
@@ -4278,35 +4324,70 @@ extension StoryEngine {
         me.facing = Facing.toward(dx: r.width / 2 - entry.x, dy: r.depth / 2 - entry.y) ?? .n
         Placer.put(&r, me)
         if !here.isEmpty {
-            let pz = Zone.menu(r, people: true)
+            // One person at a time: with the others or off on their own, sitting or standing (and on
+            // what), then where from the places that fit, and who or what they face.
             var faces: [String] = ["you", "the door"]
             if !windows.isEmpty { faces.append("the window") }
             faces += here
             faces += Array(r.objects.filter { !Rules.rule($0.icon).small }.map(\.name).prefix(6))
-            let q4 = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ". The player has just come in by the door.\n"
-                + "PLACES: " + pz.joined(separator: "; ") + "\nFACES: " + faces.joined(separator: "; ") + "\n"
-                + "QUESTION: For each person here (" + here.joined(separator: ", ") + "), where are they, and who or what are they facing? Output ONLY one JSON object:\n{\"people\":[{\"name\":\"their name\",\"where\":\"one of PLACES\",\"facing\":\"one of FACES\"}]}\nThe form:"
-            let m4 = await ask("Building the room: who is where", q4, JSONGrammar.roomPeople(names: here, zones: pz, faces: faces), 60 * here.count + 30)
-            guard !Task.isCancelled else { return }
-            var placed: Set<String> = []
             var facing: [(UUID, String)] = []
-            for d in ((m4["people"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }) {
-                let name = str(d, "name")
-                guard here.contains(name), !placed.contains(name) else { continue }
-                placed.insert(name)
-                var z = Zone.parse(str(d, "where")) ?? .farCorner
-                if let c = a0.cast.first(where: { $0.name == name }), Rules.isStaff(c.role), let post = Rules.staffPost(r) { z = .behind(post.name) }
-                let p = Thing(kind: .person, name: name)
+            for name in here {
+                guard !Task.isCancelled else { return }
+                let card = a0.cast.first { $0.name == name }
+                let workSpots = ["nothing"] + r.objects.filter { $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" }.map { Zone.short($0.name) }
+                let who = name + ((card?.role ?? "").isEmpty ? "" : " (" + Continuity.roleLabel(card!.role) + ")")
+                let q = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + (r.people.count > 1 ? "; already placed: " + r.people.filter { $0.kind == .person }.map(\.name).joined(separator: ", ") : "") + ".\n"
+                    + "QUESTION: About " + who + " as the story opens: are they with the others, or apart on their own (a separate conversation the player can go to)? Are they sitting or standing, and on what (a stool, a chair, a booth, a bench; none if standing)? Do they work behind something here (WORK SPOTS), or nothing?\nWORK SPOTS: " + workSpots.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"company\":\"with the others or apart\",\"posture\":\"sitting or standing\",\"seat\":\"what they sit on, or none\",\"works_behind\":\"one of WORK SPOTS\"}\nThe form:"
+                let m = await ask("Is " + Cards.first(name) + " with the others, or apart?", q, JSONGrammar.personSetup(work: workSpots), 60)
+                let worksBehind = str(m, "works_behind")
+                let apart = str(m, "company").lowercased().hasPrefix("apart")
+                let sitting = str(m, "posture").lowercased().hasPrefix("sit")
+                var seatName = str(m, "seat")
+                if ["none", "nothing", ""].contains(seatName.lowercased()) || Self.echoesPrompt(seatName) { seatName = sitting ? "chair" : "" }
+                r.log.append("ask: " + name + " → " + (apart ? "apart" : "with the others") + ", " + (sitting ? "sitting on " + seatName : "standing"))
+                await show(r, pause: 0.2)
+                // The places that fit: far from everyone already placed when they keep to themselves.
+                var menu = Zone.menu(r, people: true)
+                if apart {
+                    let others = r.people
+                    let far = menu.filter { z in
+                        guard let zone = Zone.parse(z) else { return false }
+                        let c = Placer.centroid(Placer.cells(zone, in: r, forPeople: true))
+                        return others.allSatisfy { o in hypot(c.0 - o.centre.x, c.1 - o.centre.y) >= 3 }
+                    }
+                    if !far.isEmpty { menu = far }
+                }
+                var z: Zone
+                var faceSaid = "you"
+                if worksBehind != "nothing", let post = r.named(worksBehind) {
+                    z = .behind(post.name)
+                    r.log.append("ask: " + name + " works behind the " + Zone.short(post.name))
+                } else {
+                    let wq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: Where is " + who + (apart ? ", off on their own" : "") + ", and who or what do they face?\nPLACES: " + menu.joined(separator: "; ") + "\nFACES: " + faces.filter { $0 != name }.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\",\"facing\":\"one of FACES\"}\nThe form:"
+                    let wm = await ask("Where is " + Cards.first(name) + "?", wq, JSONGrammar.personPlace(zones: menu, faces: faces.filter { $0 != name }), 50)
+                    z = Zone.parse(str(wm, "where")) ?? (apart ? .farCorner : .centre)
+                    if !str(wm, "facing").isEmpty { faceSaid = str(wm, "facing") }
+                }
+                var p = Thing(kind: .person, name: name)
                 let note = Placer.placePerson(&r, p, zone: z)
+                p = r.thing(p.id) ?? p
                 r.log.append("enter: " + name + " " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
-                facing.append((p.id, str(d, "facing")))
+                // Sitting with nothing under them: the seat they named goes there with them.
+                if sitting, p.on == nil {
+                    var seat = Thing(kind: .object, name: seatName, icon: Rules.icon(for: seatName))
+                    if !Rules.seats.contains(seat.icon) { seat.icon = "chair" }
+                    seat.x = p.x; seat.y = p.y
+                    r.things.append(seat)
+                    if let i = r.index(p.id) { r.things[i].on = seat.id }
+                    r.log.append("place: " + seatName + " → under " + name)
+                }
+                facing.append((p.id, faceSaid))
+                // Someone apart is not the one the player is dealing with yet.
+                if apart, var a = adventure, let k = a.whereabouts.firstIndex(where: { $0.name == name }) {
+                    a.whereabouts[k].engaged = false
+                    adventure = a
+                }
                 await show(r)
-            }
-            for name in here where !placed.contains(name) {
-                let p = Thing(kind: .person, name: name)
-                Placer.placePerson(&r, p, zone: .farCorner)
-                facing.append((p.id, "you"))
-                r.log.append("enter: " + name)
             }
             for (id, f) in facing where !f.isEmpty { Placer.turn(&r, id, toward: f) }
         }
@@ -4322,7 +4403,7 @@ extension StoryEngine {
             if let z = Adventure.zone(from: opening, in: r) {
                 let note = Placer.placePerson(&r, me, zone: z)
                 r.log.append("move: you → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
-                let staff = r.people.first { p in p.kind == .person && a.cast.contains { $0.name == p.name && Rules.isStaff($0.role) } }
+                let staff = r.people.first { p in p.kind == .person && (p.pastMoves.first ?? "").hasPrefix("behind") }
                 if let first = staff ?? r.people.first(where: { $0.kind == .person && $0.id != me.id }) { Placer.turn(&r, me.id, toward: first.name) }
             }
         }
