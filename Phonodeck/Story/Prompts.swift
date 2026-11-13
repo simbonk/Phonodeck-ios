@@ -93,14 +93,13 @@ enum Prompts {
     """
 
     static func openingInstruction(simulator: Bool, short: Bool) -> String {
-        let stage = "Start with two or three plain, simple sentences that set the stage: where the player is (name the place), what they are doing, and what they can see around them. Then paint the scene with what they hear, smell and feel, in specific detail that could only belong to this place, so the listener can picture it with their eyes closed."
         if simulator {
-            return "Begin the experience. This is the opening scene, so it may run longer than other replies: 150 to 230 words. " + stage + " Place the player right inside the world, already there, delivering the FEELING TO ACHIEVE and making their goal feel within reach. At most one person with a distinct voice and a touch of gentle humour. No threat, no hook, no mystery. Do not end with a list of options."
+            return "Begin: the opening scene, 120 to 200 words. Put the player right inside it, already there, in warm, specific detail that belongs only to this place. At most one person speaks, with a distinct voice and a touch of gentle humour. No threat, hook or mystery."
         }
         if short {
-            return "Begin the story. This is the opening scene: 100 to 150 words. " + stage + " Then drop the player into one clear, vivid moment, introduce one character with a distinct voice and a telling detail, make the goal obvious, and end on a simple, irresistible hook. Do not end with a list of options."
+            return "Begin: the opening scene, 100 to 150 words. One clear, vivid moment, one character with a distinct voice, the goal made obvious, and a simple hook at the end."
         }
-        return "Begin the adventure. This is the opening scene, so it may run longer than other replies: 150 to 230 words. " + stage + " Then drop the player into a vivid moment already in motion that sets up the FEELING TO ACHIEVE from the first lines. Introduce at most one named character, with a distinct voice, a want of their own and two telling details (anyone else present is known by their role). End on an unresolved hook. Do not end with a list of options."
+        return "Begin: the opening scene, 120 to 200 words. A vivid moment already in motion, at most one named character with a distinct voice, and an unresolved hook at the end."
     }
 
     // MARK: The Game Master's plan (a short private step before each reply)

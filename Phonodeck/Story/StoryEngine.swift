@@ -390,9 +390,8 @@ final class StoryEngine {
             undoSnapshot = nil
             refreshVocabulary()
             library.save(a)
-            // The first room is drawn now, on the build screen, before the opening is written;
+            // The first room is drawn after the opening is written, from what the story dreamed up;
             // it is never redrawn after.
-            forge.reach(Forge.roomStage)
             // The plan sometimes comes back with nobody placed. Whoever the premise or the opening
             // scene names is in the opening room (else the whole cast, up to three), so the map and
             // the storyteller both have them.
@@ -407,13 +406,6 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
-            var scene = "THE STORY: " + clip(a.bible, 700)
-            let held = Cards.props(a)
-            if !held.isEmpty { scene += "\nTHINGS HERE: " + held.prefix(8).joined(separator: "; ") }
-            let people = a.whereabouts.filter { $0.here != false }.map { w in w.name + (w.at.isEmpty ? "" : " (" + w.at + ")") }
-            if !people.isEmpty { scene += "\nPEOPLE HERE: " + people.joined(separator: "; ") }
-            await furnishRoom(story: scene)
-            guard !Task.isCancelled else { return }
             forge.reach(forge.stages.count - 1)
 
             var told = ending?.recap ?? ""
@@ -805,7 +797,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z15"
+    static let build = "build 2026-11-13z19"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1688,6 +1680,15 @@ final class StoryEngine {
             let shown: String = kept.isEmpty ? "only the room and who you face" : kept.map { Fovea.clip($0.text, 50) }.joined(separator: "; ")
             step("What matters right now? → " + shown + " (\(items.count - kept.count) of \(items.count) left out)")
             lastRead += "; foveated: \(kept.count) of \(items.count) card items in"
+        } else if opening {
+            // The opening gets the same short prompt as every turn: the room from the map, who is
+            // where, who you are, and a few lines on how to open. No long rulebook.
+            let items: [Fovea.Item] = Fovea.items(a, input: "", asking: false)
+            let kept: [Fovea.Item] = Array(items.filter { ["you", "other", "person", "have", "around"].contains($0.kind) }.prefix(10))
+            foveaView = items.map { it in (kept.contains(where: { $0.text == it.text }) ? "  + " : "  - ") + Fovea.clip(it.text, 90) }
+            system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
+            lead = Fovea.lead(a, input: input, arrived: true, events: extra + notes, kept: kept, instruction: true)
+            roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
         }
         // The story's own last turns keep its voice and thread: as many of the last four as fit.
         // Anything older is reached with a "remember" lookup.
@@ -1869,7 +1870,7 @@ final class StoryEngine {
             }
             before.append("LOOKED UP:\n" + lines.joined(separator: "\n"))
         }
-        if fov {
+        if fov || opening {
             before.append("WHAT MATTERS (+ in, - left out):\n" + (foveaView.isEmpty ? "  (no card items)" : foveaView.joined(separator: "\n")))
         } else {
             let inView: [String] = pick.why.map { "  - " + $0 }
@@ -1963,11 +1964,11 @@ final class StoryEngine {
             let me = a.lore.first(where: \.isPlayer)?.desc ?? ""
             var lines: [String] = []
             if !a.scene.isEmpty { lines.append("WHERE YOU ARE AS IT OPENS: " + clip(a.scene, 280)) }
+            let premise = Cards.premise(a)
+            if !premise.isEmpty { lines.insert("THE STORY: " + clip(premise, 260), at: 0) }
             return lines + [
-                "THIS IS THE OPENING SCENE, and it may run to about 200 words. The listener cannot see anything yet: first tell them plainly where they are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what they are doing and who is there, then spend most of it painting the place itself: what you see in front of you, then sound, smell, light and texture.",
-                "Show the people only from the outside: how they look, what their hands are doing, how they sound. Say nothing of their hopes, dreams, worries, plans or past, and give no hints of them; those come out only when the player asks.",
-                me.isEmpty ? "Make clear who the player is and why they are here." : "Make clear who the player is (\(clip(me, 160))) and why they are here.",
-                "Set up the feeling (" + (a.setup.feeling.isEmpty ? "the one the player came for" : a.setup.feeling) + ") from the first lines.",
+                "OPENING: first say plainly where you are" + (a.location.isEmpty ? "" : " (\(a.location))") + ", what you are doing and who is here; then paint the place: what you see, hear, smell and feel. People only from the outside; their hopes and past stay unsaid.",
+                me.isEmpty ? "Make clear who the player is." : "The player: " + clip(me, 120),
                 Self.openingEnd(a),
             ]
         }
@@ -2519,16 +2520,7 @@ final class StoryEngine {
         // 5. What is around? Only what this reply showed, kept with the place.
         let tm = await ask("What is around?", Prompts.rebuildThings, JSONGrammar.strings("things", max: 6, chars: 60), 120)
         guard tm != nil else { return }
-        let around = checked(strings(tm, "things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
-            // The light, the air and the room itself are the background, and clothes are their wearer's.
-            if e.range(of: #"(?i)\b(light|lamplight|gaslight|candlelight|glow|air|smell|scent|aroma|tang|warmth|chill|silence|stillness|darkness|shadows?|room|backroom|space|music|sound|crackle|steam|clouds?|rain)\b"#, options: .regularExpression) != nil {
-                refused.append(e + " (background, not a thing)")
-                return false
-            }
-            if !Rules.onPlan(e) {
-                refused.append(e + " (not a thing on the floor)")
-                return false
-            }
+        let candidates = checked(strings(tm, "things", cap: 6).map { clip($0.trimmingCharacters(in: CharacterSet(charactersIn: ". ")), 70) }).filter { e in
             let w: Set<String> = Continuity.wordSet(e).filter { $0.count > 2 }
             if w.count >= 2, theirs.contains(where: { w.intersection($0).count >= 2 }) {
                 refused.append(e + " (someone's own)")
@@ -2537,6 +2529,16 @@ final class StoryEngine {
             if Continuity.grounded(e, in: inReply) { return true }
             refused.append(e)
             return false
+        }
+        // Each one, the model says what it is: a thing in the room, something someone wears or
+        // carries, a sound, smell, light or mood, or part of the building or the sky.
+        var around: [String] = []
+        for e in candidates {
+            let km = await ask("What is " + clip(e, 40) + "?", "In this story, what is \"" + e + "\"?\nCHOICES: " + Self.whatIsChoices.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"is\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("is", from: Self.whatIsChoices), 20)
+            let what = ((km?["is"] as? String) ?? "").lowercased()
+            if what.isEmpty || what.hasPrefix("a thing") { around.append(e); asked.append("What is " + e + "? → a thing in the room"); continue }
+            refused.append(e + " (" + what + ")")
+            asked.append("What is " + e + "? → " + what)
         }
         asked.append("What is around? → " + (around.isEmpty ? "nothing new" : around.joined(separator: "; ")))
         commit { now in
@@ -4055,6 +4057,8 @@ extension StoryEngine {
     /// held to a grammar so the model only picks from lists, then one push-back question for any
     /// object whose spot broke a rule. Code places everything; every decision goes on the room's
     /// log and shows on the map as it happens. Whatever the model can't answer comes from the template.
+    static let whatIsChoices = ["a thing in the room", "worn or carried by someone", "a sound, smell, light or mood", "part of the building or the sky"]
+
     fileprivate func furnishRoom(story: String) async {
         // A room is drawn once: only a place with no room yet is laid out, and never again after.
         guard let a0 = adventure, !a0.location.isEmpty,
@@ -4152,76 +4156,98 @@ extension StoryEngine {
                      + ", \(windows.count) window" + (windows.count == 1 ? "" : "s") + ")")
         await show(r, pause: 0.6)
 
-        // 2. The things: the fixed zones, and beside or on each kind of furniture.
-        var zones = Zone.menu(r)
-        for k in ["bar", "counter", "table", "desk", "shelf", "piano", "fireplace", "bed", "sofa"] { zones.append("beside the " + k) }
-        for k in ["bar", "counter", "table", "desk", "shelf"] { zones.append("on the " + k) }
-        let q2 = base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres, doors on the " + doors.map(\.wall.rawValue).joined(separator: " and ")
-            + " wall" + (windows.isEmpty ? "" : ", windows on the " + windows.map(\.wall.rawValue).joined(separator: " and ") + " wall") + ".\n"
-            + "QUESTION: List up to 8 things standing in this room that the story shows or that a room like this would have: the big furniture first, then smaller things. Only things on the floor or on furniture: no clothing anyone wears, nothing on the ceiling, no sounds or smells. For each: a short name in the story's words, its kind from KINDS, what it is made of, and where it goes in general from PLACES.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nPLACES: " + zones.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"where\":\"one of PLACES\"}]}\nThe form:"
-        let m2 = await ask("Building the room: what is in it", q2, JSONGrammar.roomThings(kinds: Rules.kinds, zones: zones), 420)
+        // 2. The things: only what the story needs, at most five (no decoration for its own sake).
+        let q2 = base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres.\n"
+            + "QUESTION: List only the things this story needs in the room, at most 5: the things the story names, and the one or two pieces of furniture the scene can't do without (a bar to sit at, a bed to sleep in). Leave out lamps, plants, rugs and decoration unless the story names them. Only things on the floor or on furniture: no clothing, nothing on the ceiling, no sounds or smells. For each: a short name in the story's words, its kind from KINDS, what it is made of, its real size in whole metres seen from above (length and width; 1 for anything small), and where people need space to walk or work by it: none, in front (a fireplace, a bookcase), behind (a bar the bartender works behind) or all round (a pool table).\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"length\":2,\"width\":1,\"space\":\"none, in front, behind or all round\"}]}\nThe form:"
+        let m2 = await ask("What does the story need in this room?", q2, JSONGrammar.roomList(kinds: Rules.kinds), 260)
         guard !Task.isCancelled else { return }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
-        var wanted: [(Thing, Zone)] = []
-        for d in ((m2["things"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(8) {
+        var wanted: [Thing] = []
+        var worn: [(String, String)] = []
+        for d in ((m2["things"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(5) {
             let name = str(d, "name")
-            guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()), Rules.onPlan(name),
-                  !wanted.contains(where: { $0.0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
+            guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()),
+                  !wanted.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
+            // The model says what it is before anything is drawn.
+            let km = await ask("What is " + clip(name, 40) + "?", base + "QUESTION: In this story, what is \"" + name + "\"?\nCHOICES: " + Self.whatIsChoices.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"is\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("is", from: Self.whatIsChoices), 20)
+            let what = str(km, "is").lowercased()
+            if what.hasPrefix("worn") {
+                let who = ["you"] + a0.cast.filter { !$0.isPlayer }.map(\.name)
+                let wm = await ask("Who has " + clip(name, 40) + "?", base + "QUESTION: Who wears or carries \"" + name + "\"?\nCHOICES: " + who.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"who\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("who", from: who), 20)
+                let owner = str(wm, "who")
+                if !owner.isEmpty { worn.append((owner, name)); r.log.append("edit: " + name + " → worn by " + owner) }
+                continue
+            }
+            if !what.isEmpty, !what.hasPrefix("a thing") { r.log.append("refuse: " + name + " (" + what + ")"); continue }
             var kind = str(d, "kind").lowercased()
             if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: name) }
             var t = Thing(kind: .object, name: name, icon: kind)
             t.makeup = Self.echoesPrompt(str(d, "made_of")) ? "" : str(d, "made_of")
-            wanted.append((t, Zone.parse(str(d, "where")) ?? RoomBuilder.defaultZone(kind, in: r)))
+            // The model's own sense of its size, kept to what fits the room; small things stay one square.
+            func metres(_ k: String) -> Int {
+                if let n = d[k] as? Int { return n }
+                if let n = d[k] as? Double { return Int(n.rounded()) }
+                return Int(str(d, k).filter(\.isNumber)) ?? 1
+            }
+            if !Rules.rule(kind).small {
+                let l = max(1, min(metres("length"), max(r.width, r.depth) - 2, 6)), w = max(1, min(metres("width"), 3))
+                t.w = max(l, w); t.d = min(l, w)
+            }
+            let sp = str(d, "space").lowercased()
+            if ["in front", "behind", "all round"].contains(sp), !Rules.rule(kind).small { t.space = sp }
+            wanted.append(t)
         }
-        // The template's centrepiece (a bar's bar, a bedroom's bed) is never left out.
-        if let lead = tp.pieces.first, !wanted.contains(where: { $0.0.icon == lead.icon }) {
-            wanted.insert((Thing(kind: .object, name: lead.name, icon: lead.icon), lead.zone), at: 0)
+        // The room's centrepiece (a bar's bar, a bedroom's bed) is never left out.
+        if let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
+            wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0)
         }
         // Big furniture first, small things last, so "on the bar" has a bar to go on.
         func rank(_ icon: String) -> Int {
             let rule = Rules.rule(icon)
             return rule.small ? 3 : (Rules.seats.contains(icon) || icon == "lamp" || icon == "plant") ? 2 : icon == "rug" ? 0 : 1
         }
-        wanted.sort { rank($0.0.icon) < rank($1.0.icon) }
-        var refused: [(Thing, Zone, String)] = []
-        for (t, z) in wanted {
+        wanted.sort { rank($0.icon) < rank($1.icon) }
+
+        // 3. Each thing in turn: the model says where it goes; code checks the rules, and when it
+        // can't go there, says why and asks where else. A short question each.
+        let storyLine = clip(about.isEmpty ? story : about, 260)
+        for t in wanted {
+            guard !Task.isCancelled else { return }
+            var brief = "You lay out a room for an audio story, as a top-down plan.\nTHE ROOM: " + placeName + ", a " + type + ", \(r.width) by \(r.depth) metres"
+            if !r.doors.isEmpty { brief += "; doors on the " + r.doors.map(\.wall.rawValue).joined(separator: " and ") + " wall" }
+            if !r.windows.isEmpty { brief += "; windows on the " + r.windows.map(\.wall.rawValue).joined(separator: " and ") + " wall" }
+            brief += ".\nTHE STORY: " + storyLine
+            if !r.objects.isEmpty { brief += "\nALREADY IN IT: " + r.objects.map(\.name).joined(separator: ", ") }
+            let menu = Zone.menu(r)
+            let q = brief + "\nQUESTION: Where does the " + Zone.short(t.name) + " go, as it would in a real room like this?\nPLACES: " + menu.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:"
+            let m = await ask("Where does the " + Zone.short(t.name) + " go?", q, JSONGrammar.one("where", from: menu), 30)
+            let z = Zone.parse(str(m, "where")) ?? RoomBuilder.defaultZone(t.icon, in: r)
             let out = Placer.place(&r, t, zone: z)
             if out.placed {
                 r.log.append("place: " + t.name + " → " + z.text)
+                await show(r)
+                continue
+            }
+            r.log.append("refuse: " + t.name + " " + z.text + " (" + out.reason + ")")
+            let ok = Placer.allowed(t, in: r)
+            guard !ok.isEmpty else {
+                Placer.fallback(&r, t, near: z)
+                r.log.append("move: " + t.name + " → nearest allowed spot")
+                await show(r)
+                continue
+            }
+            r.log.append("ask: where else for " + t.name + "?")
+            await show(r, pause: 0.3)
+            let q3 = brief + "\nThe " + Zone.short(t.name) + " can't go " + z.text + ", because " + out.reason + ".\nQUESTION: Where else does it go?\nPLACES: " + ok.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:"
+            let m3 = await ask("Where else for the " + Zone.short(t.name) + "?", q3, JSONGrammar.one("where", from: ok), 30)
+            let said = str(m3, "where")
+            if let z2 = Zone.parse(said), ok.contains(said), Placer.place(&r, t, zone: z2).placed {
+                r.log.append("place: " + t.name + " → " + z2.text)
             } else {
-                r.log.append("refuse: " + t.name + " " + z.text + " (" + out.reason + ")")
-                refused.append((t, z, out.reason))
+                Placer.fallback(&r, t, near: z)
+                r.log.append("move: " + t.name + " → nearest allowed spot")
             }
             await show(r)
-        }
-
-        // 3. Push back once: where else, from the zones that keep the rules.
-        var retry: [(Thing, Zone, [String])] = []
-        for (t, z, _) in refused {
-            let ok = Placer.allowed(t, in: r)
-            if ok.isEmpty { Placer.fallback(&r, t, near: z); r.log.append("move: " + t.name + " → nearest allowed spot") } else { retry.append((t, z, ok)) }
-        }
-        if !retry.isEmpty {
-            var q = base + "THE ROOM: \(r.width) by \(r.depth) metres. These things can't go where you said:\n"
-            for (i, x) in retry.enumerated() {
-                let why = refused.first { $0.0.id == x.0.id }?.2 ?? ""
-                q += "\(i + 1). " + x.0.name + ": not " + x.1.text + ", because " + why + ". Where else? Choose from: " + x.2.joined(separator: "; ") + "\n"
-            }
-            q += "QUESTION: For each number, pick where it goes instead, from its own list. Output ONLY one JSON object, e.g. {\"1\":\"by the north wall\"}\nThe form:"
-            for x in retry { r.log.append("ask: where else for " + x.0.name + "?") }
-            await show(r, pause: 0.4)
-            let m3 = await ask("Building the room: where else?", q, JSONGrammar.roomRetry(allowed: retry.map(\.2)), 40 * retry.count + 20)
-            guard !Task.isCancelled else { return }
-            for (i, x) in retry.enumerated() {
-                let said = str(m3, String(i + 1))
-                if let z = Zone.parse(said), x.2.contains(said), Placer.place(&r, x.0, zone: z).placed {
-                    r.log.append("place: " + x.0.name + " → " + z.text)
-                } else {
-                    Placer.fallback(&r, x.0, near: x.1)
-                    r.log.append("move: " + x.0.name + " → nearest allowed spot")
-                }
-                await show(r)
-            }
         }
 
         // 4. The people: where each one is, and who or what they face.
@@ -4283,6 +4309,12 @@ extension StoryEngine {
                 r.log.append("enter: " + name)
             }
             for (id, f) in facing where !f.isEmpty { Placer.turn(&r, id, toward: f) }
+        }
+        // What people wear or carry goes with them, not on the floor.
+        for (owner, item) in worn {
+            let who: Thing? = owner == "you" ? r.player : r.named(owner)
+            guard let t = who, let i = r.index(t.id) else { continue }
+            if r.things[i].wearing.isEmpty { r.things[i].wearing = item } else if !r.things[i].wearing.contains(item) { r.things[i].wearing += ", " + item }
         }
         // You start where the opening puts you ("on a stool at the long mahogany bar").
         if let a = adventure, let me = r.player {
