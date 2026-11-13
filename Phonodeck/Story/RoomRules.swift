@@ -155,7 +155,7 @@ enum Rules {
         let senses: Set<String> = ["smell", "smells", "scent", "aroma", "odour", "odor", "stench", "perfume", "sound", "sounds", "music", "hum", "light",
             "lamplight", "candlelight", "glow", "air", "smoke", "rain", "noise", "silence", "warmth", "heat", "chill", "cold", "damp", "darkness",
             "shadow", "shadows", "steam", "mist", "fog", "haze", "laughter", "chatter", "voices", "murmur", "jazz", "melody", "tune", "rhythm",
-            "drumming", "crackle", "crackling", "thunder", "lightning", "storm", "wind", "breeze", "atmosphere", "mood", "feeling"]
+            "drumming", "crackle", "crackling", "buzz", "buzzing", "whir", "clink", "clinking", "patter", "echo", "echoes", "thunder", "lightning", "storm", "wind", "breeze", "atmosphere", "mood", "feeling"]
         // A material on its own is what something is made of, not a thing ("polished wood", "brass tiles").
         let stuff: Set<String> = ["wood", "wool", "dust", "tiles", "tile", "brass", "leather", "velvet", "silk", "stone", "marble", "iron",
             "copper", "tin", "plaster", "paint", "wallpaper", "floorboards", "floor", "floors", "wall", "walls", "dirt", "mud", "grime", "polish",

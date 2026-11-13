@@ -10,6 +10,8 @@ struct RoomMapView: View {
     @State private var shownID: UUID?
     @State private var editing: Thing?
     @State private var stackAt: StackPick?
+    /// The cards kept open under the map, by name ("you" for the player), newest first.
+    @AppStorage("pinnedThings") private var pinnedRaw = "you"
     /// What each thing looked like last time, to tell what changed.
     @State private var looks: [UUID: String] = [:]
     @State private var lit: Set<UUID> = []
@@ -40,6 +42,7 @@ struct RoomMapView: View {
                 map(room, live: room.id == here?.id)
                     .onAppear { looks = Dictionary(room.things.map { ($0.id, $0.look) }, uniquingKeysWith: { a, _ in a }) }
                     .onChange(of: room.things.map(\.look)) { _, _ in spark(room) }
+                pinnedCards(a, room)
             }
             .padding(10)
             .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
@@ -204,7 +207,7 @@ struct RoomMapView: View {
                 let c = Cell(x: Int((pt.x - ox) / s), y: Int((pt.y - oy) / s))
                 guard room.contains(c) else { return }
                 let stack = room.stack(at: c)
-                if stack.count == 1 { editing = stack[0] } else if stack.count > 1 { stackAt = StackPick(cell: c) }
+                if stack.count == 1 { pin(stack[0]) } else if stack.count > 1 { stackAt = StackPick(cell: c) }
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: room.things.map(\.look))
             // Pinch to zoom and drag to look around, on the map only; double-tap to fit it again.
@@ -410,7 +413,7 @@ struct RoomMapView: View {
             List(room.stack(at: c)) { t in
                 Button {
                     stackAt = nil
-                    Task { @MainActor in try? await Task.sleep(for: .seconds(0.35)); editing = t }
+                    pin(t)
                 } label: {
                     HStack {
                         Image(systemName: t.isPerson ? "person.fill" : Rules.symbol(t.icon)).foregroundStyle(Theme.accent).frame(width: 24)
@@ -425,6 +428,72 @@ struct RoomMapView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium])
+    }
+
+    // MARK: Cards kept open under the map
+
+    private var pinned: [String] { pinnedRaw.split(separator: "|").map(String.init).filter { !$0.isEmpty } }
+    private func key(_ t: Thing) -> String { t.kind == .player ? "you" : t.name.lowercased() }
+
+    /// Tapping a person or thing opens its card under the map (or brings it to the top), and it stays open.
+    private func pin(_ t: Thing) {
+        var list = pinned.filter { $0 != key(t) }
+        list.insert(key(t), at: 0)
+        withAnimation(.snappy) { pinnedRaw = list.prefix(6).joined(separator: "|") }
+    }
+
+    private func unpin(_ k: String) {
+        withAnimation(.snappy) { pinnedRaw = pinned.filter { $0 != k }.joined(separator: "|") }
+    }
+
+    @ViewBuilder
+    private func pinnedCards(_ a: Adventure, _ room: Room) -> some View {
+        let shown: [Thing] = pinned.compactMap { k in room.things.first { key($0) == k } }
+        ForEach(shown) { t in
+            thingCard(t, a, room)
+                .transition(.move(edge: .top).combined(with: .opacity))
+        }
+    }
+
+    /// One open card: every property of the person or thing, each row lighting up when it changes.
+    private func thingCard(_ t: Thing, _ a: Adventure, _ room: Room) -> some View {
+        let me = room.player
+        var spot: String = Fovea.gridSpot(a, t.name) ?? ""
+        if t.kind == .player {
+            var bits: [String] = []
+            if let seat = room.thing(t.on) { bits.append("on " + seat.name) }
+            if let f = room.people.first(where: { $0.id != t.id && RoomGrid.faces(t, $0) }) { bits.append("facing " + f.name) } else { bits.append("facing " + t.facing.word) }
+            spot = bits.joined(separator: ", ")
+        } else if me == nil {
+            spot = "at \(t.x), \(t.y)"
+        }
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Image(systemName: t.isPerson ? "person.fill" : Rules.symbol(t.icon)).font(.caption).foregroundStyle(Theme.accent)
+                Text(t.kind == .player ? (a.playerName.isEmpty ? "You" : a.playerName) : t.name).font(.subheadline.bold()).foregroundStyle(Theme.fg).lineLimit(1)
+                Spacer(minLength: 0)
+                Button("Edit") { editing = t }.font(.caption.bold())
+                Button { unpin(key(t)) } label: { Image(systemName: "xmark").font(.caption.bold()) }
+                    .foregroundStyle(Theme.dim)
+            }
+            .padding(.bottom, 3)
+            FlashRow(label: "Where", value: spot, lines: 2)
+            if t.isPerson {
+                FlashRow(label: "Doing", value: t.doing, lines: 2)
+                FlashRow(label: "Looks", value: t.expression, lines: 1)
+                FlashRow(label: "Feels", value: t.feeling, lines: 1)
+                FlashRow(label: "Wearing", value: t.wearing, lines: 2)
+                FlashRow(label: "Holding", value: t.holding.joined(separator: ", "), lines: 1)
+                if t.kind != .player { FlashRow(label: "Said", value: t.dialogue.last ?? "", lines: 3) }
+            } else {
+                FlashRow(label: "Made of", value: t.makeup, lines: 1)
+                FlashRow(label: "State", value: t.state, lines: 1)
+                FlashRow(label: "Size", value: "\(t.w) × \(t.d) m", lines: 1)
+            }
+        }
+        .padding(10)
+        .background(Theme.bg.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(lit.contains(t.id) ? Theme.accent : Theme.line))
     }
 
     /// Lights up whatever changed since last time, for a beat.
