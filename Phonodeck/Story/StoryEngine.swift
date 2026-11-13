@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z26"
+    static let build = "build 2026-11-13z27"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2558,11 +2558,14 @@ final class StoryEngine {
         for e in candidates {
             // Already on the map: nothing to ask.
             if adventure?.room?.named(e) != nil { around.append(e); continue }
-            let what = await Self.whatIs(e) { q in
+            let what = await Self.whatIs(e, noun: { q in
+                let m = await ask("What object is " + clip(e, 40) + "?", q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
+                return (m?["object"] as? String) ?? ""
+            }, yesNo: { q in
                 let m = await ask(clip(q, 70), q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
                 guard let a = (m?["answer"] as? String)?.lowercased(), !a.isEmpty else { return nil }
                 return a.hasPrefix("y")
-            }
+            })
             if what.isEmpty || what.hasPrefix("a thing") { around.append(e); asked.append("What is " + e + "? → a thing in the room"); continue }
             // Something you could pick up with one hand is a prop of the moment: no square of its own.
             if what.hasPrefix("small") { around.append(e); handSized.insert(e); asked.append("What is " + e + "? → " + what); continue }
@@ -2591,6 +2594,16 @@ final class StoryEngine {
             guard let im else { return }
             var kind = ((im["kind"] as? String) ?? "").lowercased()
             if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: e) }
+            // One of a kind already on the map? Ask whether it is the same one ("long mahogany bar"
+            // and "mahogany bar"), so nothing is drawn twice.
+            if !Rules.seats.contains(kind), kind != "small", let twin = r.objects.first(where: { $0.icon == kind && $0.on == nil }) {
+                let sq = "Is the \"" + e + "\" the same thing as the \"" + twin.name + "\" already in the room?"
+                let sm = await ask("Is it the " + clip(Zone.short(twin.name), 30) + "?", sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                if ((sm?["answer"] as? String) ?? "").lowercased().hasPrefix("y") {
+                    asked.append("Is " + e + " the " + twin.name + "? → yes, already drawn")
+                    continue
+                }
+            }
             var t = Thing(kind: .object, name: e, icon: kind)
             t.makeup = ((im["made_of"] as? String) ?? "")
             func metres(_ k: String) -> Int { (im[k] as? Int) ?? Int(((im[k] as? String) ?? "").filter(\.isNumber)) ?? 1 }
@@ -4246,17 +4259,27 @@ extension StoryEngine {
     /// What each name turned out to be, so the same thing is never asked about twice.
     static var whatIsKnown: [String: String] = [:]
 
-    static func whatIs(_ name: String, yesNo: (String) async -> Bool?) async -> String {
+    /// The question that names the object: one noun from the name itself, or none. Small models
+    /// answer this far better than "is it a material?" ("polished oak" kept passing that one).
+    static func nounQuestion(_ name: String) -> String {
+        "What object does \"" + name + "\" name? Answer with one noun for the object itself, taken from those words, or none if it names no object you could put in a room. For example: \"long mahogany bar\" → bar; \"crackling gramophone\" → gramophone; \"brass lamp\" → lamp; \"polished oak\" → none (oak is a wood); \"velvet\" → none (a cloth); \"soft jazz\" → none (a sound); \"warm cinnamon\" → none (a smell); \"golden glow\" → none (a light)."
+    }
+
+    static func whatIs(_ name: String, noun: (String) async -> String, yesNo: (String) async -> Bool?) async -> String {
         let key = name.lowercased()
         if let known = whatIsKnown[key] { return known }
         let n = "\"" + name + "\""
-        // The first question settles most of them: a smell, a glow or a mood stops here.
+        // First: which word names the object? It has to be one of the name's own words, and not
+        // "none": a material, a smell or a glow names no object and stops here.
         var what = "a thing in the room"
-        if await yesNo("Is " + n + " a solid object you could see and touch (furniture, a machine, a container, a door, a tool or clothing), rather than a smell, sound, light, mood or feeling?") == false {
-            what = "not an object (a smell, sound, light or feeling)"
+        let said = (await noun(nounQuestion(name))).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .\"'"))
+        let words = Continuity.wordSet(name)
+        let saidWords = Continuity.wordSet(said)
+        let fromName = saidWords.contains { w in words.contains { $0.hasPrefix(w) || w.hasPrefix($0) } }
+        if said.isEmpty || said.hasPrefix("none") || !fromName {
+            what = "not an object (a material, smell, sound, light or feeling)"
         } else {
             let checks: [(String, String)] = [
-                ("Is " + n + " only a material, a surface or a detail of something else (like oak, polish, the rim of a glass, a drop of water or the drink in a glass), rather than a whole object?", "a material or a detail"),
                 ("Is " + n + " part of the building or the sky (a ceiling, wall, floor, door, window or skylight)?", "part of the building or the sky"),
                 ("Is " + n + " something a person wears or carries?", "worn or carried by someone"),
                 ("Is " + n + " small enough to pick up with one hand (like a glass, a bottle, a shaker, a record or a book)?", "small, kept off the map"),
@@ -4372,18 +4395,29 @@ extension StoryEngine {
         let m2 = await ask("What does the story need in this room?", q2, JSONGrammar.roomList(kinds: Rules.kinds), 260)
         guard !Task.isCancelled else { return }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
+        var listed: [[String: Any]] = ((m2["things"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
+        if listed.isEmpty {
+            // The long form came back empty or cut off: just the names, then each is asked about.
+            let q2b = base + "QUESTION: Name only the things this story needs in the room, at most 5: the things the story names, and the one or two pieces of furniture the scene can't do without. No clothing, sounds, smells or decoration.\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
+            let m2b = await ask("What does the story need? (names only)", q2b, JSONGrammar.strings("things", max: 5, chars: 40), 90)
+            listed = ((m2b["things"] as? [Any]) ?? []).compactMap { $0 as? String }.map { ["name": $0] }
+        }
+        r.log.append("ask: what does the story need here? → " + (listed.isEmpty ? "nothing" : listed.map { str($0, "name") }.joined(separator: ", ")))
         var wanted: [Thing] = []
         var worn: [(String, String)] = []
-        for d in ((m2["things"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(5) {
+        for d in listed.prefix(5) {
             let name = str(d, "name")
             guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()),
                   !wanted.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
             // The model says what it is before anything is drawn.
-            let what = await Self.whatIs(name) { q in
+            let what = await Self.whatIs(name, noun: { q in
+                let m = await ask("What object is " + clip(name, 40) + "?", base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
+                return str(m, "object")
+            }, yesNo: { q in
                 let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
                 let a = str(m, "answer").lowercased()
                 return a.isEmpty ? nil : a.hasPrefix("y")
-            }
+            })
             r.log.append("ask: what is " + name + "? → " + what)
             if what.hasPrefix("worn") {
                 let who = ["you"] + a0.cast.filter { !$0.isPlayer }.map(\.name)
