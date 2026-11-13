@@ -196,6 +196,43 @@ enum Fovea {
 
     /// The private note before the player's words: when and where, who they face, this turn's
     /// events from code, and the items marked yes.
+    /// Line first: the facing person's reaction alone, as JSON {"does", "says"}, from the same
+    /// moment the storyteller will see.
+    static func linePrompt(_ a: Adventure, input: String, lead: String, lastReply: String, name: String) -> String {
+        var l: [String] = []
+        if !lastReply.isEmpty { l.append("THE STORY SO FAR (last reply): " + clip(lastReply, 500)) }
+        l.append(lead)
+        l.append("")
+        l.append("Write only how " + name + " reacts to the player's message, as JSON: \"does\" is one short action (what they do), \"says\" is what they say, one to three sentences, under 45 words, in their own voice.")
+        l.append("Rules: answer what the player said or did; never repeat their words back as a question. Use only what is written above. Point only to people listed above; if they do not know, they say so. Keep their private hopes and plans to themselves unless the player asked about their life. Never speak for the player.")
+        return l.joined(separator: "\n")
+    }
+
+    /// The drafted action as a sentence about `name`: "Smiles." → "Dolores smiles."; one that already
+    /// names them or starts with a pronoun is kept as written.
+    static func action(_ does: String, by name: String) -> String {
+        let t = lowerFirst(does)
+        if t.isEmpty { return name + " turns to you." }
+        let low = t.lowercased()
+        let first = Cards.first(name).lowercased()
+        if (!first.isEmpty && low.hasPrefix(first)) || low.hasPrefix("he ") || low.hasPrefix("she ") || low.hasPrefix("they ") || low.hasPrefix("the ") {
+            return t.prefix(1).uppercased() + t.dropFirst()
+        }
+        return name + " " + t
+    }
+
+    /// "Smiles." → "smiles.", so an action reads after a name.
+    static func lowerFirst(_ s: String) -> String {
+        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return "" }
+        if !t.hasSuffix(".") && !t.hasSuffix("!") { t += "." }
+        let first = t.prefix(1)
+        let second = t.dropFirst().prefix(1)
+        // Leave a name or "I" alone; lower only an ordinary first word.
+        if first == "I" && (second == " " || second == "'") { return t }
+        return first.lowercased() + t.dropFirst()
+    }
+
     static func lead(_ a: Adventure, input: String, arrived: Bool, events: [String], kept: [Item]) -> String {
         var l: [String] = ["[FOR THIS MOMENT: private, never mention it]", "WHEN AND WHERE: " + whenWhere(a)]
         if arrived, let card = Cards.placeCard(a), !card.desc.isEmpty {

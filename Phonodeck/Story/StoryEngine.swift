@@ -56,6 +56,10 @@ final class StoryEngine {
     /// for this moment, and the storyteller sees only the year, the time, the room, the person the
     /// player faces and the items marked yes (see `Fovea`). No plan writes the next beat.
     var foveated: Bool { didSet { UserDefaults.standard.set(foveated, forKey: "foveatedStory") } }
+    /// Line first (on the foveated story): before the scene is written, the person the player faces
+    /// gets their reaction drafted on its own (what they do, what they say), checked in code, and
+    /// the scene is then written around those exact words.
+    var lineFirst: Bool { didSet { UserDefaults.standard.set(lineFirst, forKey: "lineFirstStory") } }
     /// How far the current reasoning step is toward its room to think (0 to 1), or nil when
     /// nothing is reasoning. About 4 characters a token.
     var thinkingProgress: Double? {
@@ -106,6 +110,7 @@ final class StoryEngine {
         deepThinking = UserDefaults.standard.object(forKey: "deepThinking") as? Bool ?? true
         grounded = UserDefaults.standard.object(forKey: "groundedEngine") as? Bool ?? true
         foveated = UserDefaults.standard.object(forKey: "foveatedStory") as? Bool ?? true
+        lineFirst = UserDefaults.standard.object(forKey: "lineFirstStory") as? Bool ?? true
         narrator.onFinished = { [weak self] in self?.narrationFinished() }
         dictation.onSend = { [weak self] text in self?.send(text) }
     }
@@ -701,7 +706,7 @@ final class StoryEngine {
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
         let engineLine: String = grounded
-            ? (foveated && gmPlans ? "Foveated story (read, yes/no pass, paint, lean rebuild)" : "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off"))
+            ? (foveated && gmPlans ? "Foveated story (read, yes/no pass, " + (lineFirst ? "their line, " : "") + "paint, lean rebuild)" : "Grounded engine (look, plan, paint, rebuild)" + (gmPlans ? "" : ", reading off"))
             : "Game Master planning " + (gmPlans ? "on" : "off") + ", reasoning " + (reasons ? "on" : "off")
         out.append(engineLine + " · " + Self.build)
         if grounded {
@@ -1198,7 +1203,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z6"
+    static let build = "build 2026-11-13z7"
     /// The plan's room with reasoning on: the thinking plus the plan (about a minute on a phone).
     static let deepPlanTokens = 1100
 
@@ -2092,6 +2097,9 @@ final class StoryEngine {
         let card = Cards.briefing(a, pick: pick, looked: lookedLines, extra: extra, notes: notes, moment: moment)
         // The yes/no pass's question and answer, for "Copy with prompts".
         var gateLog = ""
+        // Line first: the facing person's checked reaction, and what was tried, for the export.
+        var line: (name: String, does: String, says: String)? = nil
+        var lineLog = ""
         // What the yes/no pass let in and left out, for the story export.
         var foveaView: [String] = []
         var lead = "[GAME MASTER BRIEFING: private, for this reply only]\n" + card + "\n[END OF BRIEFING]\n\n" + (hidden ? "INSTRUCTION: " : "THE PLAYER: ") + input
@@ -2134,6 +2142,47 @@ final class StoryEngine {
             let shown: String = kept.isEmpty ? "only the room and who you face" : kept.map { Fovea.clip($0.text, 50) }.joined(separator: "; ")
             step("What matters right now? → " + shown + " (\(items.count - kept.count) of \(items.count) left out)")
             lastRead += "; foveated: \(kept.count) of \(items.count) card items in"
+            // Line first: the facing person's reaction is drafted alone, checked, then written around.
+            if lineFirst, let who = Fovea.facing(a).first {
+                stage = "What do they say?"
+                lapFrom = Date()
+                let name: String = Cards.card(for: who, in: a)?.name ?? who.name
+                let probe = PresenceFilter(absent: absentPeople(a, input: input, plan: moment), player: input,
+                                           secrets: a.cast.map(\.privateLife).filter { !$0.isEmpty },
+                                           lifeAsked: PresenceFilter.asksAboutLife(input),
+                                           roles: a.cast.map(\.role) + a.cast.map(\.name))
+                var why = ""
+                var tries: [String] = []
+                for attempt in 0..<2 {
+                    var ask = Fovea.linePrompt(a, input: input, lead: lead, lastReply: lastGMBefore, name: name)
+                    if !why.isEmpty { ask += "\nThe last try was wrong: " + why + " Write it again." }
+                    if a.nameless { ask = Continuity.unnamed(ask, in: a, playerTold: nameTold(a)) }
+                    let raw = (try? await llm.complete(system: nil, prompt: ask,
+                                                       options: .init(maxTokens: 110, temperature: attempt == 0 ? 0.8 : 0.6, repetitionPenalty: 1.05,
+                                                                      grammar: JSONGrammar.pair("does", 110, "says", 240)))) ?? ""
+                    guard !Task.isCancelled else { adventure = snapshot; return }
+                    let m: [String: Any] = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+                    let does: String = ((m["does"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    let says: String = ((m["says"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " \n\"“”"))
+                    guard !says.isEmpty else { why = "they said nothing."; tries.append("(nothing)"); continue }
+                    tries.append(does + " / \"" + says + "\"")
+                    why = probe.problems(does: does, says: says)
+                    if why.isEmpty {
+                        line = (name, does, says)
+                        break
+                    }
+                }
+                lineLog = tries.joined(separator: " → ") + (line == nil ? " · dropped (" + why + ")" : (tries.count > 1 ? " · drafted twice" : " · checked"))
+                if let l = line {
+                    lead = lead.replacingOccurrences(of: "\n\nTHE PLAYER: ", with: "\nTHEIR REACTION (decided and checked: use it as is): " + Fovea.action(l.does, by: l.name)
+                        + " Then they say, word for word: \"" + l.says + "\" Write the moment around this: it is all they say in this reply.\n[END]\n\nTHE PLAYER: ")
+                    lead = lead.replacingOccurrences(of: "\n[END]\nTHEIR REACTION", with: "\nTHEIR REACTION")
+                    step("What do they say? → " + l.name + ": \"" + Fovea.clip(l.says, 80) + "\"")
+                } else {
+                    step("What do they say? → no line passed the check; the storyteller writes it freely")
+                }
+                lap("their line")
+            }
         }
         // The story's own last turns keep its voice and thread: as many of the last four as fit.
         // Anything older is reached with a "remember" lookup.
@@ -2161,6 +2210,7 @@ final class StoryEngine {
         var sent: [String] = ["SYSTEM:\n" + system]
         for t in history { sent.append((t.role == .user ? "USER" : "ASSISTANT") + ":\n" + t.text) }
         if !gateLog.isEmpty { sent.insert("YES/NO PASS (asked before the reply):\n" + gateLog, at: 0) }
+        if !lineLog.isEmpty { sent.insert("THEIR LINE (drafted before the reply): " + lineLog, at: gateLog.isEmpty ? 0 : 1) }
         let sentPrompt: String = sent.joined(separator: "\n\n")
         stage = "The storyteller is writing"
         a.gmWait = Date().timeIntervalSince(ticked)
@@ -2361,6 +2411,14 @@ final class StoryEngine {
             let cut = clip(f.dropped.joined().trimmingCharacters(in: .whitespacesAndNewlines), 300)
             before.append("REPLY CHECK: " + (redrawn ? "too little was left, so the reply was written again. Left out first: " + cut
                                                 : why.joined(separator: "; ") + ". Left out: " + cut))
+        }
+        if !lineLog.isEmpty {
+            var said = lineLog
+            if let l = line {
+                let used = Continuity.grounded(l.says, in: Continuity.wordSet(reply), share: 0.8)
+                said += used ? " · used word for word" : " · the storyteller changed it"
+            }
+            before.append("THEIR LINE: " + said)
         }
         let took = String(format: "%.1fs", Date().timeIntervalSince(turnBegan))
         before.append("TIMES: " + times.joined(separator: " · ") + " · total " + took + " before the rebuild")

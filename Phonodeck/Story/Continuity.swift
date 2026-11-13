@@ -815,6 +815,21 @@ struct PresenceFilter {
         return found
     }
 
+    /// Checks a drafted reaction on its own (see "Line first"): why it fails, in one line, or "" when it
+    /// passes. The same checks as the streamed reply, on a copy, so nothing here is changed.
+    func problems(does: String, says: String) -> String {
+        var f = self
+        _ = f.feed((does.isEmpty ? "" : does.trimmingCharacters(in: CharacterSet(charactersIn: " ."))  + ". ") + "\"" + says + "\" ")
+        _ = f.finish(restore: false)
+        var why: [String] = []
+        if !f.caught.isEmpty { why.append(f.caught.map(\.name).joined(separator: " and ") + " is somewhere else") }
+        if !f.invented.isEmpty { why.append("it brings in someone who is not here (" + f.invented.joined(separator: ", ") + ")") }
+        if f.parroted > 0 || f.echoes > 0 { why.append("it repeats the player's words instead of answering") }
+        if f.leaked > 0 { why.append("it gives away a private hope nobody asked about") }
+        if f.spokeForPlayer > 0 { why.append("it speaks for the player") }
+        return why.isEmpty ? "" : why.joined(separator: "; ") + "."
+    }
+
     /// What to show while the reply streams: the accepted text plus the sentence being written,
     /// unless that sentence is already on its way out.
     var preview: String {
