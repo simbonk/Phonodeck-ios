@@ -666,10 +666,42 @@ struct PresenceFilter {
     private(set) var restored = false
     /// True when so little was left that the reply needs writing again (see `finish(restore:)`).
     private(set) var gutted = false
+    /// Lines that only asked the player's own words back at them ("...you need rest?").
+    private(set) var parroted = 0
+    /// People the reply made up on the spot ("another patron sits..."), as written.
+    private(set) var invented: [String] = []
+    /// Lines that gave away someone's private hopes or plans when nobody asked.
+    private(set) var leaked = 0
+
+    /// What each person's private life is made of (keywords), kept out unless the player asks.
+    private let secrets: [Set<String>]
+    /// Whether private hopes are off limits in this reply (the player did not ask about anyone's life).
+    private let guardPrivate: Bool
+    /// The words of the player's message.
+    private let playerWords: Set<String>
+    /// Role words of people with a card ("bartender", "seamstress"), who may be pointed at freely.
+    private let knownRoles: Set<String>
+    /// Whether made-up people are caught (not in the opening, which sets the scene and its crowd).
+    private let guardPeople: Bool
+    private static let wishing = try! NSRegularExpression(
+        pattern: #"\b(I|I'm|I've|we)\s+(?:[a-z']+\s+){0,2}?(dream|dreams|dreamed|dreaming|hope to|hoping to|wish I could|long to|plan to|planning to|saving up)\b|\b(someday|one day I|one of these days)\b"#,
+        options: [.caseInsensitive])
+    /// Someone the reply sets down in the scene without them arriving: "another patron sits", "a man in the corner".
+    private static let madeUp = try! NSRegularExpression(
+        pattern: #"\b(another|other|a|an|some)\s+(?:[a-z]+\s+){0,2}?(patron|patrons|customer|customers|guest|guests|regular|regulars|drinker|drinkers|man|men|woman|women|stranger|fellow|gentleman|lady|couple|guy|figure)\s+(sits?|sitting|stands?|standing|leans?|leaning|nurses?|drinks?|sips?|slumps?|waits?|watches|watching|hunched|alone|at the|in the|by the|near the|over (in|by)|across the)\b"#,
+        options: [.caseInsensitive])
+    /// Whether the player's message asks about someone's life, so their hopes may come out.
+    static func asksAboutLife(_ input: String) -> Bool {
+        input.range(of: #"(?i)\b(life|lives|work|job|dream|dreams|hope|hopes|plan|plans|future|family|past|yourself|about you|you do|from|story|want|wish|someday)\b"#, options: .regularExpression) != nil
+    }
 
     /// `absent`: the people known to be somewhere else. `earlier`: the last few replies, whose
     /// sentences must not come back word for word.
-    init(absent: [Absent], earlier: [String] = [], player: String = "") {
+    /// `secrets`: each person's private life and hopes. `lifeAsked`: the player asked about someone's
+    /// life, so those may come out. `roles`: what people with a card are called ("bartender").
+    /// `opening`: the first scene, where nobody has asked anything yet.
+    init(absent: [Absent], earlier: [String] = [], player: String = "", secrets: [String] = [],
+         lifeAsked: Bool = true, roles: [String] = [], opening: Bool = false) {
         var names: [String] = []
         for p in absent {
             names.append(p.name)
@@ -703,6 +735,11 @@ struct PresenceFilter {
         }
         runs = grams
         playerKey = Self.key(player)
+        self.secrets = secrets.map { Cards.keywords($0) }.filter { $0.count >= 2 }
+        guardPrivate = opening || !lifeAsked
+        guardPeople = !opening
+        playerWords = Set(Self.words(player))
+        knownRoles = Set(roles.flatMap { Self.words($0) }.filter { $0.count >= 4 })
     }
 
     private static func words(_ s: String) -> [String] {
@@ -727,8 +764,56 @@ struct PresenceFilter {
         return k.count >= 4 && playerKey.count >= 4 && playerKey.contains(k) && (unit.contains("\"") || unit.contains("“"))
     }
 
-    /// Nothing to check: nobody is elsewhere and there are no earlier replies.
-    var idle: Bool { acts == nil && said.isEmpty && playerKey.isEmpty }
+    /// Nothing to check: nobody is elsewhere, there are no earlier replies, and no hopes to guard.
+    var idle: Bool { acts == nil && said.isEmpty && playerKey.isEmpty && !guardPrivate }
+
+    /// The part of a sentence inside quotation marks.
+    private func quoted(of unit: String, from quoted: Bool) -> String {
+        var q = quoted
+        var out = ""
+        for ch in unit {
+            switch ch {
+            case "\"": q.toggle(); out.append(" ")
+            case "“": q = true; out.append(" ")
+            case "”": q = false; out.append(" ")
+            default: if q { out.append(ch) }
+            }
+        }
+        return out
+    }
+
+    /// The speaker only asks the player's words back ("And I need to rest." → "...you need rest?"):
+    /// a short question whose real words all come from the player's message.
+    private func parrots(_ speech: String) -> Bool {
+        guard playerWords.count >= 2 else { return false }
+        let filler: Set<String> = ["you", "your", "you're", "are", "is", "the", "a", "an", "and", "do", "so", "to", "oh", "well", "huh", "eh", "what", "really", "i", "me", "my", "it", "that", "now", "then"]
+        let clauses = speech.split(whereSeparator: { ",;:…—".contains($0) })
+        for c in clauses where c.contains("?") {
+            let w = Self.words(String(c))
+            let real = w.filter { !filler.contains($0) }
+            if w.count >= 2, w.count <= 6, real.count >= 1, real.allSatisfy({ playerWords.contains($0) || playerWords.contains($0 + "s") || playerWords.contains(String($0.dropLast())) }) { return true }
+        }
+        return false
+    }
+
+    /// The line gives away a private hope or plan nobody asked about.
+    private func leaks(speech: String) -> Bool {
+        guard guardPrivate else { return false }
+        let r = NSRange(location: 0, length: (speech as NSString).length)
+        guard !speech.isEmpty else { return false }
+        if Self.wishing.firstMatch(in: speech, range: r) != nil { return true }
+        let words = Cards.keywords(speech)
+        return secrets.contains { $0.intersection(words).count >= 2 }
+    }
+
+    /// Someone set down in the scene who has no card and is not shown arriving.
+    private func makesUp(_ narrated: String) -> String? {
+        let r = NSRange(location: 0, length: (narrated as NSString).length)
+        guard guardPeople, let m = Self.madeUp.firstMatch(in: narrated, range: r), Self.arrival.firstMatch(in: narrated, range: r) == nil else { return nil }
+        let found = (narrated as NSString).substring(with: m.range)
+        if Self.words(found).contains(where: { knownRoles.contains($0) }) { return nil }
+        return found
+    }
 
     /// What to show while the reply streams: the accepted text plus the sentence being written,
     /// unless that sentence is already on its way out.
@@ -773,6 +858,7 @@ struct PresenceFilter {
         restored = true
         gutted = false
         caught = []
+        invented = []
         return out
     }
 
@@ -795,6 +881,17 @@ struct PresenceFilter {
         } else if said.contains(Self.key(unit)) || copied(unit) >= 0.6 || echoesPlayer(unit) {
             keep = false
             echoes += 1
+        } else if parrots(quoted(of: unit, from: startsInQuote)) {
+            keep = false
+            parroted += 1
+        } else if leaks(speech: quoted(of: unit, from: startsInQuote)) {
+            keep = false
+            leaked += 1
+        } else if invented.count < 2, let who = makesUp(narrated) {
+            // Whoever they are, the rest of the paragraph is about them, so it goes too.
+            dropping = true
+            keep = false
+            invented.append(who)
         } else if voicing && startsInQuote {
             keep = false
         } else if Self.playerVoice.firstMatch(in: unit, range: NSRange(location: 0, length: (unit as NSString).length)) != nil {
