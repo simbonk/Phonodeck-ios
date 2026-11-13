@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z30"
+    static let build = "build 2026-11-13z31"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -4298,7 +4298,11 @@ extension StoryEngine {
         var headOK = true
         if fromName, !said.hasPrefix("none") {
             let kind = (await choose("What does " + n + " name as a whole?", ["an object", "a smell", "a sound", "a light or a glow", "a material or a surface", "a feeling or a mood"])).lowercased()
-            if !kind.isEmpty, !kind.hasPrefix("an object") { headOK = false }
+            if !kind.isEmpty, !kind.hasPrefix("an object") {
+                // The noun and the choice disagree ("bar" named, yet "a material" picked): one plain
+                // question settles it, so a single slip can't throw out the room's main furniture.
+                headOK = await yesNo("Could you walk up to the " + name + " and lay your hand on it, the way you could a bar, a table or a chair, and not the way you could a smell, a sound or a glow?") == true
+            }
         }
         if said.isEmpty || said.hasPrefix("none") || !fromName || !headOK {
             what = "not an object (a material, smell, sound, light or feeling)"
@@ -4497,8 +4501,17 @@ extension StoryEngine {
             }
         }
         if !leadFound, let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
-            let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: Does this story need " + lead.name + " in this room?\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-            if str(nm, "answer").lowercased() == "yes" { wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0) }
+            // Asked two ways: one "no" alone doesn't leave a bar without its bar.
+            let q1 = "Does this story need " + lead.name + " in this room?"
+            let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: " + q1 + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+            var need = str(nm, "answer").lowercased().hasPrefix("y")
+            if !need {
+                let q2 = "Would anyone in this story sit at, stand at or work behind " + lead.name + " here?"
+                let nm2 = await ask("Would anyone use " + lead.name + "?", base + "QUESTION: " + q2 + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                need = str(nm2, "answer").lowercased().hasPrefix("y")
+            }
+            r.log.append("ask: does it need " + lead.name + "? → " + (need ? "yes" : "no"))
+            if need { wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0) }
         }
         // Big furniture first, small things last, so "on the bar" has a bar to go on.
         func rank(_ icon: String) -> Int {
@@ -4621,6 +4634,9 @@ extension StoryEngine {
                 let sitting = str(m, "posture").lowercased().hasPrefix("sit")
                 var seatName = str(m, "seat")
                 if ["none", "nothing", ""].contains(seatName.lowercased()) || Self.echoesPrompt(seatName) { seatName = sitting ? "chair" : "" }
+                // "Sitting on a table" means at one: a chair goes under them and the table beside them.
+                var seatTable = ""
+                if sitting, Rules.surfaces.contains(Rules.icon(for: seatName)) { seatTable = seatName; seatName = "chair" }
                 r.log.append("ask: " + name + " → " + (apart ? "apart" : "with the others") + ", " + (sitting ? "sitting on " + seatName : "standing"))
                 await show(r, pause: 0.2)
                 // The places that fit: far from everyone already placed when they keep to themselves.
@@ -4657,6 +4673,11 @@ extension StoryEngine {
                     r.things.append(seat)
                     if let i = r.index(p.id) { r.things[i].on = seat.id }
                     r.log.append("place: " + seatName + " → under " + name)
+                }
+                if !seatTable.isEmpty {
+                    let tb = Thing(kind: .object, name: Cards.first(name) + "'s " + Zone.short(seatTable), icon: Rules.icon(for: seatTable))
+                    let out = Placer.place(&r, tb, zone: .beside(name))
+                    r.log.append(out.placed ? "place: " + tb.name + " → beside " + name : "refuse: " + tb.name + " (" + out.reason + ")")
                 }
                 // What they are doing pulls in the few things it needs: a table to sew at, a chair
                 // beside them for company. The model picks; the map checks there is room.
