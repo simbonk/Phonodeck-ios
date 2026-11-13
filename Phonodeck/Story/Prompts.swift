@@ -105,22 +105,6 @@ enum Prompts {
 
     // MARK: The Game Master's plan (a short private step before each reply)
 
-    /// The web app's story model thinks before it writes (Gemini's reasoning). The phone model's own
-    /// thinking is off because it is unbounded and slow, so instead the Game Master writes a short,
-    /// capped plan first: it reviews the state, the clock, the goal and the recalled memories and
-    /// decides what this reply must do. The plan then leads the briefing for the reply itself.
-    static let gmPlan = """
-    You are the Game Master of an interactive audio story, planning your next reply in private before you write it. Read everything below carefully: the bible, the facts, your look-ahead from last turn, the clock, the recalled memories and the player's NEW MESSAGE at the very end. The earlier exchange is already answered: plan only for the new message. Your look-ahead was written before the player spoke: use it only if the player went along with it. What the player says they do always wins.
-    If the player goes somewhere or looks for someone, this reply shows them doing it: they travel, and they find people where the scene says those people are. Nobody who is elsewhere simply appears beside them.
-    Then output ONLY these five short lines, nothing else:
-    PLAYER: the NEW MESSAGE, restated faithfully with nothing added (a question stays a question; never invent the player's words, answers or feelings)
-    ANSWER: if they asked anything, the concrete, factual answer a character or the narration gives first (names, places, what happened); otherwise "none"
-    BEAT: the one thing that happens in this reply, and how it delivers the FEELING TO ACHIEVE and moves the story one step along the roadmap for this minute
-    WHO: where the player ends up in this reply and who is with them there, sitting or standing, with pronouns. Name only people who are with the player; leave out anyone who is somewhere else
-    USE: one thing already in the story to use (from the scene card or the recent turns); never a new object, gift or keepsake
-    Each line at most 30 words. Plain words, no prose for the player.
-    """
-
     /// The read, in two short questions that share one opening (so llama.cpp reads it once):
     /// where things stand and the player's new message, then the question.
     static let readIntro = "You help run an interactive audio story. Here is where things stand, then the player's new message, then one question for you."
@@ -409,13 +393,6 @@ enum Prompts {
     Make them surprising, specific to THIS story, and consistent with the bible, lore and history. "cast" is only the named characters (not the player, not people known only by their role); give each a real motivation, a secret and a next_move. No commentary, no markdown.
     """
 
-    static let showrunnerRevise = "You are UPDATING existing notes: drop secrets the player has now discovered, add fresh ones, update thread statuses, advance every next_move, and pick a new big_reveal only if the old one has happened. If PLAYER-SET FACTS are given, make every note agree with them."
-
-    static let showrunnerSimulator = "This is an EXPERIENCE with no plot: secrets are small delights to discover, threads are gentle background life, big_reveal is a lovely surprise rather than a twist, and the cast have modest, warm wants that make the place feel alive."
-
-    /// Rewrites the story bible so it stays current (the web app's refreshBible).
-    static let bibleRefresh = "Rewrite the story bible of an interactive story as a tight one-pager of at most 280 words, plain text, addressing the player character as \"you\": premise, tone, who you are, the cast, the setting, the current situation, the goal, and a short \"story so far\". Keep everything still relevant and compress old material. Keep every detail the player set by hand, even if unusual. Call anyone whose name the player has not learned yet only by their role; never write that name. Output only the bible."
-
     // MARK: Director (a fresh nudge each turn so replies don't settle into a formula)
 
     static let director: [String: String] = [
@@ -432,19 +409,6 @@ enum Prompts {
         "banter": "Give two characters a quick, funny exchange that lands a punchline.",
         "texture": "Add a grounded, slightly unglamorous real-world detail (money, fatigue, a local custom, gossip).",
     ]
-
-    static let disruptive: Set<String> = ["complication", "choice", "world"]
-
-    static let endings = [
-        "End on a vivid image or a line of dialogue that hangs in the air.",
-        "End with a pointed question from a character, not a menu of options.",
-        "End mid-motion, on a hook.",
-        "End with a quiet observation that invites the player to act.",
-        "End on an interruption: someone arrives or a message lands.",
-    ]
-
-    /// The ending nudge that brings someone or something new into the scene (not for calm scenes).
-    static let interruptingEnding = "End on an interruption: someone arrives or a message lands."
 
     // MARK: The set-up wizard
 

@@ -431,31 +431,6 @@ enum Continuity {
         return (he, she)
     }
 
-    /// A review's pronoun "fix" the reply doesn't need: it says someone is "she, not he" (or the
-    /// reverse) when the reply never called them the wrong one. Code checks pronouns itself, so a
-    /// claim it can't see in the text is a false alarm that would only confuse the next reply.
-    static func bogusPronounFix(_ fix: String, reply: String, cast: [String]) -> Bool {
-        let l = fix.lowercased()
-        guard l.range(of: #"\b(he|she|him|her|his|hers|pronouns?|man|woman|male|female)\b"#, options: .regularExpression) != nil else { return false }
-        let firsts = cast.map { $0.split(separator: " ").first.map(String.init) ?? $0 }
-        guard let person = cast.first(where: { n in
-            let f = n.split(separator: " ").first.map(String.init) ?? n
-            return fix.range(of: "\\b" + NSRegularExpression.escapedPattern(for: f) + "\\b", options: .regularExpression) != nil
-        }) else { return false }
-        // What the fix says is right: whichever of she/he (or woman/man) it names first.
-        let female = l.range(of: #"\b(she|her|woman|female)\b"#, options: .regularExpression)
-        let male = l.range(of: #"\b(he|him|his|man|male)\b"#, options: .regularExpression)
-        let claimsShe: Bool
-        switch (female, male) {
-        case let (f?, m?): claimsShe = f.lowerBound < m.lowerBound
-        case (_?, nil): claimsShe = true
-        case (nil, _?): claimsShe = false
-        default: return false
-        }
-        let c = pronounCounts(in: reply, for: person, others: firsts)
-        return (claimsShe ? c.he : c.she) == 0
-    }
-
     /// Whether a text names a place: every real word of the place's name appears in it
     /// ("Back Alley" needs both "back" and "alley").
     static func names(place: String, in text: String) -> Bool {
@@ -537,63 +512,7 @@ enum Continuity {
 
     // MARK: The review's shape
 
-    /// The keys a review must have to be any use, in the order the prompt asks for them.
-    static let reviewKeys = ["place", "left", "scene", "here", "people", "carrying", "things", "time", "timeline", "new_facts", "fixes", "feeling", "enjoying", "steps_done", "unanswered", "next"]
     static let requiredReviewKeys = ["scene", "people", "next"]
-
-    /// Puts a review's JSON into the shape the engine reads: lists that came back as one string are
-    /// split, strings that came back as lists are joined, and people given as {"name": "where"} or
-    /// "Name: where" become objects. Returns the keys still missing or empty.
-    static func normaliseReview(_ m: [String: Any]) -> (review: [String: Any], missing: [String]) {
-        var r = m
-        func sentences(_ s: String) -> [String] {
-            s.replacingOccurrences(of: #"([.!?;])\s+(?=[A-Z])"#, with: "$1\n", options: .regularExpression)
-                .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count > 3 }
-        }
-        // "here" as one string ("Walter, Dolores") becomes a list of names.
-        if let h = r["here"] as? String {
-            let t = h.trimmingCharacters(in: .whitespacesAndNewlines)
-            r["here"] = ["", "none", "[]", "n/a", "nobody", "no one", "alone"].contains(t.lowercased()) ? [String]()
-                : t.components(separatedBy: CharacterSet(charactersIn: ",;")).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        }
-        for k in ["facts", "new_facts", "fixes", "timeline", "carrying", "things", "steps_done"] {
-            if let s = r[k] as? String {
-                let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                r[k] = ["", "none", "[]", "n/a"].contains(t.lowercased()) ? [] : sentences(t)
-            } else if let list = r[k] as? [Any] {
-                r[k] = list.flatMap { item -> [String] in
-                    if let s = item as? String { return k.hasSuffix("facts") && s.count > 180 ? sentences(s) : [s] }
-                    if let d = item as? [String: Any] { return [d.values.compactMap { $0 as? String }.joined(separator: ": ")] }
-                    return []
-                }
-            }
-        }
-        for k in ["unanswered", "scene", "time", "next"] {
-            if let list = r[k] as? [Any] { r[k] = list.compactMap { $0 as? String }.joined(separator: " ") }
-            else if let d = r[k] as? [String: Any] { r[k] = d.values.compactMap { $0 as? String }.joined(separator: " ") }
-        }
-        if let d = r["people"] as? [String: Any] {
-            r["people"] = d.compactMap { pair -> [String: Any]? in
-                let (name, v) = pair
-                if let s = v as? String { return ["name": name, "where": s] }
-                if var o = v as? [String: Any] { o["name"] = o["name"] ?? name; return o }
-                return nil
-            }
-        } else if let list = r["people"] as? [Any] {
-            r["people"] = list.compactMap { item -> [String: Any]? in
-                if let o = item as? [String: Any] { return o }
-                guard let s = item as? String, let colon = s.firstIndex(of: ":") else { return nil }
-                return ["name": String(s[..<colon]).trimmingCharacters(in: .whitespaces),
-                        "where": String(s[s.index(after: colon)...]).trimmingCharacters(in: .whitespaces)]
-            }
-        }
-        let missing = requiredReviewKeys.filter { k in
-            if let s = r[k] as? String { return s.trimmingCharacters(in: .whitespacesAndNewlines).count < 4 }
-            if let l = r[k] as? [Any] { return l.isEmpty }
-            return true
-        }
-        return (r, missing)
-    }
 
     // MARK: The planner's input
 
@@ -604,14 +523,6 @@ enum Continuity {
         return Set(s.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "'" }).map(String.init).filter { $0.count > 1 && !small.contains($0) })
     }
 
-    /// True when a plan's PLAYER line is about the player's earlier message rather than the new one.
-    static func planIsStale(playerLine: String, input: String, previous: String) -> Bool {
-        let p = contentWords(playerLine)
-        guard p.count >= 2, !previous.isEmpty else { return false }
-        let toPrev = Double(p.intersection(contentWords(previous)).count) / Double(p.count)
-        let toNew = Double(p.intersection(contentWords(input)).count) / Double(p.count)
-        return toPrev >= 0.5 && toPrev > toNew + 0.2
-    }
 }
 
 /// Reads the reply sentence by sentence as it streams and leaves out what should not be there,

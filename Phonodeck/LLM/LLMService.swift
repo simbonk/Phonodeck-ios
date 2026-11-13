@@ -55,10 +55,6 @@ final class LLMService {
 
     init(store: ModelStore) { self.store = store }
 
-    /// Whether the storyteller can reason before it answers (Qwen's thinking mode through MLX).
-    /// GGUF models run through llama.cpp, where Phonodeck always turns thinking off.
-    var canReason: Bool { !(store.language?.isGGUF ?? false) }
-
     /// Memory the loaded model holds, for the fit checks.
     var loadedGB: Double { loadedID == nil ? 0 : store.neededGB(loadedID) }
 

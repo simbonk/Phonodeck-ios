@@ -48,62 +48,27 @@ struct StoryView: View {
         }
     }
 
-    // MARK: Header: title, the timer pill, World, menu, and a bar that fills as the session runs
+    // MARK: Header: title, World and the menu
 
     private func header(_ a: Adventure) -> some View {
-        TimelineView(.periodic(from: .now, by: 15)) { _ in
-            let left = Int((engine.secsLeft(a) / 60).rounded(.up))
-            let low = !a.ended && left <= 3
-            let color = low ? Theme.warn : Theme.accent
-            VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    Button { engine.close() } label: {
-                        Image(systemName: "chevron.left").font(.title3.weight(.semibold)).frame(width: 32, height: 36)
-                    }
-                    .accessibilityLabel("Menu")
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("PHONODECK").font(.caption.bold()).tracking(1.5).foregroundStyle(Theme.accent)
-                        Text(a.title).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
-                    }
-                    Spacer(minLength: 6)
-                    if !a.ended, !engine.grounded {
-                        HStack(spacing: 0) {
-                            HStack(spacing: 4) {
-                                Image(systemName: a.ended ? "checkmark.circle" : "timer").font(.subheadline.weight(.semibold))
-                                Text(a.ended ? "done" : "\(left) min").font(.subheadline.bold().monospacedDigit())
-                            }
-                            .lineLimit(1)
-                            .fixedSize()
-                            .padding(.horizontal, 9).padding(.vertical, 5)
-                            .accessibilityElement(children: .combine)
-                            .accessibilityLabel(a.ended ? "Complete" : "\(left) minutes left")
-                        }
-                        .foregroundStyle(color)
-                        .overlay(Capsule().stroke(color, lineWidth: 1.5))
-                        .clipShape(Capsule())
-                        .fixedSize()
-                        .layoutPriority(1)
-                    }
-                    Button { showWorld = true } label: {
-                        Image(systemName: "globe").font(.title3)
-                    }
-                    .accessibilityLabel("World")
-                    menu(a)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                if !engine.grounded {
-                GeometryReader { g in
-                    let f = a.ended ? 1 : max(0, min(1, 1 - Double(left) / Double(max(1, a.minutes))))
-                    ZStack(alignment: .leading) {
-                        Rectangle().fill(Theme.line)
-                        Rectangle().fill(color).frame(width: g.size.width * f)
-                    }
-                }
-                .frame(height: 3)
-                }
+        HStack(spacing: 10) {
+            Button { engine.close() } label: {
+                Image(systemName: "chevron.left").font(.title3.weight(.semibold)).frame(width: 32, height: 36)
             }
+            .accessibilityLabel("Menu")
+            VStack(alignment: .leading, spacing: 0) {
+                Text("PHONODECK").font(.caption.bold()).tracking(1.5).foregroundStyle(Theme.accent)
+                Text(a.title).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Button { showWorld = true } label: {
+                Image(systemName: "globe").font(.title3)
+            }
+            .accessibilityLabel("World")
+            menu(a)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private func menu(_ a: Adventure) -> some View {
@@ -264,14 +229,6 @@ struct StoryView: View {
                 // Names the step underway (the Game Master planning, then the storyteller writing).
                 Text((engine.stage.isEmpty ? "The Phonodeck is thinking" : engine.stage) + "… \(Int(ctx.date.timeIntervalSince(since)))s")
                     .font(.footnote.monospacedDigit()).foregroundStyle(Theme.dim)
-            }
-            // How far the Game Master's reasoning is toward its room to think.
-            if let p = engine.thinkingProgress, engine.stage.hasPrefix("The Game Master") {
-                ProgressView(value: p)
-                    .tint(Theme.accent)
-                    .frame(maxWidth: 220)
-                    .animation(.easeOut(duration: 0.3), value: p)
-                    .accessibilityLabel("Game Master reasoning")
             }
         }
         .frame(maxWidth: .infinity)

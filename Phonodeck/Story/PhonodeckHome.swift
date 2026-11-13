@@ -200,8 +200,7 @@ struct PhonodeckHome: View {
         let played = Int((a.elapsed / 60).rounded())
         // The date tells apart stories with the same title (a curated world played twice).
         if a.ended { return a.created.formatted(.dateTime.month(.abbreviated).day()) + " · \(max(1, played)) min" }
-        if app.engine.grounded { return "\(max(0, Int(a.elapsed / 60))) min played" }
-        return "\(max(0, a.minutes - Int(a.elapsed / 60))) min left"
+        return "\(max(0, Int(a.elapsed / 60))) min played"
     }
 
     private func timeSpoken(_ a: Adventure) -> String {
