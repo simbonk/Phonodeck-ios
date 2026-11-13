@@ -263,7 +263,14 @@ enum Placer {
         case .beside(let n):
             if let t = room.named(n) {
                 let mine = Set(t.cells)
-                return Array(Set(t.cells.flatMap { near($0, 1) })).filter { !mine.contains($0) }
+                let side = Array(Set(t.cells.flatMap { near($0, 1) })).filter { !mine.contains($0) }
+                // Beside a bar means the guests' side: the staff side stays for whoever works there.
+                if Rules.staffed.contains(t.icon) {
+                    let staff = Set(cells(.behind(n), in: room))
+                    let open = side.filter { !staff.contains($0) }
+                    return open.isEmpty ? side : open
+                }
+                return side
             }
             return all
         case .on(let n):
@@ -280,7 +287,10 @@ enum Placer {
             return side
         case .behind(let n):
             guard let t = room.named(n) else { return [] }
-            // The side of it that faces its nearest wall (the staff side of a bar).
+            // The long side of it that faces its nearest wall (the staff side of a bar), never
+            // its ends: someone behind a bar stands along it, between it and the wall.
+            let back = pad(x: t.x, y: t.y, w: t.w, d: t.d, space: "behind", room: room).filter { room.contains($0) }
+            if !back.isEmpty { return Array(back) }
             let mine = Set(t.cells)
             let side = Array(Set(t.cells.flatMap { near($0, 1) })).filter { !mine.contains($0) }
             func wallDist(_ c: Cell) -> Int { min(c.x, c.y, room.width - 1 - c.x, room.depth - 1 - c.y) }
@@ -301,7 +311,10 @@ enum Placer {
             sides = [(0, -1), (0, 1), (-1, 0), (1, 0)]
         } else {
             // The nearest wall decides which way is "behind".
-            let dN = y, dS = room.depth - (y + d), dW = x, dE = room.width - (x + w)
+            // A long thing's back is one of its long sides, never an end.
+            let big = 1 << 20
+            let dN = w < d ? big : y, dS = w < d ? big : room.depth - (y + d)
+            let dW = w > d ? big : x, dE = w > d ? big : room.width - (x + w)
             let m = min(dN, dS, dW, dE)
             let back: (Int, Int) = m == dN ? (0, -1) : m == dS ? (0, 1) : m == dW ? (-1, 0) : (1, 0)
             sides = [sp.contains("behind") ? back : (-back.0, -back.1)]
