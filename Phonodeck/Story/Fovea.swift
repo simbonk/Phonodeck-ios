@@ -307,8 +307,18 @@ enum Fovea {
         var l: [String] = ["[FOR THIS MOMENT: private, never mention it]", "WHEN AND WHERE: " + whenWhere(a)]
         let room = roomLine(a)
         if !room.isEmpty { l.append("THE ROOM: " + room) }
-        if arrived, let card = Cards.placeCard(a), !card.desc.isEmpty {
-            l.append("YOU JUST ARRIVED: " + clip(card.desc, 240) + " Bring it to life first.")
+        if arrived {
+            // Every new room is grounded first, always in this order: when, outside, inside.
+            let y = year(a)
+            let time = a.storyTime.isEmpty ? (a.clock.map { Continuity.clockText($0) } ?? "") : a.storyTime
+            let when = [y, time].filter { !$0.isEmpty }.joined(separator: ", ")
+            let r = a.room.flatMap { $0.name.caseInsensitiveCompare(a.location) == .orderedSame ? $0 : nil }
+            var g = "ARRIVING: ground the listener first, in this order, a sentence each: "
+            g += "1) the date and time" + (when.isEmpty ? "" : " (" + when + ")") + "; "
+            g += "2) what is happening outside" + ((r?.outside ?? "").isEmpty ? " (the weather, the street)" : " (" + clip(r!.outside, 120) + ")") + "; "
+            g += "3) what is happening inside " + (a.location.isEmpty ? "this place" : a.location) + ((r?.inside ?? "").isEmpty ? " (who is here and what they are doing)" : " (" + clip(r!.inside, 120) + ")") + ". Then the rest."
+            l.append(g)
+            if let card = Cards.placeCard(a), !card.desc.isEmpty { l.append("THE PLACE: " + clip(card.desc, 200)) }
         }
         let faced = facing(a)
         if faced.isEmpty {
