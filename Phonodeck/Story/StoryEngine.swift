@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z28"
+    static let build = "build 2026-11-13z29"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -4528,7 +4528,9 @@ extension StoryEngine {
 
         // Seats along a bar or counter: how many, the model says; the map fits what it can on the open side.
         for bar in r.objects where Rules.staffed.contains(bar.icon) && bar.on == nil {
-            let bq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: Customers sit at a bar on stools along its open side; most bars have three to six. How many stools line the " + Zone.short(bar.name) + " in this story (0 only if nobody could sit at it)?\nOutput ONLY one JSON object:\n{\"seats\":\"a number from 0 to 6\"}\nThe form:"
+            let atBar = Set(Placer.cells(.at(Zone.short(bar.name)), in: r, forPeople: true))
+            let already = r.objects.filter { Rules.seats.contains($0.icon) && atBar.contains(Cell(x: $0.x, y: $0.y)) }.count
+            let bq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: Customers sit at a bar on stools along its open side; most bars have three to six. There " + (already == 1 ? "is 1 stool" : "are \(already) stools") + " at the " + Zone.short(bar.name) + " so far. How many more stools does it need in this story (0 if that is enough)?\nOutput ONLY one JSON object:\n{\"seats\":\"a number from 0 to 6\"}\nThe form:"
             let bm = await ask("How many seats at the " + clip(Zone.short(bar.name), 30) + "?", bq, JSONGrammar.one("seats", from: ["0", "1", "2", "3", "4", "5", "6"]), 12)
             let want = min(Int(str(bm, "seats")) ?? 0, max(bar.w, bar.d) + 1)
             var got = 0
@@ -4536,7 +4538,7 @@ extension StoryEngine {
                 let stool = Thing(kind: .object, name: "stool", icon: "stool")
                 if Placer.place(&r, stool, zone: .at(Zone.short(bar.name))).placed { got += 1 } else { break }
             }
-            r.log.append("ask: seats at the " + Zone.short(bar.name) + " → \(want)" + (got < want ? " (room for \(got))" : ""))
+            r.log.append("ask: more stools at the " + Zone.short(bar.name) + "? → \(want)" + (already > 0 ? " (\(already) there already)" : "") + (got < want ? " (room for \(got))" : ""))
             if got > 0 { await show(r, pause: 0.2) }
         }
 
@@ -4654,6 +4656,27 @@ extension StoryEngine {
                     r.log.append(out.placed ? "place: " + t.name + " → beside " + name : "refuse: " + t.name + " beside " + name + " (" + out.reason + ")")
                 }
                 if !needs.isEmpty { await show(r, pause: 0.2) }
+                // What they have around them on that table or desk: their tools, a drink, a book.
+                if let p2 = r.thing(p.id), let surface = r.objects.filter({ Rules.surfaces.contains($0.icon) && $0.on == nil && !Rules.staffed.contains($0.icon) })
+                    .min(by: { RoomGrid.distance($0, p2) < RoomGrid.distance($1, p2) }), RoomGrid.distance(surface, p2) < 2.2 {
+                    let sq = base + "QUESTION: What small things does " + who + " have on the " + Zone.short(surface.name) + " beside them for what they are doing" + (doingNow.isEmpty ? "" : " (" + doingNow + ")") + ": their tools, a drink, a book? Up to 3, each a short name of a real object, or an empty list.\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
+                    let sm = await ask("What does " + Cards.first(name) + " have on the " + clip(Zone.short(surface.name), 30) + "?", sq, JSONGrammar.strings("things", max: 3, chars: 30), 60)
+                    let smalls = ((sm["things"] as? [Any]) ?? []).compactMap { $0 as? String }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count >= 3 && !Self.echoesPrompt($0) }
+                    for item in smalls.prefix(3) {
+                        let what = await Self.whatIs(item, noun: { q in
+                            let m = await ask("What object is " + clip(item, 40) + "?", base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
+                            return str(m, "object")
+                        }, yesNo: { q in
+                            let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                            let v = str(m, "answer").lowercased()
+                            return v.isEmpty ? nil : v.hasPrefix("y")
+                        })
+                        guard what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn") else { r.log.append("refuse: " + item + " (" + what + ")"); continue }
+                        let t = Thing(kind: .object, name: item, icon: "small")
+                        if Placer.place(&r, t, zone: .on(Zone.short(surface.name))).placed { r.log.append("place: " + item + " → on the " + Zone.short(surface.name)) }
+                    }
+                    if !smalls.isEmpty { await show(r, pause: 0.2) }
+                }
                 facing.append((p.id, faceSaid))
                 // Someone apart is not the one the player is dealing with yet.
                 if apart, var a = adventure, let k = a.whereabouts.firstIndex(where: { $0.name == name }) {
