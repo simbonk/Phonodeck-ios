@@ -36,7 +36,7 @@ struct RoomMapView: View {
             let room = a.rooms.first { $0.id == (shownID ?? here?.id) } ?? here ?? a.rooms[0]
             VStack(alignment: .leading, spacing: 8) {
                 header(a, room: room, here: here)
-                ticker(room)
+                ticker(a, room)
                 map(room, live: room.id == here?.id)
                     .onAppear { looks = Dictionary(room.things.map { ($0.id, $0.look) }, uniquingKeysWith: { a, _ in a }) }
                     .onChange(of: room.things.map(\.look)) { _, _ in spark(room) }
@@ -96,22 +96,67 @@ struct RoomMapView: View {
         }
     }
 
-    /// The question being asked right now, or the last decision about this room, flashing along the top.
-    @ViewBuilder
-    private func ticker(_ room: Room) -> some View {
-        let asking = app.engine.rebuildStep.isEmpty ? app.engine.stage : app.engine.rebuildStep
-        let line = asking.isEmpty ? (room.log.last ?? "") : asking
-        if !line.isEmpty {
-            HStack(spacing: 6) {
-                if !asking.isEmpty { HoloCore(size: 14) } else { Image(systemName: "sparkle").font(.caption2).foregroundStyle(Theme.accent) }
-                Text(Self.logText(line)).font(.caption).foregroundStyle(line.contains("refused") ? Color.red.opacity(0.9) : Theme.fg).lineLimit(1)
-                    .id(line)
-                    .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
-                Spacer(minLength: 0)
+    /// Everything that changes, scrolling along the top of the map: the room's recent decisions,
+    /// then this turn's questions with their answers and what they changed, then the question
+    /// being asked right now. The strip keeps itself scrolled to the newest line.
+    private func feed(_ a: Adventure, _ room: Room) -> [(text: String, kind: Int)] {
+        var out: [(text: String, kind: Int)] = room.log.suffix(8).map { (Self.logText($0), $0.hasPrefix("refuse") ? 2 : 0) }
+        if let f = a.frames.last {
+            for line in f.pre ?? [] { out.append((Continuity.unnamed(line, in: a), 1)) }
+            for (i, line) in f.asked.enumerated() {
+                out.append((Continuity.unnamed(line, in: a), 1))
+                if let steps = f.steps, steps.indices.contains(i) {
+                    for c in steps[i] { out.append((Continuity.unnamed(c, in: a), 0)) }
+                }
             }
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-            .animation(.snappy, value: line)
+            for c in f.changed where !out.contains(where: { $0.text == c }) { out.append((Continuity.unnamed(c, in: a), 0)) }
+        }
+        return out
+    }
+
+    @ViewBuilder
+    private func ticker(_ a: Adventure, _ room: Room) -> some View {
+        let asking = app.engine.rebuildStep.isEmpty ? app.engine.stage : app.engine.rebuildStep
+        let items = feed(a, room)
+        if !items.isEmpty || !asking.isEmpty {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { i, item in
+                            HStack(spacing: 4) {
+                                Image(systemName: item.kind == 1 ? "checkmark" : (item.kind == 2 ? "xmark" : "sparkle"))
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(item.kind == 2 ? Color.red.opacity(0.9) : (item.kind == 1 ? Theme.dim : Theme.accent))
+                                Text(item.text).font(.caption)
+                                    .foregroundStyle(item.kind == 2 ? Color.red.opacity(0.9) : Theme.fg)
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .background(Theme.accent.opacity(item.kind == 0 ? 0.12 : 0.06), in: Capsule())
+                            .id(i)
+                        }
+                        if !asking.isEmpty {
+                            HStack(spacing: 4) {
+                                HoloCore(size: 14)
+                                Text(Continuity.unnamed(asking, in: a)).font(.caption.bold()).foregroundStyle(Theme.accent).lineLimit(1)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .background(Theme.accent.opacity(0.15), in: Capsule())
+                            .id(-1)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.horizontal, 2)
+                }
+                .onAppear { proxy.scrollTo(asking.isEmpty ? items.count - 1 : -1, anchor: .trailing) }
+                .onChange(of: items.count) { _, n in
+                    withAnimation(.snappy) { proxy.scrollTo(asking.isEmpty ? n - 1 : -1, anchor: .trailing) }
+                }
+                .onChange(of: asking) { _, q in
+                    withAnimation(.snappy) { proxy.scrollTo(q.isEmpty ? items.count - 1 : -1, anchor: .trailing) }
+                }
+            }
+            .animation(.snappy, value: asking)
         }
     }
 
