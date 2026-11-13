@@ -292,10 +292,6 @@ struct WorldView: View {
                     person(p, a)
                     if let want = a.wants[p.name.lowercased()] { attr("Wants", Continuity.unnamed(want, in: a)) }
                     if let knows = a.knows[p.name.lowercased()], !knows.isEmpty { attr("Knows", knows.joined(separator: "; ")) }
-                    if let r = a.reaction[p.name.lowercased()], r.count == 2 {
-                        if !r[0].isEmpty { attr("Reacts", Continuity.unnamed(r[0], in: a)) }
-                        if !r[1].isEmpty { attr("Says", "“" + Continuity.unnamed(r[1], in: a) + "”") }
-                    }
                     Button("Edit") { editing = p }.font(.caption.bold()).padding(.top, 2)
                 }
             }
