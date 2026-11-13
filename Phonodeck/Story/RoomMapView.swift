@@ -220,7 +220,14 @@ struct RoomMapView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture { pt in
-                let c = Cell(x: Int((pt.x - ox) / s), y: Int((pt.y - oy) / s))
+                // A tap on or just beside a wall opens the room's own card.
+                let fx = (pt.x - ox) / s, fy = (pt.y - oy) / s
+                let w = CGFloat(room.width), d = CGFloat(room.depth), edge: CGFloat = 0.3
+                if fx > -1, fy > -1, fx < w + 1, fy < d + 1, fx < edge || fy < edge || fx > w - edge || fy > d - edge {
+                    pinRoom()
+                    return
+                }
+                let c = Cell(x: Int(fx), y: Int(fy))
                 guard room.contains(c) else { return }
                 let stack = room.stack(at: c)
                 if stack.count == 1 { pin(stack[0]) } else if stack.count > 1 { stackAt = StackPick(cell: c) }
@@ -460,6 +467,15 @@ struct RoomMapView: View {
         withAnimation(.snappy) { pinnedRaw = list.prefix(6).joined(separator: "|") }
     }
 
+    private static let roomKey = "#room"
+
+    /// The room's card: what's outside and the air inside. It stays as drawn unless the story says it changed.
+    private func pinRoom() {
+        var list = pinned.filter { $0 != Self.roomKey }
+        list.insert(Self.roomKey, at: 0)
+        withAnimation(.snappy) { pinnedRaw = list.prefix(6).joined(separator: "|") }
+    }
+
     private func unpin(_ k: String) {
         withAnimation(.snappy) { pinnedRaw = pinned.filter { $0 != k }.joined(separator: "|") }
     }
@@ -467,6 +483,9 @@ struct RoomMapView: View {
     @ViewBuilder
     private func pinnedCards(_ a: Adventure, _ room: Room) -> some View {
         let shown: [Thing] = pinned.compactMap { k in room.things.first { key($0) == k } }
+        if pinned.contains(Self.roomKey) {
+            roomCard(a, room).transition(.move(edge: .top).combined(with: .opacity))
+        }
         ForEach(shown) { t in
             thingCard(t, a, room)
                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -509,6 +528,30 @@ struct RoomMapView: View {
         .padding(10)
         .background(Theme.bg.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(lit.contains(t.id) ? Theme.accent : Theme.line))
+    }
+
+    private func roomCard(_ a: Adventure, _ room: Room) -> some View {
+        let doors = room.doors.map { ($0.leadsTo.isEmpty ? "a door" : "to " + $0.leadsTo) + " (" + $0.wall.rawValue + ")" }
+        let sound = room.sound.isEmpty ? (a.ambience[a.location.lowercased()] ?? "") : room.sound
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Image(systemName: "square.dashed").font(.caption).foregroundStyle(Theme.accent)
+                Text(room.name).font(.subheadline.bold()).foregroundStyle(Theme.fg).lineLimit(1)
+                Spacer(minLength: 0)
+                Button { unpin(Self.roomKey) } label: { Image(systemName: "xmark").font(.caption.bold()) }
+                    .foregroundStyle(Theme.dim)
+            }
+            .padding(.bottom, 3)
+            FlashRow(label: "Outside", value: room.outside, lines: 2)
+            FlashRow(label: "Inside", value: room.inside, lines: 2)
+            FlashRow(label: "Sounds", value: sound, lines: 2)
+            FlashRow(label: "Size", value: "\(room.width) × \(room.depth) m", lines: 1)
+            FlashRow(label: "Doors", value: doors.joined(separator: ", "), lines: 2)
+            if !room.windows.isEmpty { FlashRow(label: "Windows", value: "\(room.windows.count)", lines: 1) }
+        }
+        .padding(10)
+        .background(Theme.bg.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
     }
 
     /// Lights up whatever changed since last time, for a beat.
