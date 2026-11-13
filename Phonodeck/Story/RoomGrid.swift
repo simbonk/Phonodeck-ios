@@ -119,6 +119,8 @@ struct Room: Codable, Hashable, Identifiable {
     var things: [Thing] = []
     /// How the room was built and changed, one decision per line, for the map's ticker and replay.
     var log: [String] = []
+    /// Laid out by the room builder's questions (false: drawn from its template only, so far).
+    var built = false
 
     var people: [Thing] { things.filter(\.isPerson) }
     var objects: [Thing] { things.filter { !$0.isPerson } }

@@ -219,6 +219,70 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// The room builder, question 1: the shell of a room (its type, size, doors, windows, and what
+    /// is happening inside and outside).
+    static func roomShell(types: [String], sizes: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [
+                key("type") + " ty",
+                key("size") + " sz",
+                key("doors") + " doors",
+                key("windows") + " wins",
+                key("inside") + " s120",
+                key("outside") + " s120",
+            ].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("ty", types),
+            choice("sz", sizes),
+            choice("wall", ["north", "south", "east", "west"]),
+            #"doors ::= "[" ws door ( "," ws door ){0,2} ws "]""#,
+            "door ::= \"{\" ws " + key("wall") + " wall \",\" ws " + key("leads_to") + " s40 ws \"}\"",
+            #"wins ::= "[" ws ( win ( "," ws win )? )? ws "]""#,
+            "win ::= \"{\" ws " + key("wall") + " wall \",\" ws " + key("view") + " s60 ws \"}\"",
+            capped("s40", 40), capped("s60", 60), capped("s120", 120),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// The room builder, question 2: up to eight objects, each with a kind and a zone from the lists.
+    static func roomThings(kinds: [String], zones: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + key("things") + " things ws \"}\"",
+            #"things ::= "[" ws ( th ( "," ws th ){0,7} )? ws "]""#,
+            "th ::= \"{\" ws " + [key("name") + " s40", key("kind") + " kd", key("made_of") + " s40", key("where") + " zn"]
+                .joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("kd", kinds),
+            choice("zn", zones),
+            capped("s40", 40),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// The room builder, question 3: where each person is and who or what they face.
+    static func roomPeople(names: [String], zones: [String], faces: [String]) -> String {
+        let n = max(1, safe(names, max: 60).count)
+        return [
+            "root ::= \"{\" ws " + key("people") + " people ws \"}\"",
+            #"people ::= "[" ws ( pp ( "," ws pp ){0,\#(n - 1)} )? ws "]""#,
+            "pp ::= \"{\" ws " + [key("name") + " nm", key("where") + " zn", key("facing") + " fc"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("nm", names),
+            choice("zn", zones),
+            choice("fc", faces),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// The room builder's push-back: for each refused object ("1", "2", ...), a zone from its own
+    /// list of zones that keep the rules.
+    static func roomRetry(allowed: [[String]]) -> String {
+        var rules: [String] = []
+        var keys: [String] = []
+        for (i, zs) in allowed.enumerated() {
+            keys.append(key(String(i + 1)) + " z\(i + 1)")
+            rules.append(choice("z\(i + 1)", zs))
+        }
+        return (["root ::= \"{\" ws " + keys.joined(separator: " \",\" ws ") + " ws \"}\""] + rules + [common]).joined(separator: "\n")
+    }
+
     /// The foveated gate: a yes or no for each numbered card item, "1" to `n`, in order.
     static func gate(count n: Int) -> String {
         let keys = (1...max(1, n)).map { key(String($0)) + " yn" }

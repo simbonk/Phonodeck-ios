@@ -2122,6 +2122,10 @@ final class StoryEngine {
             if desc.count > 20 { now.lore[i].desc = clip(desc, 240); filed.append("Place card described: " + now.location) }
         }
 
+        // A room the story has just entered is laid out now, while the reply is read aloud.
+        await furnishRoom(story: (playerSaid.isEmpty ? "" : "THE PLAYER: " + clip(playerSaid, 300) + "\n") + "THE STORY: " + clip(reply, 900))
+        guard !Task.isCancelled else { return }
+
         // How long the moment took: the story clock moves by it (unless the player set the time).
         if start.clock != nil, !playerSaid.isEmpty, Continuity.statedTime(playerSaid, near: start.clock) == nil,
            Continuity.laterBy(playerSaid, clock: start.clock) == nil {
@@ -3920,3 +3924,214 @@ final class StoryEngine {
         dictation.vocabulary = a.cast.flatMap { $0.name.split(separator: " ").map(String.init) } + [a.location, a.playerName].filter { !$0.isEmpty }
     }
 }
+
+// MARK: - The room builder
+
+extension StoryEngine {
+    /// Lays out the room the player is in with the storyteller's help, if it has only been drawn
+    /// from its template so far: three short questions (the shell, the things, the people), each
+    /// held to a grammar so the model only picks from lists, then one push-back question for any
+    /// object whose spot broke a rule. Code places everything; every decision goes on the room's
+    /// log and shows on the map as it happens. Whatever the model can't answer comes from the template.
+    fileprivate func furnishRoom(story: String) async {
+        guard let a0 = adventure, let old = a0.room, !old.built else { return }
+        let roomID = old.id
+        let from: String = old.doors.first?.leadsTo ?? ""
+        let fromName = from == "outside" ? "" : from
+        defer { rebuildStep = "" }
+
+        /// Shows the room as it stands, so the map follows each decision.
+        func show(_ r: Room, pause: Double = 0.25) async {
+            guard var a = adventure, let i = a.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+            a.rooms[i] = r
+            adventure = a
+            if pause > 0 { try? await Task.sleep(for: .seconds(pause)) }
+        }
+        func ask(_ label: String, _ prompt: String, _ grammar: String, _ tokens: Int) async -> [String: Any] {
+            rebuildStep = label
+            let raw = (try? await llm.complete(system: nil, prompt: prompt,
+                                               options: .init(maxTokens: tokens, temperature: 0.3, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+            let plain = String(String.UnicodeScalarView(raw.unicodeScalars.filter { $0.value < 0x2E80 }))
+            return JSONExtract.object(plain) ?? Self.salvageJSON(plain)
+        }
+        func str(_ d: [String: Any], _ k: String) -> String { ((d[k] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        let about: String = Cards.placeCard(a0)?.desc ?? ""
+        var base = "You lay out a room for an audio story, as a top-down plan. Answer only from the lists given; be true to the story, its time and place."
+        base += "\n\nTHE ROOM: " + old.name
+        if !about.isEmpty { base += "\nWHAT IT IS LIKE: " + clip(about, 240) }
+        if !fromName.isEmpty { base += "\nTHE PLAYER CAME FROM: " + fromName }
+        let world = [a0.setup.world, a0.setup.place].filter { !$0.isEmpty }.joined(separator: ". ")
+        if !world.isEmpty { base += "\nTHE WORLD: " + clip(world, 200) }
+        base += "\n\n" + story + "\n\n"
+
+        // 1. The shell.
+        let sizeWords = RoomBuilder.sizes.map { "\($0.0) (\($0.1) by \($0.2) metres)" }
+        let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nThe form:"
+        let m1 = await ask("Building the room: walls, doors and windows", q1, JSONGrammar.roomShell(types: RoomBuilder.types, sizes: sizeWords), 260)
+        guard !Task.isCancelled else { return }
+        var type = str(m1, "type").lowercased()
+        if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: old.name + " " + about) }
+        let tp = RoomBuilder.template(type)
+        let sizeSaid = str(m1, "size")
+        var r = RoomBuilder.shell(name: old.name, type: type, size: sizeSaid.isEmpty ? tp.size : sizeSaid, from: from)
+        r.id = roomID
+        r.built = true
+        r.log = old.log
+        r.inside = Self.echoesPrompt(str(m1, "inside")) ? about : str(m1, "inside")
+        r.outside = Self.echoesPrompt(str(m1, "outside")) ? "" : str(m1, "outside")
+        // Doors and windows, spread along their walls so none overlap.
+        var used: [Wall: [Int]] = [:]
+        func slot(_ wall: Wall, width: Int) -> Int? {
+            let len = r.length(of: wall)
+            guard len >= width + 2 else { return nil }
+            let taken = used[wall] ?? []
+            let order = (1...(len - width - 1)).sorted { abs($0 - len / 2) < abs($1 - len / 2) }
+            for at in order where !(at..<(at + width)).contains(where: { i in taken.contains { abs($0 - i) <= 1 } }) {
+                used[wall, default: []] += Array(at..<(at + width))
+                return at
+            }
+            return nil
+        }
+        var doors: [Opening] = []
+        for d in ((m1["doors"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(3) {
+            guard let wall = Wall(rawValue: str(d, "wall").lowercased()), let at = slot(wall, width: 1) else { continue }
+            let to = Self.echoesPrompt(str(d, "leads_to")) ? "" : str(d, "leads_to")
+            doors.append(Opening(wall: wall, at: at, leadsTo: to))
+        }
+        if doors.isEmpty, let at = slot(.south, width: 1) { doors = [Opening(wall: .south, at: at, leadsTo: from.isEmpty ? "outside" : from)] }
+        if !from.isEmpty, !doors.isEmpty, !doors.contains(where: { $0.leadsTo.caseInsensitiveCompare(from) == .orderedSame }) { doors[0].leadsTo = from }
+        r.doors = doors
+        var windows: [Opening] = []
+        if !RoomBuilder.outdoor.contains(type) {
+            for w in ((m1["windows"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(2) {
+                guard let wall = Wall(rawValue: str(w, "wall").lowercased()), let at = slot(wall, width: 2) else { continue }
+                windows.append(Opening(wall: wall, at: at, width: 2, view: Self.echoesPrompt(str(w, "view")) ? "" : str(w, "view")))
+            }
+        }
+        r.windows = windows
+        r.log.append("shell: " + r.name + " (" + type + ", \(r.width) × \(r.depth) m, \(doors.count) door" + (doors.count == 1 ? "" : "s")
+                     + ", \(windows.count) window" + (windows.count == 1 ? "" : "s") + ")")
+        await show(r, pause: 0.6)
+
+        // 2. The things: the fixed zones, and beside or on each kind of furniture.
+        var zones = Zone.menu(r)
+        for k in ["bar", "counter", "table", "desk", "shelf", "piano", "fireplace", "bed", "sofa"] { zones.append("beside the " + k) }
+        for k in ["bar", "counter", "table", "desk", "shelf"] { zones.append("on the " + k) }
+        let q2 = base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres, doors on the " + doors.map(\.wall.rawValue).joined(separator: " and ")
+            + " wall" + (windows.isEmpty ? "" : ", windows on the " + windows.map(\.wall.rawValue).joined(separator: " and ") + " wall") + ".\n"
+            + "QUESTION: List up to 8 things in this room that the story shows or that a room like this would have: the big furniture first, then smaller things. For each: a short name in the story's words, its kind from the list, what it is made of, and where it goes in general.\nThe form:"
+        let m2 = await ask("Building the room: what is in it", q2, JSONGrammar.roomThings(kinds: Rules.kinds, zones: zones), 420)
+        guard !Task.isCancelled else { return }
+        let castNames = Set(a0.cast.map { $0.name.lowercased() })
+        var wanted: [(Thing, Zone)] = []
+        for d in ((m2["things"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }).prefix(8) {
+            let name = str(d, "name")
+            guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()),
+                  !wanted.contains(where: { $0.0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
+            var kind = str(d, "kind").lowercased()
+            if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: name) }
+            var t = Thing(kind: .object, name: name, icon: kind)
+            t.makeup = Self.echoesPrompt(str(d, "made_of")) ? "" : str(d, "made_of")
+            wanted.append((t, Zone.parse(str(d, "where")) ?? RoomBuilder.defaultZone(kind, in: r)))
+        }
+        // The template's centrepiece (a bar's bar, a bedroom's bed) is never left out.
+        if let lead = tp.pieces.first, !wanted.contains(where: { $0.0.icon == lead.icon }) {
+            wanted.insert((Thing(kind: .object, name: lead.name, icon: lead.icon), lead.zone), at: 0)
+        }
+        // Big furniture first, small things last, so "on the bar" has a bar to go on.
+        func rank(_ icon: String) -> Int {
+            let rule = Rules.rule(icon)
+            return rule.small ? 3 : (Rules.seats.contains(icon) || icon == "lamp" || icon == "plant") ? 2 : icon == "rug" ? 0 : 1
+        }
+        wanted.sort { rank($0.0.icon) < rank($1.0.icon) }
+        var refused: [(Thing, Zone, String)] = []
+        for (t, z) in wanted {
+            let out = Placer.place(&r, t, zone: z)
+            if out.placed {
+                r.log.append("place: " + t.name + " → " + z.text)
+            } else {
+                r.log.append("refuse: " + t.name + " " + z.text + " (" + out.reason + ")")
+                refused.append((t, z, out.reason))
+            }
+            await show(r)
+        }
+
+        // 3. Push back once: where else, from the zones that keep the rules.
+        var retry: [(Thing, Zone, [String])] = []
+        for (t, z, _) in refused {
+            let ok = Placer.allowed(t, in: r)
+            if ok.isEmpty { Placer.fallback(&r, t, near: z); r.log.append("move: " + t.name + " → nearest allowed spot") } else { retry.append((t, z, ok)) }
+        }
+        if !retry.isEmpty {
+            var q = base + "THE ROOM: \(r.width) by \(r.depth) metres. These things can't go where you said:\n"
+            for (i, x) in retry.enumerated() {
+                let why = refused.first { $0.0.id == x.0.id }?.2 ?? ""
+                q += "\(i + 1). " + x.0.name + ": not " + x.1.text + ", because " + why + ". Where else? Choose from: " + x.2.joined(separator: "; ") + "\n"
+            }
+            q += "QUESTION: For each number, pick where it goes instead.\nThe form:"
+            for x in retry { r.log.append("ask: where else for " + x.0.name + "?") }
+            await show(r, pause: 0.4)
+            let m3 = await ask("Building the room: where else?", q, JSONGrammar.roomRetry(allowed: retry.map(\.2)), 40 * retry.count + 20)
+            guard !Task.isCancelled else { return }
+            for (i, x) in retry.enumerated() {
+                let said = str(m3, String(i + 1))
+                if let z = Zone.parse(said), x.2.contains(said), Placer.place(&r, x.0, zone: z).placed {
+                    r.log.append("place: " + x.0.name + " → " + z.text)
+                } else {
+                    Placer.fallback(&r, x.0, near: x.1)
+                    r.log.append("move: " + x.0.name + " → nearest allowed spot")
+                }
+                await show(r)
+            }
+        }
+
+        // 4. The people: where each one is, and who or what they face.
+        let myFirst = Cards.first(a0.playerName).lowercased()
+        let here: [String] = (adventure ?? a0).whereabouts.filter { w in
+            let f = Cards.first(w.name).lowercased()
+            return w.here != false && !f.isEmpty && f != myFirst && f != "you"
+        }.map { w in Cards.card(for: w, in: a0)?.name ?? w.name }
+        let entry = RoomBuilder.entrance(r, from: from)
+        var me = old.player ?? Thing(kind: .player, name: a0.playerName.isEmpty ? "You" : a0.playerName)
+        me.x = entry.x; me.y = entry.y; me.on = nil
+        me.facing = Facing.toward(dx: r.width / 2 - entry.x, dy: r.depth / 2 - entry.y) ?? .n
+        Placer.put(&r, me)
+        if !here.isEmpty {
+            let pz = Zone.menu(r, people: true)
+            var faces: [String] = ["you", "the door"]
+            if !windows.isEmpty { faces.append("the window") }
+            faces += here
+            faces += Array(r.objects.filter { !Rules.rule($0.icon).small }.map(\.name).prefix(6))
+            let q4 = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ". The player has just come in by the door.\n"
+                + "QUESTION: For each person here (" + here.joined(separator: ", ") + "), where are they, and who or what are they facing?\nThe form:"
+            let m4 = await ask("Building the room: who is where", q4, JSONGrammar.roomPeople(names: here, zones: pz, faces: faces), 60 * here.count + 30)
+            guard !Task.isCancelled else { return }
+            var placed: Set<String> = []
+            var facing: [(UUID, String)] = []
+            for d in ((m4["people"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }) {
+                let name = str(d, "name")
+                guard here.contains(name), !placed.contains(name) else { continue }
+                placed.insert(name)
+                let z = Zone.parse(str(d, "where")) ?? .farCorner
+                var p = old.people.first { $0.name == name } ?? Thing(kind: .person, name: name)
+                p.id = old.people.first { $0.name == name }?.id ?? p.id
+                let note = Placer.placePerson(&r, p, zone: z)
+                r.log.append("enter: " + name + " " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
+                facing.append((p.id, str(d, "facing")))
+                await show(r)
+            }
+            for name in here where !placed.contains(name) {
+                let p = old.people.first { $0.name == name } ?? Thing(kind: .person, name: name)
+                Placer.placePerson(&r, p, zone: .farCorner)
+                facing.append((p.id, "you"))
+                r.log.append("enter: " + name)
+            }
+            for (id, f) in facing where !f.isEmpty { Placer.turn(&r, id, toward: f) }
+        }
+        r.log = Array(r.log.suffix(80))
+        await show(r, pause: 0)
+        if let a = adventure { library.save(a) }
+    }
+}
+
