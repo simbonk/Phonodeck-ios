@@ -703,6 +703,11 @@ final class StoryEngine {
         let here = Cards.props(a)
         if !here.isEmpty { out.append("- Props here: " + here.joined(separator: "; ")) }
         if !a.facts.isEmpty { out += ["", "## Facts on file (\(a.facts.count); each reply gets only the ones it needs)"] + a.facts.map { "- " + $0 } }
+        for r in a.rooms {
+            out += ["", "## Room: " + r.name + " (\(r.type), \(r.width) × \(r.depth) m" + (r.id == a.roomID ? ", you are here" : "") + ")",
+                    "```", RoomGrid.ascii(r), "```"]
+            if !r.log.isEmpty { out += ["How it was built and changed:"] + r.log.suffix(30).map { "- " + RoomMapView.logText($0) } }
+        }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
         for t in a.transcript {
@@ -776,7 +781,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z8"
+    static let build = "build 2026-11-13z9"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2249,16 +2254,66 @@ final class StoryEngine {
             guard f != me, f != "you", let c = Cards.card(for: w, in: mid), Cards.mentions(c, in: reply) else { continue }
             inView.append(c)
         }
+        // Each of them on the grid: what they are doing, their expression, what they hold, where
+        // they are and what they face. One question each, only for people the moment shows (the
+        // rest were out of view, so nothing the player saw could have changed them).
+        let gridNow: Room? = mid.room
+        let personZones: [String] = gridNow.map { Zone.menu($0, people: true) } ?? []
+        var faceList: [String] = ["you", "the door"]
+        if let g = gridNow {
+            if !g.windows.isEmpty { faceList.append("the window") }
+            faceList += g.people.filter { $0.kind == .person }.map(\.name)
+            faceList += Array(g.objects.filter { !Rules.rule($0.icon).small && $0.icon != "rug" }.map(\.name).prefix(6))
+        }
         for c in inView.prefix(3) {
-            let dm = await ask("What is " + c.name + " doing?", Prompts.rebuildDoing(c.name + roleOf(c)), JSONGrammar.text("doing", chars: 80), 40)
-            guard dm != nil else { return }
-            let doing = (dm?["doing"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard doing.count > 3, !Self.echoesPrompt(doing) else { continue }
-            asked.append(c.name + " doing? → " + doing)
+            let q = "THE PLACES: " + (["stays put"] + personZones).joined(separator: "; ") + "\nTHE FACES: " + faceList.joined(separator: "; ")
+                + "\n\nAbout " + c.name + roleOf(c) + " at the end of the moment, only as the story shows it. Output ONLY one JSON object:\n{\"doing\":\"what they are doing, a few words\",\"expression\":\"their expression, a few words\",\"holding\":\"what they hold, or nothing\",\"where\":\"one of THE PLACES; stays put if they didn't move\",\"facing\":\"one of THE FACES\"}\nThe form:"
+            let dm = await ask(c.name + " now?", q, JSONGrammar.personNow(zones: personZones, faces: faceList), 110)
+            guard let dm else { return }
+            func field(_ k: String) -> String {
+                let v = ((dm[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+                return v.count > 2 && !Self.echoesPrompt(v) && !["nothing", "none", "n/a"].contains(v.lowercased()) ? v : ""
+            }
+            let doing = field("doing")
+            let face = field("expression")
+            let holds = field("holding")
+            let whereSaid = field("where")
+            let facingSaid = field("facing")
+            asked.append(c.name + " now? → " + [doing, face, whereSaid == "stays put" ? "" : whereSaid, facingSaid.isEmpty ? "" : "facing " + facingSaid]
+                .filter { !$0.isEmpty }.joined(separator: "; "))
             commit { now in
-                guard let i = now.whereabouts.firstIndex(where: { Cards.card(for: $0, in: now)?.id == c.id }), now.whereabouts[i].here != false else { return }
-                if now.whereabouts[i].doing.caseInsensitiveCompare(doing) != .orderedSame { filed.append(c.name + " now: " + doing) }
-                now.whereabouts[i].doing = clip(doing, 100)
+                if !doing.isEmpty, let i = now.whereabouts.firstIndex(where: { Cards.card(for: $0, in: now)?.id == c.id }), now.whereabouts[i].here != false {
+                    if now.whereabouts[i].doing.caseInsensitiveCompare(doing) != .orderedSame { filed.append(c.name + " now: " + doing) }
+                    now.whereabouts[i].doing = clip(doing, 100)
+                }
+                guard var r = now.room, let t = r.named(c.name), t.isPerson else { return }
+                var p = t
+                if !face.isEmpty, face != p.expression { p.expression = clip(face, 60); filed.append(c.name + " looks: " + face) }
+                p.holding = holds.isEmpty ? [] : [clip(holds, 50)]
+                if !doing.isEmpty { p.doing = clip(doing, 100) }
+                Placer.put(&r, p)
+                if !whereSaid.isEmpty, whereSaid != "stays put", let z = Zone.parse(whereSaid) {
+                    let note = Placer.placePerson(&r, p, zone: z)
+                    r.log.append("move: " + c.name + " → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
+                    if let moved = r.thing(p.id) { r.things[r.index(p.id)!].pastMoves = [z.text] + Array(moved.pastMoves.prefix(7)) }
+                    filed.append(c.name + " moves " + z.text)
+                }
+                if !facingSaid.isEmpty {
+                    let before = r.thing(p.id)?.facing
+                    Placer.turn(&r, p.id, toward: facingSaid)
+                    if r.thing(p.id)?.facing != before { r.log.append("turn: " + c.name + " to " + facingSaid) }
+                }
+                now.room = r
+            }
+        }
+
+        // What the person facing the player said, kept with them, word for word (code, no question).
+        let lines: [String] = Self.quotes(in: reply)
+        if let speaker = mid.whereabouts.first(where: { $0.here != false && $0.engaged == true }).flatMap({ Cards.card(for: $0, in: mid) }), !lines.isEmpty {
+            commit { now in
+                guard var r = now.room, let t = r.named(speaker.name), let i = r.index(t.id) else { return }
+                r.things[i].dialogue = Array((r.things[i].dialogue + lines.map { clip($0, 160) }).suffix(8))
+                now.room = r
             }
         }
 
@@ -2332,17 +2387,36 @@ final class StoryEngine {
             }
         }
 
-        // Where the player is in the place, and how close to whoever they are with.
-        let sm = await ask("Where are you in the room?", Prompts.rebuildSpot, JSONGrammar.text("spot", chars: 80), 40)
-        guard sm != nil else { return }
-        let spotSaid = ((sm?["spot"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
-        var spot: String = ""
-        if spotSaid.count > 3, !Self.echoesPrompt(spotSaid), spotSaid.range(of: #"(?i)\b(the player|from you|away from you)\b"#, options: .regularExpression) == nil { spot = checked([spotSaid], share: 0.5).first ?? "" }
-        asked.append("Where are you in the room? → " + (spot.isEmpty ? "not shown" : spot))
-        commit { now in
-            if !spot.isEmpty, now.spot.caseInsensitiveCompare(spot) != .orderedSame { filed.append("You are now: " + spot) }
-            if !spot.isEmpty { now.spot = clip(spot, 90) }
-            else if now.location.caseInsensitiveCompare(start.location) != .orderedSame { now.spot = "" }
+        // Where the player is in the room now, and which way they face: picked from the grid's places.
+        if let g = adventure?.room, g.player != nil {
+            let zs = Zone.menu(g, people: true)
+            var fl: [String] = ["the door"]
+            if !g.windows.isEmpty { fl.append("the window") }
+            fl += g.people.filter { $0.kind == .person }.map(\.name)
+            fl += Array(g.objects.filter { !Rules.rule($0.icon).small && $0.icon != "rug" }.map(\.name).prefix(6))
+            let q = "THE PLACES: " + (["stays put"] + zs).joined(separator: "; ") + "\nTHE FACES: " + fl.joined(separator: "; ")
+                + "\n\nWhere is the player at the end of the moment, and who or what are they facing? Only what the story shows. Output ONLY one JSON object:\n{\"where\":\"one of THE PLACES; stays put if they didn't move\",\"facing\":\"one of THE FACES\"}\nThe form:"
+            let sm = await ask("Where are you in the room?", q, JSONGrammar.playerNow(zones: zs, faces: fl), 50)
+            guard let sm else { return }
+            let whereSaid = ((sm["where"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+            let facingSaid = ((sm["facing"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
+            asked.append("Where are you in the room? → " + whereSaid + (facingSaid.isEmpty ? "" : ", facing " + facingSaid))
+            commit { now in
+                guard var r = now.room, let me = r.player else { return }
+                if whereSaid != "stays put", let z = Zone.parse(whereSaid) {
+                    Placer.placePerson(&r, me, zone: z)
+                    r.log.append("move: you → " + z.text)
+                    let spot: String
+                    switch z {
+                    case .on(let n): spot = "on " + Fovea.bare(n)
+                    default: spot = z.text
+                    }
+                    if now.spot.caseInsensitiveCompare(spot) != .orderedSame { filed.append("You are now: " + spot) }
+                    now.spot = spot
+                }
+                if !facingSaid.isEmpty { Placer.turn(&r, me.id, toward: facingSaid) }
+                now.room = r
+            }
         }
 
         // 4. What does the player have? New things are added; a thing leaves only when the moment
@@ -3194,6 +3268,17 @@ final class StoryEngine {
 
     /// A cautious token count (about 3.5 bytes a token), for planning a prompt before it is tokenised.
     /// LLMService checks the real count and trims if this ever guesses low.
+    /// The quoted lines in a reply, in order ("..." and “...”).
+    static func quotes(in s: String) -> [String] {
+        var out: [String] = []
+        let pattern = #"[\"“]([^\"“”]{3,240})[\"”]"#
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+        for m in re.matches(in: s, range: NSRange(s.startIndex..., in: s)) {
+            if let r = Range(m.range(at: 1), in: s) { out.append(String(s[r]).trimmingCharacters(in: .whitespaces)) }
+        }
+        return out
+    }
+
     static func tokens(_ s: String) -> Int { Int(Double(s.utf8.count) / LLMService.bytesPerToken) + 1 }
 
     /// Strips things small models sometimes add: headings, "GM:" prefixes, trailing option lists.
@@ -3967,7 +4052,7 @@ extension StoryEngine {
 
         // 1. The shell.
         let sizeWords = RoomBuilder.sizes.map { "\($0.0) (\($0.1) by \($0.2) metres)" }
-        let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nThe form:"
+        let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nSIZES: " + sizeWords.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"size\":\"one of SIZES\",\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
         let m1 = await ask("Building the room: walls, doors and windows", q1, JSONGrammar.roomShell(types: RoomBuilder.types, sizes: sizeWords), 260)
         guard !Task.isCancelled else { return }
         var type = str(m1, "type").lowercased()
@@ -4020,7 +4105,7 @@ extension StoryEngine {
         for k in ["bar", "counter", "table", "desk", "shelf"] { zones.append("on the " + k) }
         let q2 = base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres, doors on the " + doors.map(\.wall.rawValue).joined(separator: " and ")
             + " wall" + (windows.isEmpty ? "" : ", windows on the " + windows.map(\.wall.rawValue).joined(separator: " and ") + " wall") + ".\n"
-            + "QUESTION: List up to 8 things in this room that the story shows or that a room like this would have: the big furniture first, then smaller things. For each: a short name in the story's words, its kind from the list, what it is made of, and where it goes in general.\nThe form:"
+            + "QUESTION: List up to 8 things in this room that the story shows or that a room like this would have: the big furniture first, then smaller things. For each: a short name in the story's words, its kind from KINDS, what it is made of, and where it goes in general from PLACES.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nPLACES: " + zones.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"where\":\"one of PLACES\"}]}\nThe form:"
         let m2 = await ask("Building the room: what is in it", q2, JSONGrammar.roomThings(kinds: Rules.kinds, zones: zones), 420)
         guard !Task.isCancelled else { return }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
@@ -4069,7 +4154,7 @@ extension StoryEngine {
                 let why = refused.first { $0.0.id == x.0.id }?.2 ?? ""
                 q += "\(i + 1). " + x.0.name + ": not " + x.1.text + ", because " + why + ". Where else? Choose from: " + x.2.joined(separator: "; ") + "\n"
             }
-            q += "QUESTION: For each number, pick where it goes instead.\nThe form:"
+            q += "QUESTION: For each number, pick where it goes instead, from its own list. Output ONLY one JSON object, e.g. {\"1\":\"by the north wall\"}\nThe form:"
             for x in retry { r.log.append("ask: where else for " + x.0.name + "?") }
             await show(r, pause: 0.4)
             let m3 = await ask("Building the room: where else?", q, JSONGrammar.roomRetry(allowed: retry.map(\.2)), 40 * retry.count + 20)
@@ -4104,7 +4189,8 @@ extension StoryEngine {
             faces += here
             faces += Array(r.objects.filter { !Rules.rule($0.icon).small }.map(\.name).prefix(6))
             let q4 = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ". The player has just come in by the door.\n"
-                + "QUESTION: For each person here (" + here.joined(separator: ", ") + "), where are they, and who or what are they facing?\nThe form:"
+                + "PLACES: " + pz.joined(separator: "; ") + "\nFACES: " + faces.joined(separator: "; ") + "\n"
+                + "QUESTION: For each person here (" + here.joined(separator: ", ") + "), where are they, and who or what are they facing? Output ONLY one JSON object:\n{\"people\":[{\"name\":\"their name\",\"where\":\"one of PLACES\",\"facing\":\"one of FACES\"}]}\nThe form:"
             let m4 = await ask("Building the room: who is where", q4, JSONGrammar.roomPeople(names: here, zones: pz, faces: faces), 60 * here.count + 30)
             guard !Task.isCancelled else { return }
             var placed: Set<String> = []

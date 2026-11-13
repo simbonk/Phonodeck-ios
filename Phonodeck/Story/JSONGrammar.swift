@@ -271,6 +271,29 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// After a reply: one person in view, as the moment leaves them (what they are doing, their
+    /// expression, what they hold, where they are and what they face, the last two from lists).
+    static func personNow(zones: [String], faces: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [key("doing") + " s80", key("expression") + " s40", key("holding") + " s40",
+                                   key("where") + " zn", key("facing") + " fc"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("zn", ["stays put"] + zones),
+            choice("fc", faces),
+            capped("s80", 80), capped("s40", 40),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// After a reply: where the player is now in the room, and what they face.
+    static func playerNow(zones: [String], faces: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + key("where") + " zn \",\" ws " + key("facing") + " fc ws \"}\"",
+            choice("zn", ["stays put"] + zones),
+            choice("fc", faces),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// The room builder's push-back: for each refused object ("1", "2", ...), a zone from its own
     /// list of zones that keep the rules.
     static func roomRetry(allowed: [[String]]) -> String {
