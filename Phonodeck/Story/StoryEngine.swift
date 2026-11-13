@@ -42,6 +42,17 @@ final class StoryEngine {
 
     /// Names learned this turn, for the world check.
     private var namesThisTurn: [String] = []
+    /// Every small question put to the model, in order, for the export: "[turn 2 · rebuild] Where are you now? → {...} (1.3s)".
+    @ObservationIgnored private var questionLog: [String] = []
+    @ObservationIgnored private var questionLogFor: UUID?
+    private func noteQ(_ phase: String, _ label: String, _ raw: String, since t0: Date) {
+        guard let a = adventure else { return }
+        if questionLogFor != a.id { questionLog = []; questionLogFor = a.id }
+        let ans = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        questionLog.append("[turn \(a.playerTurns) · " + phase + "] " + label + " → " + clip(ans.isEmpty ? "(no answer)" : ans, 180) + String(format: " (%.1fs)", Date().timeIntervalSince(t0)))
+        if questionLog.count > 900 { questionLog.removeFirst(questionLog.count - 900) }
+    }
+
     /// What the player put down or gave away this turn: the rebuild doesn't put it back in their hands.
     private var putDownThisTurn: [String] = []
     /// The look heard the player move within the room this turn ("I walk over to Dolores").
@@ -702,6 +713,17 @@ final class StoryEngine {
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
         out.append("Foveated story (read, yes/no pass, paint, lean rebuild) · " + Self.build)
+        let qs: [String] = questionLogFor == a.id ? questionLog : []
+        if !qs.isEmpty {
+            var perTurn: [String: Int] = [:]
+            var order: [String] = []
+            for q in qs {
+                let k = String(q.prefix { $0 != "·" }).replacingOccurrences(of: "[", with: "").trimmingCharacters(in: .whitespaces)
+                if perTurn[k] == nil { order.append(k) }
+                perTurn[k, default: 0] += 1
+            }
+            out.append("Questions asked this session: \(qs.count) (" + order.map { $0 + ": \(perTurn[$0] ?? 0)" }.joined(separator: ", ") + "); every one is listed at the end")
+        }
         out += ["", "## Premise (the storyteller's only standing view of the story)", Cards.premise(a)]
         out += ["", "## The world the app holds"]
         let names = a.nameless
@@ -740,6 +762,7 @@ final class StoryEngine {
             if let b = t.after, !b.isEmpty { out += [b, ""] }
             if prompts, let p = t.prompt, !p.isEmpty { out += ["PROMPT SENT FOR THIS REPLY:", "<<<", p, ">>>", ""] }
         }
+        if !qs.isEmpty { out += ["", "## Every question asked, in order (\(qs.count))"] + qs.enumerated().map { "\($0.offset + 1). " + $0.element } }
         return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -804,7 +827,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z38"
+    static let build = "build 2026-11-13z39"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -893,8 +916,10 @@ final class StoryEngine {
         let goal: String = a.setup.goal.isEmpty ? "" : "\nWHAT THE PLAYER CAME FOR: " + clip(a.setup.goal, 200)
         let prompt = context + goal + "\n\n" + Prompts.lookQuestion + "\nThe form:"
         let grammar = JSONGrammar.look(cast: cast, places: places, cards: menu, people: cast)
+        let q0 = Date()
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
                                              options: .init(maxTokens: 300, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+        noteQ("turn", "What did the player do? (the look)", reply, since: q0)
         guard let m = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !m.isEmpty else { return nil }
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         var read = PlayerRead()
@@ -937,8 +962,10 @@ final class StoryEngine {
         prompt += "\n\n" + Prompts.planQuestion
         if asked { prompt += "\nTHE PLAYER ASKED SOMETHING: \"answer\" must not be empty. Give the real answer, plainly: a reason, a yes or no, a name, a number. It is what the person asked would say, about what the story already shows (what they are doing, what is around), true to the time and place." }
         prompt += "\nThe form:"
+        let q0 = Date()
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
                                              options: .init(maxTokens: 200, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.plan(asked: asked)))) ?? ""
+        noteQ("turn", "The plan", reply, since: q0)
         let m = JSONExtract.object(reply) ?? Self.salvageJSON(reply)
         func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
         read.answer = Self.echoesPrompt(s("answer")) || Self.outOfTime(s("answer"), a) ? "" : clip(s("answer"), 260)
@@ -947,8 +974,10 @@ final class StoryEngine {
         if asked, read.answer.count < 6 || Self.vagueAnswer(read.answer) {
             let q: String = prompt.components(separatedBy: Prompts.planQuestion).first ?? context
             let ask: String = q + "\n\nQUESTION: The player asked: \"" + clip(input, 300) + "\". What plain, concrete answer does the person they asked give, in one short sentence? Never vague, never a riddle, never the player's own words. {\"answer\":\"one short sentence\"}\nThe form:"
+            let q0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: ask,
                                                options: .init(maxTokens: 80, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.text("answer", chars: 200)))) ?? ""
+            noteQ("turn", "What is the answer?", raw, since: q0)
             let am = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
             let got: String = ((am["answer"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if got.count >= 6, !Self.echoesPrompt(got), !Self.vagueAnswer(got), !Self.outOfTime(got, a) { read.answer = clip(got, 260) }
@@ -1519,9 +1548,11 @@ final class StoryEngine {
         if !hidden, !playerNarrates, input.range(of: arrival, options: .regularExpression) != nil {
             stage = "Is someone new coming in?"
             lapFrom = Date()
+            let q0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: context + "\n\n" + Prompts.newcomer + "\nThe form:",
                                                options: .init(maxTokens: 70, temperature: 0.2, repetitionPenalty: 1.1,
                                                               grammar: JSONGrammar.yesNo("new", then: "name", 30, and: "role", 60)))) ?? ""
+            noteQ("turn", "Is someone new coming in?", raw, since: q0)
             guard !Task.isCancelled else { adventure = snapshot; return }
             lap("someone new")
             let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
@@ -1553,8 +1584,10 @@ final class StoryEngine {
             let have: String = a.carrying.isEmpty ? "nothing in particular" : a.carrying.joined(separator: "; ")
             let props: String = Cards.props(a).prefix(8).joined(separator: "; ")
             let q: String = context + "\n\nTHE PLAYER HAS: " + have + "\nAROUND THEM: " + (props.isEmpty ? "nothing notable" : props) + "\n\n" + Prompts.canDo + "\nThe form:"
+            let q0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: q,
                                                options: .init(maxTokens: 50, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.yesNo("can", then: "missing", chars: 60)))) ?? ""
+            noteQ("turn", "Could you do that?", raw, since: q0)
             guard !Task.isCancelled else { adventure = snapshot; return }
             lap("could you do that")
             let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
@@ -1665,9 +1698,11 @@ final class StoryEngine {
                     intent.takes = r.takes; intent.putsDown = r.putsDown; intent.tells = r.tells
                 }
                 let ask: String = Fovea.gatePrompt(a, input: input, intent: Fovea.intent(intent), lastReply: lastGMBefore, items: items)
+                let q0 = Date()
                 let raw = (try? await llm.complete(system: nil, prompt: ask,
                                                    options: .init(maxTokens: 12 + items.count * 9, temperature: 0.1, repetitionPenalty: 1.0,
                                                                   grammar: JSONGrammar.gate(count: items.count)))) ?? ""
+                noteQ("turn", "Which cards does the reply need? (yes/no pass)", raw, since: q0)
                 guard !Task.isCancelled else { adventure = snapshot; return }
                 let m: [String: Any] = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
                 keep = Fovea.chosen(items, answer: m, input: input)
@@ -2065,8 +2100,10 @@ final class StoryEngine {
             }
             rebuildStep = label
             let t0 = Date()
+            let q0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: base + question,
                                                options: .init(maxTokens: tokens, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+            noteQ("rebuild", label, raw, since: q0)
             let took: String = String(format: "%.1fs", Date().timeIntervalSince(t0))
             times.append(label + " " + took)
             guard !Task.isCancelled else { return nil }
@@ -2957,7 +2994,9 @@ final class StoryEngine {
         func ask(_ label: String, _ q: String, _ grammar: String, _ tokens: Int) async -> [String: Any] {
             guard !Task.isCancelled else { return [:] }
             stage = label
+            let q0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: ctx + q, options: .init(maxTokens: tokens, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+            noteQ("plan", label, raw, since: q0)
             return JSONExtract.object(raw) ?? Self.salvageJSON(raw)
         }
         func yes(_ label: String, _ q: String) async -> Bool? {
@@ -3301,8 +3340,10 @@ final class StoryEngine {
         }
         if !hint.isEmpty { prompt += "\nKNOWN ABOUT IT (keep to this): " + clip(hint, 400) }
         prompt += "\n\n" + Prompts.buildPlace
+        let q0 = Date()
         let raw = (try? await llm.complete(system: nil, prompt: prompt,
                                            options: .init(maxTokens: 200, temperature: 0.6, repetitionPenalty: 1.1, grammar: JSONGrammar.place))) ?? ""
+        noteQ("place", "Describe the place", raw, since: q0)
         let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
         let desc = ((m["desc"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let offered: [String] = ((m["things"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -3365,8 +3406,10 @@ final class StoryEngine {
         prompt += "\nPEOPLE LEFT HERE: " + (left.isEmpty ? "(nobody)" : left.joined(separator: "; "))
         prompt += "\nTIME AWAY: the player has been elsewhere for \(gap) turns of the story" + timeLine
         prompt += "\n\n" + Prompts.awayQuestion
+        let q0 = Date()
         let raw = (try? await llm.complete(system: nil, prompt: prompt,
                                            options: .init(maxTokens: 120, temperature: 0.4, repetitionPenalty: 1.1, grammar: JSONGrammar.away(people: left)))) ?? ""
+        noteQ("place", "While you were away", raw, since: q0)
         let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
         guard !m.isEmpty else { return turned.isEmpty ? [] : [turned] }
         let still = ((m["still_here"] as? [Any]) ?? []).compactMap { $0 as? String }
@@ -4430,8 +4473,10 @@ extension StoryEngine {
         }
         func ask(_ label: String, _ prompt: String, _ grammar: String, _ tokens: Int) async -> [String: Any] {
             rebuildStep = label
+            let q0 = Date()
             let raw = (try? await llm.complete(system: nil, prompt: prompt,
                                                options: .init(maxTokens: tokens, temperature: 0.3, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+            noteQ("room", label, raw, since: q0)
             let plain = String(String.UnicodeScalarView(raw.unicodeScalars.filter { $0.value < 0x2E80 }))
             return JSONExtract.object(plain) ?? Self.salvageJSON(plain)
         }
