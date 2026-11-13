@@ -4079,16 +4079,21 @@ extension StoryEngine {
         base += "\n\n" + story + "\n\n"
 
         // 1. The shell.
-        let sizeWords = RoomBuilder.sizes.map { "\($0.0), \($0.1) by \($0.2) metres" }
-        let q1 = base + "QUESTION: What is this room's type, and its size? List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nSIZES: " + sizeWords.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"size\":\"one of SIZES\",\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
-        let m1 = await ask("Building the room: walls, doors and windows", q1, JSONGrammar.roomShell(types: RoomBuilder.types, sizes: sizeWords), 260)
+        let q1 = base + "QUESTION: What is this room's type, and how big would a real one like it be, in metres (true to its time and place: a 1920s speakeasy, a ship's cabin, a cathedral)? Width is west to east, depth is north to south. List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"width\":9,\"depth\":7,\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
+        let m1 = await ask("How big is this room, in metres?", q1, JSONGrammar.roomShell(types: RoomBuilder.types), 260)
         guard !Task.isCancelled else { return }
         var type = str(m1, "type").lowercased()
         if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: placeName + " " + about) }
         let tp = RoomBuilder.template(type)
-        let sizeSaid = str(m1, "size")
+        func metres(_ k: String) -> Int? {
+            if let n = m1[k] as? Int { return n }
+            if let n = m1[k] as? Double { return Int(n.rounded()) }
+            return Int(str(m1, k).filter(\.isNumber))
+        }
+        let said: (Int, Int)? = metres("width").flatMap { w in metres("depth").map { (w, $0) } }
         let crowd = 1 + a0.whereabouts.filter { $0.here != false }.count + 6
-        var r = RoomBuilder.shell(name: placeName, type: type, size: sizeSaid.isEmpty ? tp.size : sizeSaid, from: from, crowd: crowd)
+        var r = RoomBuilder.shell(name: placeName, type: type, size: tp.size, from: from, crowd: crowd, metres: said)
+        if let said { r.log.append("size: the model said \(said.0) × \(said.1) m; drawn \(r.width) × \(r.depth) m") }
         r.id = roomID
         r.built = true
         r.inside = Self.echoesPrompt(str(m1, "inside")) ? about : str(m1, "inside")

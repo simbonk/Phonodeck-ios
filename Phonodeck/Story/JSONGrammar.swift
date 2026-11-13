@@ -221,18 +221,19 @@ enum JSONGrammar {
 
     /// The room builder, question 1: the shell of a room (its type, size, doors, windows, and what
     /// is happening inside and outside).
-    static func roomShell(types: [String], sizes: [String]) -> String {
+    static func roomShell(types: [String]) -> String {
         [
             "root ::= \"{\" ws " + [
                 key("type") + " ty",
-                key("size") + " sz",
+                key("width") + " num",
+                key("depth") + " num",
                 key("doors") + " doors",
                 key("windows") + " wins",
                 key("inside") + " s120",
                 key("outside") + " s120",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
             choice("ty", types),
-            choice("sz", sizes),
+            #"num ::= [1-9] [0-9]?"#,
             choice("wall", ["north", "south", "east", "west"]),
             #"doors ::= "[" ws door ( "," ws door ){0,2} ws "]""#,
             "door ::= \"{\" ws " + key("wall") + " wall \",\" ws " + key("leads_to") + " s40 ws \"}\"",
