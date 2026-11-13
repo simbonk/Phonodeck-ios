@@ -2175,7 +2175,7 @@ final class StoryEngine {
                 lineLog = tries.joined(separator: " → ") + (line == nil ? " · dropped (" + why + ")" : (tries.count > 1 ? " · drafted twice" : " · checked"))
                 if let l = line {
                     lead = lead.replacingOccurrences(of: "\n\nTHE PLAYER: ", with: "\nTHEIR REACTION (decided and checked: use it as is): " + Fovea.action(l.does, by: l.name)
-                        + " Then they say, word for word: \"" + l.says + "\" Write the moment around this: it is all they say in this reply.\n[END]\n\nTHE PLAYER: ")
+                        + " Then they speak. Their words are already written and checked: where they speak, write the marker [LINE] once, and the app puts their exact words there (\"" + l.says + "\"). Write no other words for them. Write the moment around it.\n[END]\n\nTHE PLAYER: ")
                     lead = lead.replacingOccurrences(of: "\n[END]\nTHEIR REACTION", with: "\nTHEIR REACTION")
                     step("What do they say? → " + l.name + ": \"" + Fovea.clip(l.says, 80) + "\"")
                 } else {
@@ -2221,6 +2221,8 @@ final class StoryEngine {
         var interrupted = false
         var presence: PresenceFilter? = nil
         var redrawn = false
+        // Line first: the checked words go where the storyteller writes [LINE].
+        var slot: LineSlot? = line.map { LineSlot(words: $0.says) }
         // Checked in code, sentence by sentence, before anything is read out: people known to be elsewhere,
         // lines copied from earlier replies or asking the player's words back, someone made up on the
         // spot, and private hopes nobody asked about (in the opening too).
@@ -2236,7 +2238,8 @@ final class StoryEngine {
             if !f.idle { presence = f }
         }
         do {
-            for try await piece in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
+            for try await raw in llm.stream(system: system, history: history, options: .init(maxTokens: maxOut, temperature: 0.85)) {
+                let piece: String = slot == nil ? raw : slot!.feed(raw)
                 if firstWord {
                     firstWord = false
                     lap("first word of the reply")
@@ -2254,6 +2257,21 @@ final class StoryEngine {
                     reply += piece
                     streaming = reply
                     if narrate { narrator.feed(piece) }
+                }
+            }
+            if slot != nil {
+                let rest = slot!.finish()
+                if !rest.isEmpty {
+                    if presence != nil {
+                        let ok = presence!.feed(rest)
+                        reply = presence!.accepted
+                        streaming = presence!.preview
+                        if narrate, !ok.isEmpty { narrator.feed(ok) }
+                    } else {
+                        reply += rest
+                        streaming = reply
+                        if narrate { narrator.feed(rest) }
+                    }
                 }
             }
             if presence != nil {
@@ -2283,10 +2301,17 @@ final class StoryEngine {
                                          secrets: secrets, lifeAsked: PresenceFilter.asksAboutLife(input), roles: roles)
                     let left = reply.trimmingCharacters(in: .whitespacesAndNewlines)
                     let survived = left.split(whereSeparator: \.isWhitespace).count < 12 ? "" : left
-                    for try await piece in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
+                    var slot2: LineSlot? = line.map { LineSlot(words: $0.says) }
+                    for try await raw in llm.stream(system: system, history: again, options: .init(maxTokens: 260, temperature: 0.85)) {
+                        let piece: String = slot2 == nil ? raw : slot2!.feed(raw)
                         let ok = second.feed(piece)
                         streaming = (survived.isEmpty ? "" : survived + "\n\n") + second.preview
                         if narrate, !ok.isEmpty { narrator.feed(ok) }
+                    }
+                    if slot2 != nil {
+                        let ok = second.feed(slot2!.finish())
+                        if narrate, !ok.isEmpty { narrator.feed(ok) }
+                        if slot2!.used { slot = slot2 }
                     }
                     let tail = second.finish(restore: false)
                     if narrate, !tail.isEmpty { narrator.feed(tail) }
@@ -2317,6 +2342,14 @@ final class StoryEngine {
             interruptedTurn = (input, hidden, forceFinal)
             return
         }
+        // Line first: if the storyteller left no place for their words and wrote none of its own, they go at the end.
+        var lineAdded = false
+        if let l = line, let sl = slot, !sl.used, !reply.contains("\""), !reply.contains("“") {
+            let add = "\n\n“" + l.says + "”"
+            reply += add
+            lineAdded = true
+            if narrate { narrator.feed(add) }
+        }
         if narrate { narrator.finish() }
         if !narrate || !narrator.speaking { ComputerSounds.shared.stopHum() }
         stage = ""
@@ -2330,6 +2363,7 @@ final class StoryEngine {
             return
         }
         if let now = adventure, now.id == a.id { a.takeMemory(from: now) }
+        if let l = line { a.reaction[l.name.lowercased()] = [l.does, l.says] }
         if opening { checkPronouns(&a, texts: [a.bible, reply]) }
         // A name the storyteller made up for the person the player is with is put right in code.
         var nameFix = ""
@@ -2415,8 +2449,9 @@ final class StoryEngine {
         if !lineLog.isEmpty {
             var said = lineLog
             if let l = line {
-                let used = Continuity.grounded(l.says, in: Continuity.wordSet(reply), share: 0.8)
-                said += used ? " · used word for word" : " · the storyteller changed it"
+                if slot?.used == true { said += " · put in word for word" }
+                else if lineAdded { said += " · no place was marked, so it went at the end" }
+                else { said += Continuity.grounded(l.says, in: Continuity.wordSet(reply), share: 0.8) ? " · no place was marked; the storyteller wrote it in itself" : " · no place was marked; the storyteller wrote other words" }
             }
             before.append("THEIR LINE: " + said)
         }
