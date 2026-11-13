@@ -54,9 +54,63 @@ enum Fovea {
         let pr = Cards.pronoun(name, in: a)
         if !pr.isEmpty { line += ", " + pr }
         if let c, !c.desc.isEmpty { line += ": " + clip(c.desc, 160) }
+        if let g = gridSpot(a, name) {
+            line += " Now: " + g + (w.doing.isEmpty ? "" : ", " + clip(w.doing, 80)) + "."
+            if let r = a.room, let me = r.player, let t = r.named(name), let b = RoomGrid.wayBlocker(r, from: me, to: t) {
+                line += " Between you: " + bare(b) + " (you can talk across it, not walk through it)."
+            }
+            return line
+        }
         let spot = Continuity.placed(w.at) + Cards.facing(w) + (w.doing.isEmpty ? "" : ", " + w.doing)
         if !spot.isEmpty { line += " Now: " + clip(spot, 110) + "." }
         return line
+    }
+
+    /// "the bar" from "The long mahogany bar" stays as it is; "a stool" reads as "the stool".
+    static func bare(_ n: String) -> String {
+        let l = n.lowercased()
+        if l.hasPrefix("the ") { return l }
+        if l.hasPrefix("a ") { return "the " + l.dropFirst(2) }
+        if l.hasPrefix("an ") { return "the " + l.dropFirst(3) }
+        return "the " + l
+    }
+
+    /// Where someone or something is, as the player would put it, read from the room grid: "in front
+    /// of you, 1 m, on the bar stool, facing you, a tired half-smile". Nil without a grid.
+    static func gridSpot(_ a: Adventure, _ name: String) -> String? {
+        guard let r = a.room, let me = r.player, let t = r.named(name), t.id != me.id else { return nil }
+        var s = RoomGrid.whereFrom(me, to: t)
+        if let seat = r.thing(t.on) {
+            s += (t.isPerson ? ", sitting on " : ", on ") + bare(seat.name)
+        } else if t.isPerson, let by = r.objects.filter({ $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" })
+                    .min(by: { RoomGrid.distance($0, t) < RoomGrid.distance($1, t) }), RoomGrid.distance(by, t) < 1.6 {
+            let staff = Rules.staffed.contains(by.icon) && Placer.cells(.behind(by.name), in: r).contains(Cell(x: t.x, y: t.y))
+            s += (staff ? ", behind " : ", by ") + bare(by.name)
+        }
+        if t.isPerson {
+            if RoomGrid.faces(t, me) {
+                s += ", facing you"
+            } else if let other = r.things.filter({ $0.id != t.id && $0.id != me.id && $0.icon != "rug" && !Rules.rule($0.icon).small })
+                        .filter({ RoomGrid.faces(t, $0) }).min(by: { RoomGrid.distance($0, t) < RoomGrid.distance($1, t) }) {
+                s += ", facing " + (other.isPerson ? other.name : bare(other.name))
+            } else if abs(RoomGrid.angle(from: t, to: me)) > 110 {
+                s += ", turned away from you"
+            }
+            if !t.expression.isEmpty { s += ", " + clip(t.expression, 60) }
+            if !t.holding.isEmpty { s += ", holding " + t.holding.prefix(2).joined(separator: " and ") }
+        } else if !t.makeup.isEmpty {
+            s += " (" + clip(t.makeup, 50) + ")"
+        }
+        return s
+    }
+
+    /// The room in one line: its name and size, what is happening inside and beyond the windows.
+    static func roomLine(_ a: Adventure) -> String {
+        guard let r = a.room else { return "" }
+        var s = r.name + ", \(r.width) m by \(r.depth) m"
+        if !r.inside.isEmpty { s += ". Inside: " + clip(r.inside, 120) }
+        if !r.outside.isEmpty { s += ". Outside" + (r.windows.isEmpty ? "" : " the window") + ": " + clip(r.outside, 120) }
+        return s + "."
     }
 
     /// Every card item that could matter to this moment, for the gate to mark.
@@ -98,6 +152,17 @@ enum Fovea {
             if w.here == false {
                 guard c.map({ Cards.mentions($0, in: input) }) ?? input.lowercased().contains(f) else { continue }
                 add("other", name + role + " is " + Continuity.placed(w.at) + ", not here: they can be talked about, not seen or heard.")
+            } else if let r = a.room, let you = r.player, let t = r.named(name) {
+                // The grid decides what the player can perceive.
+                switch RoomGrid.seen(r, from: you, to: t) {
+                case .behind:
+                    add("other", name + role + " is behind you, out of sight: only heard, never described.")
+                case .hidden(let by):
+                    add("other", name + role + " is behind " + bare(by) + ": you can hear them, not see them.")
+                case .front, .side:
+                    let doing = w.doing.isEmpty ? "" : ", " + w.doing
+                    add("other", name + role + " is " + (gridSpot(a, name) ?? "in the room") + doing + (theirs.isEmpty ? "." : ". " + theirs.joined(separator: " ")))
+                }
             } else if Cards.behindPlayer(w) {
                 add("other", name + role + " is behind you, out of sight: only heard, never described.")
             } else {
@@ -109,7 +174,18 @@ enum Fovea {
         let whoAmI: String = Cards.premise(a).components(separatedBy: "\n").first(where: { $0.hasPrefix("The player is ") }) ?? ""
         if !whoAmI.isEmpty { add("you", "Who you are: " + String(whoAmI.dropFirst("The player is ".count))) }
         for t in a.carrying.prefix(6) { add("have", "You have: " + t) }
-        for t in Cards.props(a).prefix(4) { add("around", "Around you: " + t) }
+        if let r = a.room, let you = r.player {
+            // What the player can see from where they stand, nearest first; hidden things stay out.
+            let inView = r.objects.filter { o in
+                guard o.icon != "rug" else { return false }
+                switch RoomGrid.seen(r, from: you, to: o) { case .front, .side: return true; default: return false }
+            }.sorted { RoomGrid.distance($0, you) < RoomGrid.distance($1, you) }
+            for o in inView.prefix(5) { add("around", "Around you: " + o.name + ", " + (gridSpot(a, o.name) ?? "")) }
+            for d in r.doors where !d.leadsTo.isEmpty { add("around", "A door on the " + d.wall.rawValue + " side leads to " + d.leadsTo) }
+            for w in r.windows where !w.view.isEmpty { add("around", "Through the window: " + w.view) }
+        } else {
+            for t in Cards.props(a).prefix(4) { add("around", "Around you: " + t) }
+        }
         for p in a.pending { add("hanging", "Still hanging: " + p) }
         if !a.spot.isEmpty { add("spot", "Where you are in the room: " + a.spot) }
         if let s = a.ambience[a.location.lowercased()], !a.location.isEmpty, !s.isEmpty { add("sound", "The background: " + s) }
@@ -198,6 +274,8 @@ enum Fovea {
     /// events from code, and the items marked yes.
     static func lead(_ a: Adventure, input: String, arrived: Bool, events: [String], kept: [Item]) -> String {
         var l: [String] = ["[FOR THIS MOMENT: private, never mention it]", "WHEN AND WHERE: " + whenWhere(a)]
+        let room = roomLine(a)
+        if !room.isEmpty { l.append("THE ROOM: " + room) }
         if arrived, let card = Cards.placeCard(a), !card.desc.isEmpty {
             l.append("YOU JUST ARRIVED: " + clip(card.desc, 240) + " Bring it to life first.")
         }
