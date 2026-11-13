@@ -4654,6 +4654,16 @@ extension StoryEngine {
                     if t.icon == "other" { t.icon = kind }
                     let out = Placer.place(&r, t, zone: .beside(name))
                     r.log.append(out.placed ? "place: " + t.name + " → beside " + name : "refuse: " + t.name + " beside " + name + " (" + out.reason + ")")
+                    // A seat beside someone not yet sitting: the model says whether they sit on it.
+                    if out.placed, Rules.seats.contains(t.icon), let seat = r.named(t.name), let me = r.thing(p.id), me.on == nil {
+                        let sq = "There is now a " + kind + " beside " + who + ". As the story opens, does " + who + " sit on it?"
+                        let sm = await ask("Does " + Cards.first(name) + " sit on the " + kind + "?", base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                        let sits = str(sm, "answer").lowercased().hasPrefix("y")
+                        r.log.append("ask: does " + name + " sit on the " + kind + "? → " + (sits ? "yes" : "no"))
+                        if sits, let i = r.index(p.id) {
+                            r.things[i].x = seat.x; r.things[i].y = seat.y; r.things[i].on = seat.id
+                        }
+                    }
                 }
                 if !needs.isEmpty { await show(r, pause: 0.2) }
                 // What they have around them on that table or desk: their tools, a drink, a book.
