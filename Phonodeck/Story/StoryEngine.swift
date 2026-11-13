@@ -797,7 +797,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z22"
+    static let build = "build 2026-11-13z23"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2535,8 +2535,11 @@ final class StoryEngine {
         // carries, a sound, smell, light or mood, or part of the building or the sky.
         var around: [String] = []
         for e in candidates {
-            let km = await ask("What is " + clip(e, 40) + "?", "In this story, what is \"" + e + "\"?\nCHOICES: " + Self.whatIsChoices.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"is\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("is", from: Self.whatIsChoices), 20)
-            let what = ((km?["is"] as? String) ?? "").lowercased()
+            let what = await Self.whatIs(e) { q in
+                let m = await ask(clip(q, 70), q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                guard let a = (m?["answer"] as? String)?.lowercased(), !a.isEmpty else { return nil }
+                return a.hasPrefix("y")
+            }
             if what.isEmpty || what.hasPrefix("a thing") { around.append(e); asked.append("What is " + e + "? → a thing in the room"); continue }
             refused.append(e + " (" + what + ")")
             asked.append("What is " + e + "? → " + what)
@@ -4101,7 +4104,23 @@ extension StoryEngine {
     /// held to a grammar so the model only picks from lists, then one push-back question for any
     /// object whose spot broke a rule. Code places everything; every decision goes on the room's
     /// log and shows on the map as it happens. Whatever the model can't answer comes from the template.
-    static let whatIsChoices = ["a thing in the room", "worn or carried by someone", "a sound, smell, light or mood", "part of the building or the sky"]
+    /// What a named thing really is, in plain yes/no questions the small model answers well, one at
+    /// a time: a smell or sound, a material, something worn, part of the building, or a real object.
+    /// Returns "a thing in the room", or what it is instead.
+    static func whatIs(_ name: String, yesNo: (String) async -> Bool?) async -> String {
+        let n = "\"" + name + "\""
+        let checks: [(String, String)] = [
+            ("Is " + n + " a smell, a taste, a sound, a light or a feeling, rather than an object?", "a smell, sound, light or feeling"),
+            ("Is " + n + " only a material or a surface (like oak, brass, velvet or polish), rather than an object of its own?", "a material"),
+            ("Is " + n + " something a person wears or carries?", "worn or carried by someone"),
+            ("Is " + n + " part of the building or the sky (a ceiling, wall, floor, window or skylight)?", "part of the building or the sky"),
+        ]
+        for (q, what) in checks {
+            if await yesNo(q) == true { return what }
+        }
+        if await yesNo("Is " + n + " a real object you could touch, standing on the floor or sitting on furniture?") == false { return "not an object" }
+        return "a thing in the room"
+    }
 
     fileprivate func furnishRoom(story: String) async {
         // A room is drawn once: only a place with no room yet is laid out, and never again after.
@@ -4213,8 +4232,12 @@ extension StoryEngine {
             guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()),
                   !wanted.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { continue }
             // The model says what it is before anything is drawn.
-            let km = await ask("What is " + clip(name, 40) + "?", base + "QUESTION: In this story, what is \"" + name + "\"?\nCHOICES: " + Self.whatIsChoices.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"is\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("is", from: Self.whatIsChoices), 20)
-            let what = str(km, "is").lowercased()
+            let what = await Self.whatIs(name) { q in
+                let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let a = str(m, "answer").lowercased()
+                return a.isEmpty ? nil : a.hasPrefix("y")
+            }
+            r.log.append("ask: what is " + name + "? → " + what)
             if what.hasPrefix("worn") {
                 let who = ["you"] + a0.cast.filter { !$0.isPlayer }.map(\.name)
                 let wm = await ask("Who has " + clip(name, 40) + "?", base + "QUESTION: Who wears or carries \"" + name + "\"?\nCHOICES: " + who.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"who\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("who", from: who), 20)
