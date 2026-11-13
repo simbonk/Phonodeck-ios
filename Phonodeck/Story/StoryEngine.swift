@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z27"
+    static let build = "build 2026-11-13z28"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2612,6 +2612,12 @@ final class StoryEngine {
                 t.w = max(l, w); t.d = min(l, w)
                 let sp = ((im["space"] as? String) ?? "").lowercased()
                 if ["in front", "behind", "all round"].contains(sp) { t.space = sp }
+                let rr = Rules.rule(kind)
+                if t.w != t.d || rr.w != rr.d {
+                    let lq = Self.alongQuestion(e)
+                    let lm = await ask("Does the " + clip(short, 30) + " run along a wall?", lq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                    if ((lm?["answer"] as? String) ?? "").lowercased().hasPrefix("y") { t.along = "wall" }
+                }
             }
             asked.append("What kind of thing is the " + short + "? → " + kind + (t.w > 1 || t.d > 1 ? ", \(t.w) by \(t.d) m" : ""))
             let menu = Zone.menu(r)
@@ -4265,6 +4271,11 @@ extension StoryEngine {
         "What object does \"" + name + "\" name? Answer with one noun for the object itself, taken from those words, or none if it names no object you could put in a room. For example: \"long mahogany bar\" → bar; \"crackling gramophone\" → gramophone; \"brass lamp\" → lamp; \"polished oak\" → none (oak is a wood); \"velvet\" → none (a cloth); \"soft jazz\" → none (a sound); \"warm cinnamon\" → none (a smell); \"golden glow\" → none (a light)."
     }
 
+    /// Whether a long thing runs lengthwise along a wall.
+    static func alongQuestion(_ name: String) -> String {
+        "Does the long side of the \"" + name + "\" run along a wall, the way a bar, a counter, a bookcase or a sofa does, rather than standing out into the room end-on?"
+    }
+
     static func whatIs(_ name: String, noun: (String) async -> String, yesNo: (String) async -> Bool?) async -> String {
         let key = name.lowercased()
         if let known = whatIsKnown[key] { return known }
@@ -4276,7 +4287,15 @@ extension StoryEngine {
         let words = Continuity.wordSet(name)
         let saidWords = Continuity.wordSet(said)
         let fromName = saidWords.contains { w in words.contains { $0.hasPrefix(w) || w.hasPrefix($0) } }
-        if said.isEmpty || said.hasPrefix("none") || !fromName {
+        // The name's main word ("smell" in "old wood smell", "spools" in "spools of thread"): when the
+        // model picked another word, it is asked whether that main word is a thing at all.
+        let parts = name.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
+        let head = parts.firstIndex(of: "of").flatMap { $0 > 0 ? parts[$0 - 1] : nil } ?? parts.last ?? ""
+        var headOK = true
+        if fromName, !head.isEmpty, !saidWords.contains(where: { head.hasPrefix($0) || $0.hasPrefix(head) }) {
+            headOK = await yesNo("In " + n + ", the main word is \"" + head + "\". Is a " + head + " a solid thing you could put down in a room?") != false
+        }
+        if said.isEmpty || said.hasPrefix("none") || !fromName || !headOK {
             what = "not an object (a material, smell, sound, light or feeling)"
         } else {
             let checks: [(String, String)] = [
@@ -4443,6 +4462,13 @@ extension StoryEngine {
             }
             let sp = str(d, "space").lowercased()
             if ["in front", "behind", "all round"].contains(sp), !Rules.rule(kind).small { t.space = sp }
+            let rr = Rules.rule(kind)
+            if !rr.small, t.w != t.d || rr.w != rr.d {
+                let lq = Self.alongQuestion(name)
+                let lm = await ask("Does the " + clip(Zone.short(name), 30) + " run along a wall?", base + "QUESTION: " + lq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                if str(lm, "answer").lowercased().hasPrefix("y") { t.along = "wall" }
+                r.log.append("ask: does the " + Zone.short(name) + " run along a wall? → " + (t.along == nil ? "no" : "yes"))
+            }
             wanted.append(t)
         }
         // A room of this type usually has its centrepiece (a bar's bar, a bedroom's bed): the model
@@ -4502,7 +4528,7 @@ extension StoryEngine {
 
         // Seats along a bar or counter: how many, the model says; the map fits what it can on the open side.
         for bar in r.objects where Rules.staffed.contains(bar.icon) && bar.on == nil {
-            let bq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: How many stools or seats line the " + Zone.short(bar.name) + " for customers in this story (0 if none)?\nOutput ONLY one JSON object:\n{\"seats\":\"a number from 0 to 6\"}\nThe form:"
+            let bq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: Customers sit at a bar on stools along its open side; most bars have three to six. How many stools line the " + Zone.short(bar.name) + " in this story (0 only if nobody could sit at it)?\nOutput ONLY one JSON object:\n{\"seats\":\"a number from 0 to 6\"}\nThe form:"
             let bm = await ask("How many seats at the " + clip(Zone.short(bar.name), 30) + "?", bq, JSONGrammar.one("seats", from: ["0", "1", "2", "3", "4", "5", "6"]), 12)
             let want = min(Int(str(bm, "seats")) ?? 0, max(bar.w, bar.d) + 1)
             var got = 0

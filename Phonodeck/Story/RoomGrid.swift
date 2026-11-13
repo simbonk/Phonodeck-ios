@@ -71,6 +71,8 @@ struct Thing: Codable, Hashable, Identifiable {
     /// Where people need room to walk or work around it, as the model said ("in front", "behind",
     /// "all round"; nil for none). Nothing else is placed there.
     var space: String?
+    /// "wall" when the model said its long side runs along a wall (a bar, a bookcase); nil otherwise.
+    var along: String?
 
     // People
     var expression = ""

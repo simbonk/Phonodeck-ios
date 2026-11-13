@@ -408,6 +408,11 @@ enum Placer {
             guard w > 0, d > 0 else { continue }
             for x in 0...(room.width - w) { for y in 0...(room.depth - d) {
                 let s = Spot(x: x, y: y, w: w, d: d)
+                // Long side along a wall, as the model said: lengthwise to the nearest wall, and near it.
+                if t.along == "wall", w != d {
+                    let gaps = [(s.y, true), (room.depth - s.y - s.d, true), (s.x, false), (room.width - s.x - s.w, false)]
+                    guard let near = gaps.min(by: { $0.0 < $1.0 }), near.0 <= 2, near.1 == (w > d) else { continue }
+                }
                 if breaks(s, rule: r, thing: t, room: room) == nil { out.append(s) }
             } }
         }
@@ -543,6 +548,16 @@ enum Placer {
         var zone = zone
         // Nobody stands on a bar or a table: they stand at it.
         if case .on(let n) = zone, let thing = room.named(n), !thing.isPerson, !Rules.seats.contains(thing.icon) { zone = .at(n) }
+        // At a bar or table with a free stool or chair there: they sit on it.
+        if case .at = zone {
+            let zc = Set(cells(zone, in: room, forPeople: true))
+            let taken = Set(room.people.filter { $0.id != p.id }.compactMap(\.on))
+            if let seat = room.objects.first(where: { Rules.seats.contains($0.icon) && $0.on == nil && !taken.contains($0.id) && zc.contains(Cell(x: $0.x, y: $0.y)) }) {
+                p.x = seat.x; p.y = seat.y; p.on = seat.id
+                put(&room, p)
+                return ""
+            }
+        }
         if case .on(let n) = zone, let seat = room.named(n), !seat.isPerson {
             let sitting = Set(room.people.filter { $0.on == seat.id && $0.id != p.id }.map { Cell(x: $0.x, y: $0.y) })
             if let c = seat.cells.first(where: { !sitting.contains($0) }) {
