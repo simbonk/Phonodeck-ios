@@ -10,7 +10,16 @@ import Observation
 @Observable
 @MainActor
 final class StoryEngine {
-    private(set) var adventure: Adventure?
+    private(set) var adventure: Adventure? {
+        // The room grid follows the story: whenever the world changes, the map catches up.
+        didSet {
+            guard !syncingGrid, var a = adventure else { return }
+            syncingGrid = true
+            if a.syncGrid() { adventure = a }
+            syncingGrid = false
+        }
+    }
+    @ObservationIgnored private var syncingGrid = false
     private(set) var streaming = ""
     private(set) var stage = ""
     /// The question the rebuild after a reply is asking right now ("" when it is not running),
@@ -603,6 +612,34 @@ final class StoryEngine {
         adventure = a
         library.save(a)
         refreshVocabulary()
+    }
+
+    /// A person or thing edited on the map. Your edit wins: what the story keeps about them (what
+    /// they are doing, how they feel, their card) is updated to match, so the next turn uses it.
+    func saveThing(_ t: Thing, in roomID: UUID) {
+        guard var a = adventure, let ri = a.rooms.firstIndex(where: { $0.id == roomID }) else { return }
+        var r = a.rooms[ri]
+        guard let i = r.index(t.id) else { return }
+        let old = r.things[i]
+        r.things[i] = t
+        r.log.append("edit: " + t.name + " (your edit)")
+        a.rooms[ri] = r
+        if t.kind == .person {
+            if let w = a.whereabouts.firstIndex(where: { $0.name.caseInsensitiveCompare(old.name) == .orderedSame }) {
+                a.whereabouts[w].doing = t.doing
+                a.whereabouts[w].name = t.name
+            }
+            if !t.feeling.isEmpty { a.feelings[t.name.lowercased()] = t.feeling }
+        } else if t.kind == .player {
+            a.carrying = t.holding
+            a.feels = t.feeling
+        } else if old.name != t.name {
+            let key = r.name.lowercased()
+            if var list = a.placeThings[key], let k = list.firstIndex(of: old.name) { list[k] = t.name; a.placeThings[key] = list }
+            if let k = a.things.firstIndex(of: old.name) { a.things[k] = t.name }
+        }
+        adventure = a
+        library.save(a)
     }
 
     /// Your name in this story, set from the World panel (never kept for other stories). Empty

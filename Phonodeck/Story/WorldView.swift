@@ -74,6 +74,7 @@ struct WorldView: View {
 
     @ViewBuilder
     private func world(_ a: Adventure) -> some View {
+        RoomMapView()
         if !a.frames.isEmpty { turnGuide(a) }
         VStack(alignment: .leading, spacing: 6) { attributes(a) }
         Button {

@@ -356,6 +356,9 @@ struct Adventure: Codable, Identifiable, Hashable {
     var feels = ""
     /// What has been reached toward the goal so far, one short sentence each.
     var progress: [String] = []
+    /// The world as rooms on a grid of 1 m squares, and the room the player is in.
+    var rooms: [Room] = []
+    var roomID: UUID?
 
     var playerTurns: Int { transcript.filter { $0.role == .player }.count }
     var isShort: Bool { minutes <= 15 }
@@ -371,7 +374,7 @@ struct Adventure: Codable, Identifiable, Hashable {
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
              storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks, frames, placeSeen,
-             pending, feelings, spot, ambience, wants, knows, body, feels, progress, placeClock, between
+             pending, feelings, spot, ambience, wants, knows, body, feels, progress, placeClock, between, rooms, roomID
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -407,6 +410,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         pending = v(.pending, [String]()); feelings = v(.feelings, [String: String]()); spot = v(.spot, ""); ambience = v(.ambience, [String: String]())
         wants = v(.wants, [String: String]()); knows = v(.knows, [String: [String]]()); body = v(.body, ""); feels = v(.feels, ""); progress = v(.progress, [String]())
         placeClock = v(.placeClock, [String: Int]()); between = v(.between, [String: [String]]())
+        rooms = v(.rooms, [Room]()); roomID = try? c.decodeIfPresent(UUID.self, forKey: .roomID)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -431,6 +435,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(pending, forKey: .pending); try c.encode(feelings, forKey: .feelings); try c.encode(spot, forKey: .spot); try c.encode(ambience, forKey: .ambience)
         try c.encode(wants, forKey: .wants); try c.encode(knows, forKey: .knows); try c.encode(body, forKey: .body); try c.encode(feels, forKey: .feels); try c.encode(progress, forKey: .progress)
         try c.encode(placeClock, forKey: .placeClock); try c.encode(between, forKey: .between)
+        try c.encode(rooms, forKey: .rooms); try c.encodeIfPresent(roomID, forKey: .roomID)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -447,6 +452,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         frames = o.frames; placeSeen = o.placeSeen
         pending = o.pending; feelings = o.feelings; spot = o.spot; ambience = o.ambience
         wants = o.wants; knows = o.knows; body = o.body; feels = o.feels; progress = o.progress; placeClock = o.placeClock; between = o.between
+        rooms = o.rooms; roomID = o.roomID
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
