@@ -791,7 +791,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z13"
+    static let build = "build 2026-11-13z14"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2310,6 +2310,7 @@ final class StoryEngine {
                 Placer.put(&r, p)
                 if !whereSaid.isEmpty, whereSaid != "stays put", var z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
                     if case .at(let n) = z, let was = t.pastMoves.first, was.hasPrefix("behind"), was.contains(Zone.short(n)) { z = .behind(n) }
+                    if Rules.isStaff(c.role), let post = Rules.staffPost(r), z.text.contains(Zone.short(post.name)) { z = .behind(post.name) }
                     if z.text == t.pastMoves.first { now.room = r; return }
                     let note = Placer.placePerson(&r, p, zone: z)
                     r.log.append("move: " + c.name + " → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
@@ -4220,6 +4221,17 @@ extension StoryEngine {
         for c in a0.cast where !here.contains(c.name) && Cards.mentions(c, in: story) {
             here.append(c.name)
         }
+        // Everyone here is in the room as far as the story is concerned, before they are placed (so nobody "leaves" while it is drawn).
+        if var a = adventure {
+            for name in here {
+                if let i = a.whereabouts.firstIndex(where: { Cards.card(for: $0, in: a)?.name == name || $0.name == name }) {
+                    if a.whereabouts[i].here == false { a.whereabouts[i].here = true; a.whereabouts[i].leftAt = nil; a.whereabouts[i].at = placeName }
+                } else {
+                    a.whereabouts.append(Whereabout(name: name, at: placeName, here: true, engaged: false))
+                }
+            }
+            adventure = a
+        }
         let entry = RoomBuilder.entrance(r, from: from)
         var me = Thing(kind: .player, name: a0.playerName.isEmpty ? "You" : a0.playerName)
         me.x = entry.x; me.y = entry.y; me.on = nil
@@ -4242,7 +4254,8 @@ extension StoryEngine {
                 let name = str(d, "name")
                 guard here.contains(name), !placed.contains(name) else { continue }
                 placed.insert(name)
-                let z = Zone.parse(str(d, "where")) ?? .farCorner
+                var z = Zone.parse(str(d, "where")) ?? .farCorner
+                if let c = a0.cast.first(where: { $0.name == name }), Rules.isStaff(c.role), let post = Rules.staffPost(r) { z = .behind(post.name) }
                 let p = Thing(kind: .person, name: name)
                 let note = Placer.placePerson(&r, p, zone: z)
                 r.log.append("enter: " + name + " " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
@@ -4263,22 +4276,12 @@ extension StoryEngine {
             if let z = Adventure.zone(from: opening, in: r) {
                 let note = Placer.placePerson(&r, me, zone: z)
                 r.log.append("move: you → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
-                if let first = r.people.first(where: { $0.kind == .person && $0.id != me.id }) { Placer.turn(&r, me.id, toward: first.name) }
+                let staff = r.people.first { p in p.kind == .person && a.cast.contains { $0.name == p.name && Rules.isStaff($0.role) } }
+                if let first = staff ?? r.people.first(where: { $0.kind == .person && $0.id != me.id }) { Placer.turn(&r, me.id, toward: first.name) }
             }
         }
         r.log = Array(r.log.suffix(80))
         await show(r, pause: 0)
-        // Everyone placed here is in the room as far as the story is concerned too.
-        if var a = adventure {
-            for name in here {
-                if let i = a.whereabouts.firstIndex(where: { Cards.card(for: $0, in: a)?.name == name || $0.name == name }) {
-                    if a.whereabouts[i].here == false { a.whereabouts[i].here = true; a.whereabouts[i].leftAt = nil; a.whereabouts[i].at = placeName }
-                } else {
-                    a.whereabouts.append(Whereabout(name: name, at: placeName, here: true, engaged: false))
-                }
-            }
-            adventure = a
-        }
         if let a = adventure { library.save(a) }
     }
 }
