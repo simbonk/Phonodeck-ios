@@ -223,6 +223,12 @@ struct RoomMapView: View {
                 // A tap on or just beside a wall opens the room's own card.
                 let fx = (pt.x - ox) / s, fy = (pt.y - oy) / s
                 let w = CGFloat(room.width), d = CGFloat(room.depth), edge: CGFloat = 0.3
+                // A tap by a door opens the door's card.
+                if let door = room.doors.min(by: { Self.doorGap($0, fx, fy, room) < Self.doorGap($1, fx, fy, room) }),
+                   Self.doorGap(door, fx, fy, room) < 0.9 {
+                    pinKey(Self.doorKey + door.id.uuidString)
+                    return
+                }
                 if fx > -1, fy > -1, fx < w + 1, fy < d + 1, fx < edge || fy < edge || fx > w - edge || fy > d - edge {
                     pinRoom()
                     return
@@ -330,8 +336,8 @@ struct RoomMapView: View {
                 l.addLine(to: CGPoint(x: p.x + CGFloat(inward.dx) * s * 0.8 + (q.x - p.x) * 0.2, y: p.y + CGFloat(inward.dy) * s * 0.8 + (q.y - p.y) * 0.2))
                 ctx.stroke(l, with: .color(Theme.fg.opacity(0.8)), lineWidth: 1)
             } }
-            // Door labels: where they lead.
-            for o in room.doors where !o.leadsTo.isEmpty {
+            // Doors: a small icon just inside the wall (tap it for where it leads).
+            for o in room.doors {
                 let (p, q) = segment(o.wall, o.at)
                 let mid = CGPoint(x: (p.x + q.x) / 2, y: (p.y + q.y) / 2)
                 // Drawn just inside the wall, reading away from it, so the map's edge never cuts it off.
@@ -343,7 +349,8 @@ struct RoomMapView: View {
                 case .west: off = CGPoint(x: 5, y: 0); anchor = .leading
                 case .east: off = CGPoint(x: -5, y: 0); anchor = .trailing
                 }
-                ctx.draw(Text("→ " + o.leadsTo).font(.system(size: 9)).foregroundColor(Theme.dim), at: CGPoint(x: mid.x + off.x, y: mid.y + off.y), anchor: anchor)
+                let icon = o.open == true ? "door.left.hand.open" : "door.left.hand.closed"
+                ctx.draw(Text(Image(systemName: icon)).font(.system(size: 11)).foregroundColor(Theme.dim), at: CGPoint(x: mid.x + off.x, y: mid.y + off.y), anchor: anchor)
             }
         }
     }
@@ -468,6 +475,26 @@ struct RoomMapView: View {
     }
 
     private static let roomKey = "#room"
+    private static let doorKey = "#door:"
+
+    /// How far a tap (in squares) is from the middle of a door.
+    private static func doorGap(_ o: Opening, _ fx: CGFloat, _ fy: CGFloat, _ room: Room) -> CGFloat {
+        let along = CGFloat(o.at) + CGFloat(max(1, o.width)) / 2
+        let p: CGPoint
+        switch o.wall {
+        case .north: p = CGPoint(x: along, y: 0)
+        case .south: p = CGPoint(x: along, y: CGFloat(room.depth))
+        case .west: p = CGPoint(x: 0, y: along)
+        case .east: p = CGPoint(x: CGFloat(room.width), y: along)
+        }
+        return hypot(p.x - fx, p.y - fy)
+    }
+
+    private func pinKey(_ k: String) {
+        var list = pinned.filter { $0 != k }
+        list.insert(k, at: 0)
+        withAnimation(.snappy) { pinnedRaw = list.prefix(6).joined(separator: "|") }
+    }
 
     /// The room's card: what's outside and the air inside. It stays as drawn unless the story says it changed.
     private func pinRoom() {
@@ -485,6 +512,9 @@ struct RoomMapView: View {
         let shown: [Thing] = pinned.compactMap { k in room.things.first { key($0) == k } }
         if pinned.contains(Self.roomKey) {
             roomCard(a, room).transition(.move(edge: .top).combined(with: .opacity))
+        }
+        ForEach(room.doors.filter { pinned.contains(Self.doorKey + $0.id.uuidString) }) { o in
+            doorCard(o).transition(.move(edge: .top).combined(with: .opacity))
         }
         ForEach(shown) { t in
             thingCard(t, a, room)
@@ -548,6 +578,25 @@ struct RoomMapView: View {
             FlashRow(label: "Size", value: "\(room.width) × \(room.depth) m", lines: 1)
             FlashRow(label: "Doors", value: doors.joined(separator: ", "), lines: 2)
             if !room.windows.isEmpty { FlashRow(label: "Windows", value: "\(room.windows.count)", lines: 1) }
+        }
+        .padding(10)
+        .background(Theme.bg.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
+    }
+
+    private func doorCard(_ o: Opening) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 8) {
+                Image(systemName: o.open == true ? "door.left.hand.open" : "door.left.hand.closed").font(.caption).foregroundStyle(Theme.accent)
+                Text("Door").font(.subheadline.bold()).foregroundStyle(Theme.fg).lineLimit(1)
+                Spacer(minLength: 0)
+                Button { unpin(Self.doorKey + o.id.uuidString) } label: { Image(systemName: "xmark").font(.caption.bold()) }
+                    .foregroundStyle(Theme.dim)
+            }
+            .padding(.bottom, 3)
+            FlashRow(label: "Leads to", value: o.leadsTo, lines: 2)
+            FlashRow(label: "State", value: o.open == true ? "open" : "closed", lines: 1)
+            FlashRow(label: "Wall", value: o.wall.rawValue, lines: 1)
         }
         .padding(10)
         .background(Theme.bg.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))

@@ -42,6 +42,8 @@ struct Opening: Codable, Hashable, Identifiable {
     var leadsTo = ""
     /// A window: what is seen through it.
     var view = ""
+    /// A door: open or shut, once the story has said (nil: shut, as doors are).
+    var open: Bool?
 }
 
 /// What a thing gets in the way of.

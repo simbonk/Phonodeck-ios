@@ -804,7 +804,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z34"
+    static let build = "build 2026-11-13z35"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2613,14 +2613,27 @@ final class StoryEngine {
             if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: e) }
             // One of a kind already on the map? Ask whether it is the same one ("long mahogany bar"
             // and "mahogany bar"), so nothing is drawn twice.
-            if !Rules.seats.contains(kind), kind != "small", let twin = r.objects.first(where: { $0.icon == kind && $0.on == nil }) {
-                let sq = "Is the \"" + e + "\" the same thing as the \"" + twin.name + "\" already in the room?"
-                let sm = await ask("Is it the " + clip(Zone.short(twin.name), 30) + "?", sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-                if ((sm?["answer"] as? String) ?? "").lowercased().hasPrefix("y") {
-                    asked.append("Is " + e + " the " + twin.name + "? → yes, already drawn")
-                    continue
+            // The question says who is at the one already drawn and where the story puts them, so
+            // "corner booth" finds "Dolores's booth" when the story has Dolores in a corner booth.
+            var isTwin = false
+            if !Rules.seats.contains(kind), kind != "small" {
+                let mates = r.objects.filter { $0.on == nil && ($0.icon == kind || (Rules.surfaces.contains(kind) && Rules.surfaces.contains($0.icon))) }
+                for twin in mates.prefix(2) {
+                    let by: [String] = r.people.filter { RoomGrid.distance($0, twin) < 1.6 }.map { p in
+                        let told = (adventure ?? start).whereabouts.first { Cards.first($0.name).lowercased() == Cards.first(p.name).lowercased() }?.at ?? ""
+                        return p.kind == .player ? "you" : p.name + (told.isEmpty ? "" : " (the story has them " + clip(told, 60) + ")")
+                    }
+                    var sq = "THE ONE ALREADY DRAWN: \"" + twin.name + "\"" + (by.isEmpty ? "" : ", where " + by.joined(separator: " and ") + (by.count > 1 ? " are" : " is")) + ".\n"
+                    sq += "Is the \"" + e + "\" in THE STORY the same thing as the \"" + twin.name + "\"? Two names for one thing count as the same."
+                    let sm = await ask("Is it the " + clip(Zone.short(twin.name), 30) + "?", sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                    if ((sm?["answer"] as? String) ?? "").lowercased().hasPrefix("y") {
+                        asked.append("Is " + e + " the " + twin.name + "? → yes, already drawn")
+                        isTwin = true
+                        break
+                    }
                 }
             }
+            if isTwin { continue }
             var t = Thing(kind: .object, name: e, icon: kind)
             t.makeup = ((im["made_of"] as? String) ?? "")
             func metres(_ k: String) -> Int { (im[k] as? Int) ?? Int(((im[k] as? String) ?? "").filter(\.isNumber)) ?? 1 }
@@ -2677,13 +2690,13 @@ final class StoryEngine {
         // the story says outright that they changed ("it stops raining", "the smoke clears").
         if let g = (adventure ?? start).room, !(g.outside.isEmpty && g.inside.isEmpty) {
             let card = "THE ROOM CARD: outside: " + (g.outside.isEmpty ? "(not set)" : g.outside) + "; inside: " + (g.inside.isEmpty ? "(not set)" : g.inside) + ".\n"
-            let cq = card + "Does THE STORY or THE PLAYER say outright that the weather outside or the air inside has changed (for example: the rain stops, the smoke clears)? Only an outright change counts.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
+            let cq = card + "Does THE STORY or THE PLAYER say outright that the weather outside has changed (the rain stops), or that something huge happened to the room itself (it burns, it floods)? People moving, talking or handing things over never count.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
             let cm = await ask("Did the weather or the air change?", cq, JSONGrammar.one("answer", from: ["yes", "no"]), 10)
             guard cm != nil else { return }
             var changed = ((cm?["answer"] as? String) ?? "") == "yes"
             asked.append("Did the weather or the air change? → " + (changed ? "yes" : "no"))
             if changed {
-                let nq = card + "Write the room card as it is now, after the change THE STORY tells. Keep whatever did not change exactly as it was.\nOutput ONLY one JSON object:\n{\"outside\":\"the weather and the world outside, a few words\",\"inside\":\"the air and feel inside, a few words\"}\nThe form:"
+                let nq = card + "Write the room card as it is now, after the change THE STORY tells. Keep whatever did not change exactly as it was.\nOutput ONLY one JSON object:\n{\"outside\":\"the weather and the world outside, a few words\",\"inside\":\"only the room's smells and ambience, a few words\"}\nThe form:"
                 let nm = await ask("What is the room like now?", nq, JSONGrammar.pair("outside", 80, "inside", 80), 50)
                 let words: Set<String> = Continuity.wordSet(playerSaid + " " + reply + " " + g.outside + " " + g.inside)
                 func fresh(_ k: String, _ old: String) -> String {
@@ -4413,7 +4426,7 @@ extension StoryEngine {
         base += "\n\n" + story + "\n\n"
 
         // 1. The shell.
-        let q1 = base + "QUESTION: What is this room's type, and how big would a real one like it be, in metres (true to its time and place: a 1920s speakeasy, a ship's cabin, a cathedral)? Width is west to east, depth is north to south. List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on what is happening inside, and one on what is happening outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"width\":9,\"depth\":7,\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"one line\",\"outside\":\"one line\"}\nThe form:"
+        let q1 = base + "QUESTION: What is this room's type, and how big would a real one like it be, in metres (true to its time and place: a 1920s speakeasy, a ship's cabin, a cathedral)? Width is west to east, depth is north to south. List its doors (which wall, and where each leads; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on the room's air inside: only its smells and ambience (smoky, damp, warm; no people, no action), and one on the weather and world outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"width\":9,\"depth\":7,\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"its smells and ambience, one line\",\"outside\":\"the weather and world outside, one line\"}\nThe form:"
         let m1 = await ask("How big is this room, in metres?", q1, JSONGrammar.roomShell(types: RoomBuilder.types), 260)
         guard !Task.isCancelled else { return }
         var type = str(m1, "type").lowercased()
@@ -4430,7 +4443,7 @@ extension StoryEngine {
         if let said { r.log.append("size: the model said \(said.0) × \(said.1) m; drawn \(r.width) × \(r.depth) m") }
         r.id = roomID
         r.built = true
-        r.inside = Self.echoesPrompt(str(m1, "inside")) ? about : str(m1, "inside")
+        r.inside = Self.echoesPrompt(str(m1, "inside")) ? "" : str(m1, "inside")
         r.outside = Self.echoesPrompt(str(m1, "outside")) ? "" : str(m1, "outside")
         // Doors and windows, spread along their walls so none overlap.
         var used: [Wall: [Int]] = [:]

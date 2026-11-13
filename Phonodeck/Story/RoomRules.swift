@@ -401,7 +401,7 @@ enum Placer {
         // The model's own size for it, when it gave one.
         if t.w > 1 || t.d > 1 { r.w = max(t.w, t.d); r.d = min(t.w, t.d) }
         // A bar or counter runs along most of its wall in a bigger room.
-        if r.place == .staffWall { r.w = max(r.w, min(6, max(room.width, room.depth) / 2)) }
+        if r.place == .staffWall, t.w <= 1, t.d <= 1 { r.w = max(r.w, min(6, max(room.width, room.depth) / 2)) }
         let sizes = Set([[r.w, r.d], [r.d, r.w]].map { $0 })
         for sz in sizes {
             let w = min(sz[0], room.width), d = min(sz[1], room.depth)
@@ -511,6 +511,24 @@ enum Placer {
             room.things.append(t)
             return
         }
+        // Still nothing: a long piece gets a metre shorter at a time, keeping every rule, before it
+        // gives up being long (a bar squeezed to one square reads as a box).
+        let full = max(t.w, t.d, r.w, min(6, max(room.width, room.depth) / 2))
+        if full > 2 {
+            for len in stride(from: full - 1, through: 2, by: -1) {
+                for keepAlong in [true, false] where keepAlong || t.along != nil {
+                    var t2 = t
+                    t2.w = len; t2.d = min(max(1, min(t.w, t.d, r.d)), len)
+                    if !keepAlong { t2.along = nil }
+                    var r2 = r; r2.w = len; r2.d = t2.d
+                    if let best = legal(t2, rule: r2, room: room).min(by: { score($0, to: target) < score($1, to: target) }) {
+                        t2.x = best.x; t2.y = best.y; t2.w = best.w; t2.d = best.d
+                        room.things.append(t2)
+                        return
+                    }
+                }
+            }
+        }
         // Nothing keeps every rule: a single free square, out of the doorways.
         var loose = Rule(w: 1, d: 1, place: .anywhere, blocks: .none, windowOK: true)
         loose.awayFromDoor = false
@@ -519,7 +537,11 @@ enum Placer {
             t.x = best.x; t.y = best.y; t.w = 1; t.d = 1
             room.things.append(t)
         }
-        // A room too full for even that drops the object.
+        // Even then it is not dropped: it takes any free square, so what the story named is on the map.
+        if let c = freeCells(room).min(by: { cellScore($0, target) < cellScore($1, target) }) {
+            t.x = c.x; t.y = c.y; t.w = 1; t.d = 1; t.blocks = .none
+            room.things.append(t)
+        }
     }
 
     static func cellScore(_ c: Cell, _ t: (Double, Double)) -> Double {
