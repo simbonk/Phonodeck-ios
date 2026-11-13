@@ -17,10 +17,6 @@ struct RoomMapView: View {
     @State private var lit: Set<UUID> = []
     @State private var beat = 0
     @State private var tickerOpen = false
-    /// The ticker's answer on screen, held at least a moment while the next question runs.
-    @State private var heldLine = ""
-    @State private var heldSince = Date.distantPast
-    @State private var lineQueue: [String] = []
     /// The map's zoom and pan (pinch and drag on the map only).
     @State private var zoom: CGFloat = 1
     @State private var pan: CGSize = .zero
@@ -167,41 +163,19 @@ struct RoomMapView: View {
                         pair(qa.0, qa.1, kind: item.kind, live: false).opacity(0.6)
                     }
                 }
-                // The last answer stays up while the next question is already running below it.
-                let shown = heldLine.isEmpty ? (items.last?.text ?? "") : heldLine
-                if !shown.isEmpty {
-                    let qa = Self.split(shown)
-                    pair(qa.0, qa.1, kind: items.first(where: { $0.text == shown })?.kind ?? 0, live: false)
-                        .id(shown)
-                        .transition(.opacity)
-                }
+                // The question shows the instant it is asked; the answers stream past under it.
                 if !asking.isEmpty {
                     pair(Continuity.unnamed(asking, in: a), "", kind: 1, live: true)
-                        .id("live:" + asking)
-                        .transition(.opacity)
+                }
+                if let last = items.last {
+                    let qa = Self.split(last.text)
+                    pair(qa.0, qa.1, kind: last.kind, live: false).opacity(asking.isEmpty ? 1 : 0.7)
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
             .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
             .contentShape(Rectangle())
             .onTapGesture { withAnimation(.snappy) { tickerOpen.toggle() } }
-            .animation(.easeInOut(duration: 0.25), value: asking)
-            .animation(.easeInOut(duration: 0.25), value: heldLine)
-            .onChange(of: items.last?.text ?? "") { _, t in
-                guard !t.isEmpty, t != heldLine, !lineQueue.contains(t) else { return }
-                lineQueue.append(t)
-                // Never fall far behind: only the last few wait their turn.
-                if lineQueue.count > 3 { lineQueue.removeFirst(lineQueue.count - 3) }
-            }
-            .task {
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    if !lineQueue.isEmpty, Date().timeIntervalSince(heldSince) >= 1.3 {
-                        heldLine = lineQueue.removeFirst()
-                        heldSince = Date()
-                    }
-                }
-            }
         }
     }
 

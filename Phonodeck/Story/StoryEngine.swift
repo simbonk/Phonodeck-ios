@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z31"
+    static let build = "build 2026-11-13z32"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -4296,6 +4296,13 @@ extension StoryEngine {
         // Then the name as a whole, as a choice: "old wood smell" names a smell even though "wood"
         // is in it, and "amber light" names a light.
         var headOK = true
+        // The model's own word is a kind of furniture the map already draws (a lamp, a counter, a
+        // bar): that settles it, with nothing more to ask.
+        let knownKind = fromName && !said.hasPrefix("none") && !["other", "small"].contains(Rules.icon(for: said))
+        if knownKind {
+            whatIsKnown[key] = what
+            return what
+        }
         if fromName, !said.hasPrefix("none") {
             let kind = (await choose("What does " + n + " name as a whole?", ["an object", "a smell", "a sound", "a light or a glow", "a material or a surface", "a feeling or a mood"])).lowercased()
             if !kind.isEmpty, !kind.hasPrefix("an object") {
@@ -4683,7 +4690,7 @@ extension StoryEngine {
                 // beside them for company. The model picks; the map checks there is room.
                 let needOptions = ["nothing", "a table", "a chair", "a stool", "a sofa", "a shelf", "a lamp", "a crate", "a desk"]
                 let nq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\n"
-                    + "QUESTION: What is " + who + " doing as the story opens, " + (sitting ? "sitting" : "standing") + (apart ? " on their own" : "") + "? What does that need right beside them that is not already there (a table to work or drink at, a chair for company), from NEEDS? Most people need one thing or nothing.\nNEEDS: " + needOptions.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"doing\":\"a few words\",\"first\":\"one of NEEDS\",\"second\":\"one of NEEDS\"}\nThe form:"
+                    + "QUESTION: What is " + who + " doing as the story opens, " + (sitting ? "sitting" : "standing") + (apart ? " on their own" : "") + "? What does that need right beside them that is not already there (a table to work or drink at, a chair for company), from NEEDS? Someone settled in a place for a while usually has one or two things by them (a regular in a bar has a table and a chair); say nothing only if they are just passing through.\nNEEDS: " + needOptions.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"doing\":\"a few words\",\"first\":\"one of NEEDS\",\"second\":\"one of NEEDS\"}\nThe form:"
                 let nm = await ask("What does " + Cards.first(name) + " need?", nq, JSONGrammar.personNeeds(options: needOptions), 50)
                 let doingNow = str(nm, "doing")
                 var needs: [String] = []
