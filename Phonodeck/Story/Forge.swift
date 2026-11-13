@@ -17,19 +17,9 @@ final class Forge {
         let why: String
     }
 
-    static let classicStages: [Stage] = [
-        Stage(title: "Reading your wishes", keys: [], why: ""),
-        Stage(title: "Building the story", keys: ["title", "bible"], why: "A story bible, written for you alone."),
-        Stage(title: "Mapping the world", keys: ["location", "places", "beats"], why: "Places to wander, and your first steps."),
-        Stage(title: "Establishing characters and lore", keys: ["player", "lore", "cast"], why: "A world that remembers everyone you meet."),
-        Stage(title: "Crafting the Game Master", keys: ["secrets"], why: "A narrator's voice, and secrets kept from you."),
-        Stage(title: "Crafting the Director", keys: ["roadmap"], why: "A plan paced to your time."),
-        Stage(title: "Raising the curtain", keys: [], why: "Your opening scene is being written."),
-    ]
-
-    /// The grounded engine's build: no hidden plot, no paced roadmap, a short premise. The world
+    /// The build: no hidden plot, no paced roadmap, a short premise. The world
     /// is built as you go.
-    static let groundedStages: [Stage] = [
+    static let stages: [Stage] = [
         Stage(title: "Reading your wishes", keys: [], why: ""),
         Stage(title: "Building the story", keys: ["title", "bible"], why: "What this story is, in a few lines."),
         Stage(title: "Mapping the world", keys: ["location", "places"], why: "Where you begin."),
@@ -38,8 +28,7 @@ final class Forge {
         Stage(title: "Raising the curtain", keys: [], why: "Your opening scene is being written."),
     ]
 
-    let stages: [Stage]
-    private let grounded: Bool
+    var stages: [Stage] { Self.stages }
     /// An experience lives in one place: the map shows only that, whatever else the model listed.
     private let onePlace: Bool
 
@@ -65,11 +54,9 @@ final class Forge {
     private var raw = ""
     private let lines: [String]
 
-    init(name: String, curated: Bool, grounded: Bool = false, onePlace: Bool = false) {
+    init(name: String, curated: Bool, onePlace: Bool = false) {
         self.name = name
-        self.grounded = grounded
         self.onePlace = onePlace
-        stages = grounded ? Self.groundedStages : Self.classicStages
         var l = Self.waitingLines
         if curated { l.insert("This world was curated for you. Next time, try building one yourself.", at: 3) }
         lines = l
@@ -155,18 +142,12 @@ final class Forge {
             return inner.isEmpty ? nil : String(inner)
         }
         func plural(_ n: Int, _ one: String, _ many: String) -> String? { n > 0 ? "\(n) " + (n == 1 ? one : many) : nil }
-        let secrets = max(0, (section("secrets")?.filter { $0 == "\"" }.count ?? 0) / 2)
         let people = section("lore")?.components(separatedBy: "\"person\"").count ?? 1
         finds[2] = [firstString("location").map { "You begin at " + $0 }, onePlace ? nil : plural(count("places", "name"), "place on the map", "places on the map")]
             .compactMap { $0 }.joined(separator: " · ")
         finds[3] = [firstString("player").map { "You are " + $0 }, plural(people - 1, "character with a life of their own", "characters with lives of their own")]
             .compactMap { $0 }.joined(separator: " · ")
-        if grounded {
-            finds[4] = firstString("time") ?? ""
-        } else {
-            finds[4] = plural(secrets, "secret kept from you", "secrets kept from you") ?? ""
-            finds[5] = plural(count("roadmap", "goal"), "act planned", "acts planned") ?? ""
-        }
+        finds[4] = firstString("time") ?? ""
     }
 }
 

@@ -42,11 +42,10 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: Gameplay: you in stories, reading, hands-free and the Game Master
+    // MARK: Gameplay: you in stories, reading and hands-free
 
     @ViewBuilder
     private func gameplay(_ engine: StoryEngine) -> some View {
-        @Bindable var engine = engine
                 Section {
                     profileRow("Gender", "Your own words", $playerGender)
                     profileRow("Attracted to", "Anyone", $playerInterest)
@@ -87,22 +86,6 @@ struct SettingsView: View {
                     Text("Sound cues: a chirp when the microphone opens, another when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
                 }
 
-                Section {
-                    Toggle("Plans each reply", isOn: $engine.gmPlans)
-                    Toggle("Reasons first (slower)", isOn: $engine.deepThinking)
-                        .disabled(!engine.gmPlans)
-                    Toggle("Grounded engine", isOn: $engine.grounded)
-                        .disabled(!engine.gmPlans)
-                    Toggle("Foveated story", isOn: $engine.foveated)
-                        .disabled(!engine.gmPlans || !engine.grounded)
-                    NavigationLink("Test scenarios") { AutoPlayView() }
-                    NavigationLink("Model benchmark") { BenchmarkView() }
-                } header: {
-                    Text("Game Master")
-                } footer: {
-                    Text("Plans each reply: before writing, the Game Master reviews the clock, the goal, your feeling and what it remembers, and decides what the reply must do. While a reply is read aloud it checks it for slips and plans the next move. Reasons first: uses the model's thinking mode (Qwen through MLX), which can take up to about a minute a turn. GGUF storytellers skip it: they always answer straight away. Grounded engine: the world stays in the app. Before each reply the storyteller looks up only what your action needs (who is here, what you have, a card, an earlier moment); after it, short questions rebuild the world piece by piece. The World panel's turn guide shows each turn. Foveated story: after your words are read, every item on the cards is marked yes or no for this moment, and the storyteller sees only the year, the time, the room, the person you face and the yeses. No plan decides the next beat.")
-                }
-
     }
 
     // MARK: Privacy: the lock, and where to find help
@@ -134,7 +117,7 @@ struct SettingsView: View {
         }
         Section {
             Label("A thinking model (a language model) writes the story and the chat replies.", systemImage: "brain")
-            Label("A Game Master plans each reply and keeps track of time, places and people.", systemImage: "map")
+            Label("Before each reply, short questions pick out only what this moment needs: the room, the person you face, what matters now. The app keeps track of time, places and people.", systemImage: "map")
             Label("A speaking model reads the story aloud, and a listening model hears you in hands-free mode.", systemImage: "waveform")
         } header: {
             Text("How it works")

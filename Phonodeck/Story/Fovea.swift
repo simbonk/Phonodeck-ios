@@ -1,6 +1,6 @@
 import Foundation
 
-/// The foveated story mode (Settings, "Foveated story").
+/// The foveated story: how every turn picks what the storyteller sees.
 ///
 /// After the read works out what the player meant, every item on the cards is listed and one
 /// short question marks each one yes or no for this moment only. The storyteller then sees just
