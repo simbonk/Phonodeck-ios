@@ -287,6 +287,27 @@ enum JSONGrammar {
     }
 
     /// The room builder, question 3: where each person is and who or what they face.
+    /// One person as the room opens: with the others or apart, sitting or standing, and on what.
+    static func personSetup() -> String {
+        [
+            "root ::= \"{\" ws " + [key("company") + " co", key("posture") + " po", key("seat") + " s30"].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("co", ["with the others", "apart"]),
+            choice("po", ["sitting", "standing"]),
+            capped("s30", 30),
+            common,
+        ].joined(separator: "\n")
+    }
+
+    /// One person's place and what they face.
+    static func personPlace(zones: [String], faces: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + key("where") + " zn \",\" ws " + key("facing") + " fc ws \"}\"",
+            choice("zn", zones),
+            choice("fc", faces),
+            common,
+        ].joined(separator: "\n")
+    }
+
     static func roomPeople(names: [String], zones: [String], faces: [String]) -> String {
         let n = max(1, safe(names, max: 60).count)
         return [
