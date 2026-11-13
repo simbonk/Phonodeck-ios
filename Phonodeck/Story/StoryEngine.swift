@@ -797,7 +797,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z19"
+    static let build = "build 2026-11-13z20"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2301,7 +2301,9 @@ final class StoryEngine {
             let dm = await ask(c.name + " now?", q, JSONGrammar.personNow(zones: personZones, faces: faceList), 110)
             guard let dm else { return }
             func field(_ k: String) -> String {
-                let v = ((dm[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+                // A note in brackets ("(implied from the bartender)") is the model thinking aloud, not an answer.
+                let raw = ((dm[k] as? String) ?? "").replacingOccurrences(of: #"\s*\([^)]*\)?"#, with: "", options: .regularExpression)
+                let v = raw.trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
                 return v.count > 2 && !Self.echoesPrompt(v) && !["nothing", "none", "n/a"].contains(v.lowercased()) ? v : ""
             }
             let doing = field("doing")
@@ -2550,6 +2552,49 @@ final class StoryEngine {
             if !key.isEmpty { now.placeThings[key] = merged }
             let added = around.filter { n in !had.contains { Self.similar($0, n) } }
             if !added.isEmpty { filed.append("Props here: " + added.joined(separator: "; ")) }
+        }
+
+        // Each new thing the story showed goes on the map only through the model: what kind of thing
+        // it is, its size, the space people need by it, and where it goes (with a where-else when the
+        // rules say no). Small things go on whatever they sit on.
+        for e in around.prefix(3) {
+            guard var r = adventure?.room, r.named(e) == nil else { continue }
+            let short = Zone.short(e)
+            let im = await ask("What kind of thing is the " + clip(short, 40) + "?", "About \"" + e + "\" in this room: what kind of thing is it (from KINDS), what is it made of, its real size in whole metres seen from above (1 for anything small), and where people need space by it.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"length\":1,\"width\":1,\"space\":\"none, in front, behind or all round\"}\nThe form:", JSONGrammar.thingInfo(kinds: Rules.kinds), 60)
+            guard let im else { return }
+            var kind = ((im["kind"] as? String) ?? "").lowercased()
+            if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: e) }
+            var t = Thing(kind: .object, name: e, icon: kind)
+            t.makeup = ((im["made_of"] as? String) ?? "")
+            func metres(_ k: String) -> Int { (im[k] as? Int) ?? Int(((im[k] as? String) ?? "").filter(\.isNumber)) ?? 1 }
+            if !Rules.rule(kind).small {
+                let l = max(1, min(metres("length"), max(r.width, r.depth) - 2, 6)), w = max(1, min(metres("width"), 3))
+                t.w = max(l, w); t.d = min(l, w)
+                let sp = ((im["space"] as? String) ?? "").lowercased()
+                if ["in front", "behind", "all round"].contains(sp) { t.space = sp }
+            }
+            asked.append("What kind of thing is the " + short + "? → " + kind + (t.w > 1 || t.d > 1 ? ", \(t.w) by \(t.d) m" : ""))
+            let menu = Zone.menu(r)
+            let wm = await ask("Where does the " + clip(short, 40) + " go?", "THE ROOM: " + r.name + ", \(r.width) by \(r.depth) metres, with " + r.objects.map(\.name).joined(separator: ", ") + ".\nWhere does the " + short + " go?\nPLACES: " + menu.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: menu), 30)
+            guard let wm else { return }
+            let z = Zone.parse((wm["where"] as? String) ?? "") ?? RoomBuilder.defaultZone(kind, in: r)
+            let out = Placer.place(&r, t, zone: z)
+            if out.placed {
+                r.log.append("place: " + e + " → " + z.text)
+            } else {
+                r.log.append("refuse: " + e + " " + z.text + " (" + out.reason + ")")
+                let ok = Placer.allowed(t, in: r)
+                var done = false
+                if !ok.isEmpty {
+                    r.log.append("ask: where else for " + e + "?")
+                    let em = await ask("Where else for the " + clip(short, 40) + "?", "The " + short + " can't go " + z.text + ", because " + out.reason + ".\nWhere else does it go?\nPLACES: " + ok.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: ok), 30)
+                    let said = (em?["where"] as? String) ?? ""
+                    if let z2 = Zone.parse(said), ok.contains(said), Placer.place(&r, t, zone: z2).placed { r.log.append("place: " + e + " → " + z2.text); done = true }
+                }
+                if !done { Placer.fallback(&r, t, near: z); r.log.append("move: " + e + " → nearest allowed spot") }
+            }
+            let placed = r
+            commit { now in now.room = placed }
         }
 
         // The background of the place: its sounds and light, kept with the place.

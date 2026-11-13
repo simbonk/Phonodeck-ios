@@ -253,15 +253,7 @@ extension Adventure {
             Placer.turn(&r, p.id, toward: name)
         }
 
-        // The things the story has shown here.
-        for item in Cards.props(self).prefix(8) where r.named(item) == nil && Rules.onPlan(item) {
-            let icon = Rules.icon(for: item)
-            let z = RoomBuilder.defaultZone(icon, in: r)
-            let t = Thing(kind: .object, name: item, icon: icon)
-            let out = Placer.place(&r, t, zone: z)
-            if !out.placed { Placer.fallback(&r, t, near: z) }
-            r.log.append("place: " + item + " → " + z.text)
-        }
+        // Things the story shows are put on the map by the rebuild, which asks the model about each.
         r.log = Array(r.log.suffix(60))
         room = r
         return rooms != beforeRooms || roomID != beforeID

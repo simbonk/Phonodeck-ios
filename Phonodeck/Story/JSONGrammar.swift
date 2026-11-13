@@ -258,6 +258,19 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// One thing, as the model sees it: its kind, what it is made of, its size and the space it needs.
+    static func thingInfo(kinds: [String]) -> String {
+        [
+            "root ::= \"{\" ws " + [key("kind") + " kd", key("made_of") + " s40", key("length") + " num", key("width") + " num", key("space") + " sp"]
+                .joined(separator: " \",\" ws ") + " ws \"}\"",
+            #"num ::= [1-9]"#,
+            choice("sp", ["none", "in front", "behind", "all round"]),
+            choice("kd", kinds),
+            capped("s40", 40),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// The room builder: the things the story needs, without where they go (each is asked after).
     static func roomList(kinds: [String]) -> String {
         [
