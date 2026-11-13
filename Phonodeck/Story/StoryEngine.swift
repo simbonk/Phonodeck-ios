@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z32"
+    static let build = "build 2026-11-13z33"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -4686,19 +4686,51 @@ extension StoryEngine {
                     let out = Placer.place(&r, tb, zone: .beside(name))
                     r.log.append(out.placed ? "place: " + tb.name + " → beside " + name : "refuse: " + tb.name + " (" + out.reason + ")")
                 }
-                // What they are doing pulls in the few things it needs: a table to sew at, a chair
-                // beside them for company. The model picks; the map checks there is room.
-                let needOptions = ["nothing", "a table", "a chair", "a stool", "a sofa", "a shelf", "a lamp", "a crate", "a desk"]
+                // Then, as a person would: what do they have with them, and what would they need
+                // close by for it? The things may be ones the story never names; they only need to
+                // be near the person who has them.
+                func isObject(_ item: String) async -> Bool {
+                    let what = await Self.whatIs(item, noun: { q in
+                        let m = await ask("What object is " + clip(item, 40) + "?", base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
+                        return str(m, "object")
+                    }, choose: { q, opts in
+                        let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 16)
+                        return str(m, "answer")
+                    }, yesNo: { q in
+                        let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                        let v = str(m, "answer").lowercased()
+                        return v.isEmpty ? nil : v.hasPrefix("y")
+                    })
+                    if !(what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn")) { r.log.append("refuse: " + item + " (" + what + ")"); return false }
+                    return true
+                }
+                // 1. What they have.
+                let hq = base + "QUESTION: What is " + who + " doing as the story opens, " + (sitting ? "sitting" : "standing") + ", and what do they have with them for it, in hand or close by (a glass and a cloth, a needle and fabric, a book)? Up to 3 short names of real objects; they may be things the story doesn't name.\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
+                let hm = await ask("What does " + Cards.first(name) + " have?", hq, JSONGrammar.strings("things", max: 3, chars: 30), 60)
+                var has: [String] = []
+                for item in ((hm["things"] as? [Any]) ?? []).compactMap({ $0 as? String }).map({ $0.trimmingCharacters(in: .whitespaces) }).prefix(3)
+                where item.count >= 3 && !Self.echoesPrompt(item) {
+                    if await isObject(item) { has.append(item) }
+                }
+                r.log.append("ask: what does " + name + " have? → " + (has.isEmpty ? "nothing" : has.joined(separator: ", ")))
+                // 2. What they would need close by for it.
+                func surfaceNear() -> Thing? {
+                    guard let me = r.thing(p.id) else { return nil }
+                    return r.objects.filter { Rules.surfaces.contains($0.icon) && $0.on == nil }
+                        .filter { RoomGrid.distance($0, me) < 2.2 }
+                        .min { RoomGrid.distance($0, me) < RoomGrid.distance($1, me) }
+                }
+                let needOptions = ["nothing", "a table", "a desk", "a shelf", "a crate", "a chair", "a stool", "a sofa", "a lamp"]
+                let within = surfaceNear().map { "Already within reach: the " + Zone.short($0.name) + ". " } ?? ""
                 let nq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\n"
-                    + "QUESTION: What is " + who + " doing as the story opens, " + (sitting ? "sitting" : "standing") + (apart ? " on their own" : "") + "? What does that need right beside them that is not already there (a table to work or drink at, a chair for company), from NEEDS? Someone settled in a place for a while usually has one or two things by them (a regular in a bar has a table and a chair); say nothing only if they are just passing through.\nNEEDS: " + needOptions.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"doing\":\"a few words\",\"first\":\"one of NEEDS\",\"second\":\"one of NEEDS\"}\nThe form:"
-                let nm = await ask("What does " + Cards.first(name) + " need?", nq, JSONGrammar.personNeeds(options: needOptions), 50)
-                let doingNow = str(nm, "doing")
+                    + "QUESTION: " + who + " is " + (sitting ? "sitting" : "standing") + (has.isEmpty ? "" : " and has " + has.joined(separator: ", ")) + ". " + within + "What would they need right beside them for it (somewhere to set things down or work, a chair for company), from NEEDS? Someone settled in a place for a while usually has one or two things by them.\nNEEDS: " + needOptions.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"doing\":\"a few words\",\"first\":\"one of NEEDS\",\"second\":\"one of NEEDS\"}\nThe form:"
+                let nm = await ask("What would " + Cards.first(name) + " need?", nq, JSONGrammar.personNeeds(options: needOptions), 50)
                 var needs: [String] = []
                 for k in ["first", "second"] {
                     let v = str(nm, k)
                     if needOptions.contains(v), v != "nothing", !needs.contains(v) { needs.append(v) }
                 }
-                r.log.append("ask: what does " + name + " need" + (doingNow.isEmpty || Self.echoesPrompt(doingNow) ? "" : " for " + doingNow) + "? → " + (needs.isEmpty ? "nothing" : needs.joined(separator: ", ")))
+                r.log.append("ask: what would " + name + " need? → " + (needs.isEmpty ? "nothing" : needs.joined(separator: ", ")))
                 for need in needs {
                     let kind = String(need.dropFirst(2))
                     var t = Thing(kind: .object, name: Cards.first(name) + "'s " + kind, icon: Rules.icon(for: kind))
@@ -4716,31 +4748,17 @@ extension StoryEngine {
                         }
                     }
                 }
-                if !needs.isEmpty { await show(r, pause: 0.2) }
-                // What they have around them on that table or desk: their tools, a drink, a book.
-                if let p2 = r.thing(p.id), let surface = r.objects.filter({ Rules.surfaces.contains($0.icon) && $0.on == nil && !Rules.staffed.contains($0.icon) })
-                    .min(by: { RoomGrid.distance($0, p2) < RoomGrid.distance($1, p2) }), RoomGrid.distance(surface, p2) < 2.2 {
-                    let sq = base + "QUESTION: What small things does " + who + " have on the " + Zone.short(surface.name) + " beside them for what they are doing" + (doingNow.isEmpty ? "" : " (" + doingNow + ")") + ": their tools, a drink, a book? Up to 3, each a short name of a real object, or an empty list.\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
-                    let sm = await ask("What does " + Cards.first(name) + " have on the " + clip(Zone.short(surface.name), 30) + "?", sq, JSONGrammar.strings("things", max: 3, chars: 30), 60)
-                    let smalls = ((sm["things"] as? [Any]) ?? []).compactMap { $0 as? String }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count >= 3 && !Self.echoesPrompt($0) }
-                    for item in smalls.prefix(3) {
-                        let what = await Self.whatIs(item, noun: { q in
-                            let m = await ask("What object is " + clip(item, 40) + "?", base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
-                            return str(m, "object")
-                        }, choose: { q, opts in
-                let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 16)
-                return str(m, "answer")
-            }, yesNo: { q in
-                            let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-                            let v = str(m, "answer").lowercased()
-                            return v.isEmpty ? nil : v.hasPrefix("y")
-                        })
-                        guard what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn") else { r.log.append("refuse: " + item + " (" + what + ")"); continue }
-                        let t = Thing(kind: .object, name: item, icon: "small")
-                        if Placer.place(&r, t, zone: .on(Zone.short(surface.name))).placed { r.log.append("place: " + item + " → on the " + Zone.short(surface.name)) }
+                // 3. What they have goes close to them: on the surface in reach, or in their hands.
+                let rest = surfaceNear()
+                for item in has {
+                    if let s = rest, Placer.place(&r, Thing(kind: .object, name: item, icon: "small"), zone: .on(Zone.short(s.name))).placed {
+                        r.log.append("place: " + item + " → on the " + Zone.short(s.name))
+                    } else if let i = r.index(p.id) {
+                        r.things[i].holding = Array((r.things[i].holding + [item]).prefix(2))
+                        r.log.append("edit: " + item + " → in " + name + "'s hands")
                     }
-                    if !smalls.isEmpty { await show(r, pause: 0.2) }
                 }
+                if !has.isEmpty || !needs.isEmpty { await show(r, pause: 0.2) }
                 facing.append((p.id, faceSaid))
                 // Someone apart is not the one the player is dealing with yet.
                 if apart, var a = adventure, let k = a.whereabouts.firstIndex(where: { $0.name == name }) {
