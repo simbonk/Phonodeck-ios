@@ -4675,7 +4675,7 @@ extension StoryEngine {
                     r.log.append("place: " + seatName + " → under " + name)
                 }
                 if !seatTable.isEmpty {
-                    let tb = Thing(kind: .object, name: Cards.first(name) + "'s " + Zone.short(seatTable).replacingOccurrences(of: "a ", with: ""), icon: Rules.icon(for: seatTable))
+                    let tb = Thing(kind: .object, name: Cards.first(name) + "'s " + Zone.short(seatTable), icon: Rules.icon(for: seatTable))
                     let out = Placer.place(&r, tb, zone: .beside(name))
                     r.log.append(out.placed ? "place: " + tb.name + " → beside " + name : "refuse: " + tb.name + " (" + out.reason + ")")
                 }
