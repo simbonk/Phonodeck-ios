@@ -802,7 +802,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z29"
+    static let build = "build 2026-11-13z30"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2177,7 +2177,9 @@ final class StoryEngine {
             if desc.count > 20 { now.lore[i].desc = clip(desc, 240); filed.append("Place card described: " + now.location) }
         }
 
-        // A room the story has just entered is laid out now, while the reply is read aloud.
+        // A room the story has just entered is laid out now, while the reply is read aloud. People
+        // it places from this same reply are not moved again by the questions below.
+        let roomBefore = adventure?.rooms.count ?? 0
         await furnishRoom(story: (playerSaid.isEmpty ? "" : "THE PLAYER: " + clip(playerSaid, 300) + "\n") + "THE STORY: " + clip(reply, 900))
         guard !Task.isCancelled else { return }
 
@@ -2308,6 +2310,7 @@ final class StoryEngine {
         // they are and what they face. One question each, only for people the moment shows (the
         // rest were out of view, so nothing the player saw could have changed them).
         let gridNow: Room? = mid.room
+        let justDrawn = (adventure?.rooms.count ?? 0) > roomBefore || (start.room == nil && mid.room != nil)
         let personZones: [String] = gridNow.map { Zone.menu($0, people: true) } ?? []
         var faceList: [String] = ["you", "the door"]
         if let g = gridNow {
@@ -2345,7 +2348,7 @@ final class StoryEngine {
                 p.holding = holds.isEmpty ? [] : [clip(holds, 50)]
                 if !doing.isEmpty { p.doing = clip(doing, 100) }
                 Placer.put(&r, p)
-                if !whereSaid.isEmpty, whereSaid != "stays put", plannedNow[c.name] == nil, var z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
+                if !whereSaid.isEmpty, whereSaid != "stays put", plannedNow[c.name] == nil, !justDrawn, var z = Zone.parse(whereSaid), t.pastMoves.first != z.text {
                     if case .at(let n) = z, let was = t.pastMoves.first, was.hasPrefix("behind"), was.contains(Zone.short(n)) { z = .behind(n) }
                     if z.text == t.pastMoves.first { now.room = r; return }
                     let note = Placer.placePerson(&r, p, zone: z)
@@ -2561,6 +2564,9 @@ final class StoryEngine {
             let what = await Self.whatIs(e, noun: { q in
                 let m = await ask("What object is " + clip(e, 40) + "?", q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
                 return (m?["object"] as? String) ?? ""
+            }, choose: { q, opts in
+                let m = await ask(clip(q, 70), q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 16)
+                return (m?["answer"] as? String) ?? ""
             }, yesNo: { q in
                 let m = await ask(clip(q, 70), q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
                 guard let a = (m?["answer"] as? String)?.lowercased(), !a.isEmpty else { return nil }
@@ -4276,7 +4282,7 @@ extension StoryEngine {
         "Does the long side of the \"" + name + "\" run along a wall, the way a bar, a counter, a bookcase or a sofa does, rather than standing out into the room end-on?"
     }
 
-    static func whatIs(_ name: String, noun: (String) async -> String, yesNo: (String) async -> Bool?) async -> String {
+    static func whatIs(_ name: String, noun: (String) async -> String, choose: (String, [String]) async -> String, yesNo: (String) async -> Bool?) async -> String {
         let key = name.lowercased()
         if let known = whatIsKnown[key] { return known }
         let n = "\"" + name + "\""
@@ -4287,13 +4293,12 @@ extension StoryEngine {
         let words = Continuity.wordSet(name)
         let saidWords = Continuity.wordSet(said)
         let fromName = saidWords.contains { w in words.contains { $0.hasPrefix(w) || w.hasPrefix($0) } }
-        // The name's main word ("smell" in "old wood smell", "spools" in "spools of thread"): when the
-        // model picked another word, it is asked whether that main word is a thing at all.
-        let parts = name.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
-        let head = parts.firstIndex(of: "of").flatMap { $0 > 0 ? parts[$0 - 1] : nil } ?? parts.last ?? ""
+        // Then the name as a whole, as a choice: "old wood smell" names a smell even though "wood"
+        // is in it, and "amber light" names a light.
         var headOK = true
-        if fromName, !head.isEmpty, !saidWords.contains(where: { head.hasPrefix($0) || $0.hasPrefix(head) }) {
-            headOK = await yesNo("In " + n + ", the main word is \"" + head + "\". Is a " + head + " a solid thing you could put down in a room?") != false
+        if fromName, !said.hasPrefix("none") {
+            let kind = (await choose("What does " + n + " name as a whole?", ["an object", "a smell", "a sound", "a light or a glow", "a material or a surface", "a feeling or a mood"])).lowercased()
+            if !kind.isEmpty, !kind.hasPrefix("an object") { headOK = false }
         }
         if said.isEmpty || said.hasPrefix("none") || !fromName || !headOK {
             what = "not an object (a material, smell, sound, light or feeling)"
@@ -4432,6 +4437,9 @@ extension StoryEngine {
             let what = await Self.whatIs(name, noun: { q in
                 let m = await ask("What object is " + clip(name, 40) + "?", base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
                 return str(m, "object")
+            }, choose: { q, opts in
+                let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 16)
+                return str(m, "answer")
             }, yesNo: { q in
                 let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
                 let a = str(m, "answer").lowercased()
@@ -4473,7 +4481,22 @@ extension StoryEngine {
         }
         // A room of this type usually has its centrepiece (a bar's bar, a bedroom's bed): the model
         // says whether this one needs it.
+        // Something already listed may be it under another name (a "long mahogany counter" is the
+        // bar): the model is asked before a second one is added.
+        var leadFound = false
         if let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
+            for t in wanted where !Rules.rule(t.icon).small && !Rules.seats.contains(t.icon) {
+                let sq = "Is the \"" + t.name + "\" the " + Zone.short(lead.name) + " of this room?"
+                let sm = await ask(clip(sq, 70), base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                if str(sm, "answer").lowercased().hasPrefix("y") {
+                    leadFound = true
+                    if let i = wanted.firstIndex(where: { $0.id == t.id }) { wanted[i].icon = lead.icon }
+                    r.log.append("ask: is the " + Zone.short(t.name) + " the " + Zone.short(lead.name) + "? → yes")
+                    break
+                }
+            }
+        }
+        if !leadFound, let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
             let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: Does this story need " + lead.name + " in this room?\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
             if str(nm, "answer").lowercased() == "yes" { wanted.insert(Thing(kind: .object, name: lead.name, icon: lead.icon), at: 0) }
         }
@@ -4676,7 +4699,10 @@ extension StoryEngine {
                         let what = await Self.whatIs(item, noun: { q in
                             let m = await ask("What object is " + clip(item, 40) + "?", base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
                             return str(m, "object")
-                        }, yesNo: { q in
+                        }, choose: { q, opts in
+                let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 16)
+                return str(m, "answer")
+            }, yesNo: { q in
                             let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
                             let v = str(m, "answer").lowercased()
                             return v.isEmpty ? nil : v.hasPrefix("y")
