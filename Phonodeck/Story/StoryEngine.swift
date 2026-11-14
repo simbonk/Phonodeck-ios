@@ -2510,9 +2510,21 @@ final class StoryEngine {
             let whereSaid = ((sm["where"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
             let facingSaid = ((sm["facing"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
             asked.append("Where are you in the room? → " + whereSaid + (facingSaid.isEmpty ? "" : ", facing " + facingSaid))
+            // Seated, and the answer would take you off the seat ("by the counter"): only an
+            // outright getting up in the story or the player's words does that.
+            var standsUp = true
+            var isSeatMove = false
+            if case .on = Zone.parse(whereSaid) { isSeatMove = true }
+            if whereSaid != "stays put", !isSeatMove, let seatID = (adventure ?? start).room?.player?.on,
+               let seat = (adventure ?? start).room?.thing(seatID) {
+                let uq = "You are sitting on the " + Fovea.bare(seat.name) + ". Do THE PLAYER's words or THE STORY say outright that you stand up, get off it or walk somewhere?"
+                let um = await ask("Did you get up?", uq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                standsUp = ((um?["answer"] as? String) ?? "").lowercased().hasPrefix("y")
+                asked.append("Did you get up? → " + (standsUp ? "yes" : "no, still on the " + Fovea.bare(seat.name)))
+            }
             commit { now in
                 guard var r = now.room, let me = r.player else { return }
-                if whereSaid != "stays put", let z = Zone.parse(whereSaid) {
+                if whereSaid != "stays put", standsUp, let z = Zone.parse(whereSaid) {
                     Placer.placePerson(&r, me, zone: z)
                     r.log.append("move: you → " + z.text)
                     let spot: String
