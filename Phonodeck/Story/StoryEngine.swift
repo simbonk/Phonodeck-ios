@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 import Observation
 
 /// The story engine: builds the world, runs each turn, keeps the clock, remembers what
@@ -908,7 +909,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z52"
+    static let build = "build 2026-11-14z53"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2390,6 +2391,8 @@ final class StoryEngine {
                                JSONGrammar.names("here", from: cast.map(\.name), max: 6), 80)
             guard hm != nil else { return }
             let listed = ((hm?["here"] as? [Any]) ?? []).compactMap { $0 as? String }
+            // Skipped (a talk turn): nobody comes or goes on an answer that was never asked.
+            if hm?.isEmpty == false {
             asked.append("Who is with you? → " + (listed.isEmpty ? "nobody" : listed.joined(separator: ", ")))
             let leaves = #"(?i)\b(leaves|walks out|heads (out|off)|goes out|disappears|slips out|steps out|is gone|walks away|hurries off)\b"#
             commit { now in
@@ -2415,6 +2418,7 @@ final class StoryEngine {
                         filed.append("Came into view: " + c.name)
                     }
                 }
+            }
             }
         }
 
@@ -3025,8 +3029,8 @@ final class StoryEngine {
         var lasting: [String] = []
         let owners: [String] = present.filter { !$0.isPlayer }.map(\.name)
         for f in fresh {
-            let opts = owners.map { "about " + $0 + ", still true tomorrow" } + ["about you, still true tomorrow", "only this moment: something said or done just now"]
-            let lm = await ask("Does it last?", "THE SENTENCE: \"" + f + "\"\nQUESTION: Is this something that stays true (a person's life, work, plans, a promise, a relationship, something given), and about whom? Or only what was said or done this moment?\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
+            let opts = owners.map { "about " + $0 + ", still true tomorrow" } + ["about you, still true tomorrow", "only this moment: a toast, a greeting or an action just now"]
+            let lm = await ask("Does it last?", "THE SENTENCE: \"" + f + "\"\nQUESTION: Is this something that stays true about someone: their life, work, past, plans, habits, why they come here, what they love or fear, a promise, something given? And about whom? Or only a toast, a greeting or an action this moment?\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
             let said = ((lm?["answer"] as? String) ?? "").lowercased()
             if said.hasPrefix("only") { refused.append(f + " (only this moment)"); continue }
             // Filed under the person the model named, even when the sentence doesn't name them.
@@ -3115,8 +3119,8 @@ final class StoryEngine {
                         let seat = Array(seats)[i]
                         // By the seat itself, not its name: several can be called "stool".
                         if let k = r.index(me1.id) { r.things[k].x = seat.x; r.things[k].y = seat.y; r.things[k].on = seat.id }
-                        r.log.append("move: you → on the " + Fovea.bare(seat.name))
-                        a.spot = "on the " + Fovea.bare(seat.name)
+                        r.log.append("move: you → on " + Fovea.bare(seat.name))
+                        a.spot = "on " + Fovea.bare(seat.name)
                     } else if let p = anchor {
                         let stool = Thing(kind: .object, name: "stool", icon: "stool")
                         if Placer.place(&r, stool, zone: .beside(p.name)).placed, let placed = r.objects.last(where: { $0.icon == "stool" }) {
@@ -3323,6 +3327,18 @@ final class StoryEngine {
         a.facts = a.facts.map { $0.hasPrefix(old + " ") ? name + String($0.dropFirst(old.count)) : $0 }
     }
 
+    /// Whether Apple's on-device language tagger reads this word in the reply as a person's name.
+    static func isPersonalName(_ word: String, in text: String) -> Bool {
+        let tagger = NLTagger(tagSchemes: [.nameType])
+        tagger.string = text
+        var found = false
+        tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .nameType, options: [.omitWhitespace, .omitPunctuation, .joinNames]) { tag, range in
+            if tag == .personalName, text[range].split(separator: " ").contains(where: { $0 == word }) { found = true; return false }
+            return true
+        }
+        return found
+    }
+
     static func fixMadeUpName(_ a: inout Adventure, reply: String, namey: Bool, playerSaid: String = "") -> (reply: String, note: String, name: String)? {
         let me = Cards.first(a.playerName).lowercased()
         let facing: [LoreEntry] = a.whereabouts.filter { $0.here != false && $0.engaged == true && Cards.first($0.name).lowercased() != me }
@@ -3348,6 +3364,8 @@ final class StoryEngine {
             if known.contains(low) || notNames.contains(low) { continue }
             // The player's own name, as they just gave it ("I introduced myself as Simon"), is theirs.
             if Continuity.wordSet(playerSaid).contains(low) { continue }
+            // Only a word the language tagger reads as a person's name ("Now," he says is not one).
+            if !Self.isPersonalName(said, in: reply) { continue }
             // Someone known only by a description ("The young man") who gives a name has told
             // the player who they are: the card takes the name.
             if c.name.hasPrefix("The ") {
@@ -4970,6 +4988,8 @@ extension StoryEngine {
                 if let told = (adventure ?? a0).whereabouts.first(where: { $0.name == name })?.at, told.count > 3 {
                     who += ", whom the story puts " + clip(told, 80)
                 }
+                // And their card ("She sits in a corner, humming"), so posture and things fit it.
+                if let d = card?.desc, d.count > 8 { who += " (their card: " + clip(d, 110) + ")" }
                 let q = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + (r.people.count > 1 ? "; already placed: " + r.people.filter { $0.kind == .person }.map(\.name).joined(separator: ", ") : "") + ".\n"
                     + "QUESTION: About " + who + " as the story opens: are they with the others, or apart on their own (a separate conversation the player can go to)? Are they sitting or standing, and on what (a stool, a chair, a booth, a bench; none if standing)? Do they work behind something here (WORK SPOTS), or nothing?\nWORK SPOTS: " + workSpots.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"company\":\"with the others or apart\",\"posture\":\"sitting or standing\",\"seat\":\"what they sit on, or none\",\"works_behind\":\"one of WORK SPOTS\"}\nThe form:"
                 let m = await ask("Is " + Cards.first(name) + " with the others, or apart?", q, JSONGrammar.personSetup(work: workSpots), 60)
@@ -5200,7 +5220,7 @@ extension StoryEngine {
                     if let seat = r.objects.filter({ Rules.seats.contains($0.icon) && !taken.contains($0.id) && RoomGrid.distance($0, meNow) < 2.5 })
                         .min(by: { RoomGrid.distance($0, meNow) < RoomGrid.distance($1, meNow) }), let i = r.index(meNow.id) {
                         r.things[i].x = seat.x; r.things[i].y = seat.y; r.things[i].on = seat.id
-                        r.log.append("move: you → on the " + Fovea.bare(seat.name))
+                        r.log.append("move: you → on " + Fovea.bare(seat.name))
                     } else {
                         let stool = Thing(kind: .object, name: "stool", icon: "stool")
                         if Placer.place(&r, stool, zone: .beside(meNow.name)).placed, let placed = r.objects.last(where: { $0.icon == "stool" }), let i = r.index(meNow.id) {
