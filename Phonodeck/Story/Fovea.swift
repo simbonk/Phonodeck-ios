@@ -321,6 +321,26 @@ enum Fovea {
             if let card = Cards.placeCard(a), !card.desc.isEmpty { l.append("THE PLACE: " + clip(card.desc, 200)) }
         }
         let faced = facing(a)
+        // Always: where you are and where the person you face is, read off the map, and whether
+        // they can reach you. The reply keeps to it (no offering a seat to someone already seated,
+        // no touching across a bar).
+        if let r = a.room, let me = r.player {
+            // Without the "facing <name>" part: a name the player hasn't heard stays out of the reply.
+            let spot = youAt(r, me).components(separatedBy: ", facing").first ?? ""
+            var line = "WHERE YOU ARE (from the map, always true): you are " + spot
+            if let f = faced.first, let t = r.named(f.name) {
+                line += "; the person you face is " + (gridSpot(a, f.name) ?? "near you")
+                let d = RoomGrid.distance(me, t)
+                if d > 1.5 {
+                    line += String(format: ". %.0f m apart: out of arm's reach, so they can't touch you or hand you anything without coming round", d)
+                    if let between = r.objects.first(where: { Rules.staffed.contains($0.icon) && $0.on == nil && RoomGrid.distance($0, me) < 1.6 && RoomGrid.distance($0, t) < 1.6 }) {
+                        line += " or sliding it across the " + bare(between.name)
+                    }
+                }
+                if me.on != nil { line += ". You are already seated" }
+            }
+            l.append(line + ".")
+        }
         if faced.isEmpty {
             l.append("FACING: nobody in particular.")
         } else {

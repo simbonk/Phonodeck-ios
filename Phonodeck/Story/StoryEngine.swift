@@ -831,7 +831,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z42"
+    static let build = "build 2026-11-14z43"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1403,7 +1403,11 @@ final class StoryEngine {
                     actsNow.append(c.name + " now knows → " + r.tells)
                 }
             }
-            if !r.body.isEmpty, Continuity.grounded(r.body, in: said, share: 0.5), a.body.caseInsensitiveCompare(r.body) != .orderedSame {
+            // Seated on the map: "standing" from the look doesn't stand you up unless you said so.
+            let seatedNow = a.room?.player?.on != nil
+            let saysStand = input.range(of: #"(?i)\b(stand|stood|get up|got up|rise|rose|on my feet)\b"#, options: .regularExpression) != nil
+            let standsWrongly = seatedNow && !saysStand && r.body.lowercased().contains("stand")
+            if !r.body.isEmpty, !standsWrongly, Continuity.grounded(r.body, in: said, share: 0.5), a.body.caseInsensitiveCompare(r.body) != .orderedSame {
                 a.body = clip(r.body, 70)
                 actsNow.append("You are → " + r.body)
             }
@@ -1740,7 +1744,7 @@ final class StoryEngine {
             events.insert(contentsOf: plan.brief, at: 0)
             system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
             lead = Fovea.lead(a, input: input, arrived: arrivedNow, events: events, kept: kept)
-            roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
+            roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("WHERE YOU ARE") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
             let shown: String = kept.isEmpty ? "only the room and who you face" : kept.map { Fovea.clip($0.text, 50) }.joined(separator: "; ")
             step("What matters right now? → " + shown + " (\(items.count - kept.count) of \(items.count) left out)")
             lastRead += "; foveated: \(kept.count) of \(items.count) card items in"
@@ -1752,7 +1756,7 @@ final class StoryEngine {
             foveaView = items.map { it in (kept.contains(where: { $0.text == it.text }) ? "  + " : "  - ") + Fovea.clip(it.text, 90) }
             system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
             lead = Fovea.lead(a, input: input, arrived: true, events: extra + notes, kept: kept, instruction: true)
-            roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
+            roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("WHERE YOU ARE") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
         }
         // The story's own last turns keep its voice and thread: as many of the last four as fit.
         // Anything older is reached with a "remember" lookup.
