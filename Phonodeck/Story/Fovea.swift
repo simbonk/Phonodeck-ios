@@ -236,7 +236,7 @@ enum Fovea {
         for w in facing(a) {
             if let c = Cards.card(for: w, in: a), !c.role.isEmpty { faced.append(Continuity.roleLabel(c.role)) } else { faced.append(w.name) }
         }
-        var p = "You help run an interactive audio story. The player just spoke. Below is every item on the story's cards. For THIS moment only, mark each item \"yes\" if the storyteller needs it to answer exactly what the player said or did, or \"no\" if it does not matter right now. Most items are \"no\". Something the player holds or something around them is \"yes\" only when the player uses it, mentions it, or it is what they asked about."
+        var p = "You help run an interactive audio story. The player just spoke. Below is every item on the story's cards. For THIS moment only, mark each item \"yes\" if the storyteller needs it to answer exactly what the player said or did, or \"no\" if it does not matter right now. Mark \"yes\" what is about the person they face or what they are talking about. Something the player holds or something around them is \"yes\" only when the player uses it, mentions it, or it is what they asked about."
         p += "\n\nWHEN AND WHERE: " + whenWhere(a)
         p += "\nTHE PLAYER IS FACING: " + (faced.isEmpty ? "nobody in particular" : faced.joined(separator: ", "))
         if !lastReply.isEmpty { p += "\n\nTHE STORY JUST SAID (context only):\n…" + String(lastReply.suffix(350)) }
@@ -278,8 +278,14 @@ enum Fovea {
 
     /// The storyteller's rules in this mode: short, and the facing person always reacts with what
     /// they do, then what they say.
-    static func system(_ a: Adventure, nameless: Bool, playerNamed: Bool, age: Int) -> String {
-        var s = """
+    static func system(_ a: Adventure, nameless: Bool, playerNamed: Bool, age: Int, talk: Bool = false) -> String {
+        // Talking to one person: the same rules, said in a few lines.
+        var s = talk ? """
+        You voice an audio story the player hears. Second person ("you"), present tense, plain words, 100 to 180 words.
+        - The person the player faces answers them fully: first what they do, then what they say, in their own voice.
+        - Never speak, choose or feel for the player. Use only the people and things given; nothing appears from nowhere.
+        - End on that person, leaving room to answer.
+        """ : """
         You are the storyteller of an audio story the player hears read aloud: their vacation from reality.
 
         - Second person, present tense: the player is "you". 60 to 140 words of plain, vivid words that are easy to hear. No headings, lists or notes.
@@ -351,6 +357,21 @@ enum Fovea {
                     }
                 }
                 if me.on != nil { line += ". You are already seated" }
+                // Straight from the grid, no question asked: what lies between you, and what is
+                // within their reach (on the bar, in their hands).
+                let (ax, ay) = me.centre, (bx, by) = t.centre
+                func offLine(_ o: Thing) -> Double {
+                    let dx = bx - ax, dy = by - ay, len2 = max(0.0001, dx * dx + dy * dy)
+                    let k = max(0, min(1, ((o.centre.x - ax) * dx + (o.centre.y - ay) * dy) / len2))
+                    return hypot(o.centre.x - (ax + k * dx), o.centre.y - (ay + k * dy))
+                }
+                let between = r.objects.filter { o in o.icon != "rug" && o.id != me.on && o.id != t.on && o.on == nil && offLine(o) < 0.8 }.map { bare($0.name) }
+                let reach = r.objects.filter { o in o.icon != "rug" && o.id != t.on && RoomGrid.distance(o, t) < 1.6 }.map { bare($0.name) } + t.holding
+                var seenNames = Set<String>()
+                let between1 = between.filter { seenNames.insert($0.lowercased()).inserted }
+                let reach1 = reach.filter { seenNames.insert($0.lowercased()).inserted }
+                if !between1.isEmpty { line += ". Between you: " + between1.prefix(4).joined(separator: ", ") }
+                if !reach1.isEmpty { line += ". Within their reach: " + reach1.prefix(6).joined(separator: ", ") }
             }
             l.append(line + ".")
         }
@@ -361,7 +382,7 @@ enum Fovea {
             l += faced.map { "- " + facingLine($0, in: a) }
         }
         if !events.isEmpty { l += events.map { "- " + $0 } }
-        if !kept.isEmpty, !talk { l.append("ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
+        if !kept.isEmpty { l.append(talk ? "ABOUT THEM (their card):" : "ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
         l.append("[END]")
         return l.joined(separator: "\n") + "\n\n" + (instruction ? "INSTRUCTION: " : "THE PLAYER: ") + input
     }

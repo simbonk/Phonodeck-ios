@@ -714,6 +714,66 @@ final class StoryEngine {
     /// The whole story as plain text, for copying out to refine it. Kept short: the world as the
     /// app holds it now, then every turn with what happened behind the scenes (how the message was read, what was fetched and why, the prompt's size, and what was
     /// filed afterwards).
+    /// The prompt as sent, cut down for the export: the system rules once (then "same as before"),
+    /// the earlier story turns as one line with their size, the yes/no pass as one line (its marks
+    /// are under WHAT MATTERS), and the moment's own block in full. What the model was sent is unchanged.
+    static func compactPrompt(_ p: String, lastSystem: inout String) -> String {
+        let parts = p.components(separatedBy: "\n\n").reduce(into: [String]()) { acc, piece in
+            let heads = ["SYSTEM:\n", "USER:\n", "ASSISTANT:\n", "YES/NO PASS"]
+            if heads.contains(where: { piece.hasPrefix($0) }) || acc.isEmpty { acc.append(piece) } else { acc[acc.count - 1] += "\n\n" + piece }
+        }
+        var out: [String] = []
+        var history: [String] = []
+        let lastUser = parts.lastIndex { $0.hasPrefix("USER:\n") }
+        for (i, part) in parts.enumerated() {
+            if part.hasPrefix("YES/NO PASS") {
+                let items = part.components(separatedBy: "\n").filter { $0.range(of: #"^\d+\. "#, options: .regularExpression) != nil }.count
+                out.append("YES/NO PASS: asked first, over \(items) card items (\(tokens(part)) tokens); its marks are under WHAT MATTERS.")
+            } else if part.hasPrefix("SYSTEM:\n") {
+                if part == lastSystem { out.append("SYSTEM: the same rules as before (\(tokens(part)) tokens).") } else { out.append(part); lastSystem = part }
+            } else if i == lastUser {
+                if !history.isEmpty {
+                    out.append("PLUS THE LAST \(history.count) TURNS OF THE STORY, as written above (\(history.reduce(0) { $0 + tokens($1) }) tokens).")
+                    history = []
+                }
+                out.append(part)
+            } else {
+                history.append(part)
+            }
+        }
+        return out.joined(separator: "\n\n")
+    }
+
+    /// A turn's notes, cut down for the export: WHAT MATTERS keeps only what went in (with a count
+    /// of what was left out), and the rebuild leaves out answers that changed nothing.
+    static func compactNotes(_ b: String) -> String {
+        var out: [String] = []
+        var section = ""
+        var leftOut = 0
+        func flushLeftOut() {
+            if leftOut > 0 { out.append("  (\(leftOut) more left out)"); leftOut = 0 }
+        }
+        // Each heading says where it came from: the model's answers, or code reading the map.
+        let labels: [(String, String)] = [
+            ("LOOK:", "[MODEL ANSWERED] "), ("WHAT MATTERS", "[MODEL ANSWERED] "), ("REBUILT", "[MODEL ANSWERED] "),
+            ("NAME CHECK", "[CODE] "), ("SETTLED IN CODE", "[CODE] "), ("FILED", "[CODE] "), ("THE ROOM AS TOLD", "[CODE, from the map] "),
+            ("NOTES", "[CODE] "), ("PROMPT:", "[CODE] size of what was sent: "), ("TIMES", "[CODE] "), ("REFUSED", "[CODE] "),
+        ]
+        for raw in b.components(separatedBy: "\n") {
+            var line = raw
+            if !line.hasPrefix(" "), let l = labels.first(where: { line.hasPrefix($0.0) }) { line = l.1 + line }
+            if !raw.hasPrefix(" ") { flushLeftOut(); section = raw }
+            if section.hasPrefix("WHAT MATTERS"), line.hasPrefix("  - ") { leftOut += 1; continue }
+            if section.hasPrefix("REBUILT"), line.hasPrefix("  - ") {
+                let answer = line.components(separatedBy: " → ").last?.lowercased() ?? ""
+                if ["nothing new", "no", "nothing", "not this turn", ""].contains(answer.trimmingCharacters(in: .whitespaces)) { continue }
+            }
+            out.append(line)
+        }
+        flushLeftOut()
+        return out.joined(separator: "\n")
+    }
+
     func storyText(prompts: Bool = false) -> String {
         guard let a = adventure else { return "" }
         var out = ["# " + a.title, ""]
@@ -762,12 +822,15 @@ final class StoryEngine {
         }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
+        var lastSystem = ""
         for t in a.transcript {
-            if let b = t.before, !b.isEmpty { out += [b, ""] }
+            if let b = t.before, !b.isEmpty { out += [Self.compactNotes(b), ""] }
             out.append((t.role == .player ? me : "GAME MASTER") + ":\n" + t.text)
             out.append("")
-            if let b = t.after, !b.isEmpty { out += [b, ""] }
-            if prompts, let p = t.prompt, !p.isEmpty { out += ["PROMPT SENT FOR THIS REPLY:", "<<<", p, ">>>", ""] }
+            if let b = t.after, !b.isEmpty { out += [Self.compactNotes(b), ""] }
+            if prompts, let p = t.prompt, !p.isEmpty {
+                out += ["[SENT TO THE MODEL] the prompt for this reply (only what is new this turn):", "<<<", Self.compactPrompt(p, lastSystem: &lastSystem), ">>>", ""]
+            }
         }
         // Copied while a turn is still running: what the player said, and how far it got, so the
         // export never silently stops a turn short.
@@ -845,7 +908,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z47"
+    static let build = "build 2026-11-14z52"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1751,6 +1814,14 @@ final class StoryEngine {
             }
             var kept: [Fovea.Item] = []
             for (i, item) in items.enumerated() where i < keep.count && keep[i] { kept.append(item) }
+            if talk {
+                // Talking to one person: their whole card goes along, picked by code (how they feel
+                // about you, what they want, what has passed between you, their facts), and nothing else.
+                let first = Cards.first(read?.to ?? "").lowercased()
+                if first.count > 1 {
+                    kept = items.filter { $0.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil }
+                }
+            }
             foveaYes = Set(kept.map(\.kind))
             foveaView = []
             for (i, item) in items.enumerated() {
@@ -1772,7 +1843,7 @@ final class StoryEngine {
             if !plan.log.isEmpty { step("Plan → " + plan.log); lastRead += "; plan: " + plan.log }
             lap("plan")
             events.insert(contentsOf: plan.brief, at: 0)
-            system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
+            system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age, talk: talk)
             if talk {
                 events.append("Answer what the player said fully and specifically, in 100 to 180 words, most of it what the person you face says and does.")
             }
@@ -1797,7 +1868,8 @@ final class StoryEngine {
         var used = Self.tokens(system) + Self.tokens(lead)
         var kept: [StoryTurn] = []
         let past = hidden ? a.transcript : Array(a.transcript.dropLast())
-        for t in past.suffix(4).reversed() {
+        // Talking to one person: only the last exchange goes along (what they said, and what you said).
+        for t in past.suffix(talkThisTurn ? 2 : 4).reversed() {
             var t = t
             if t.text.count > 1400 { t.text = "…" + String(t.text.suffix(1400)) }
             let cost = Self.tokens(t.text) + 8
@@ -2143,6 +2215,12 @@ final class StoryEngine {
             // are were just decided, so they are not asked again.
             if drawnNow, ["What is around?", "Where are you in the room?"].contains(label) {
                 times.append(label + " skipped (room just drawn)")
+                return [:]
+            }
+            // Once this place's room is drawn, the map says what is in it: the story's passing
+            // words ("a sunlight smile", "warm glow behind you") don't become props.
+            if label == "What is around?", let a = adventure, let r = a.room, r.name.caseInsensitiveCompare(a.location) == .orderedSame {
+                times.append(label + " skipped (the room is drawn)")
                 return [:]
             }
             if lean, foveaSkip(label, wanted: wanted, start: start, playerSaid: playerSaid) {
@@ -2632,6 +2710,19 @@ final class StoryEngine {
             held.append(taken)
             notes.append("Picked up, from your own words: " + taken)
         }
+        // The same thing under another name ("wet coat", "dripping coat") or something you wear
+        // ("You wear an umbrella-laden coat") is not a second thing in your hands.
+        do {
+            func head(_ s: String) -> String { s.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? "" }
+            let worn = start.facts.filter { $0.hasPrefix("You wear") }.map { Continuity.wordSet($0) }
+            var heads = Set(start.carrying.filter { c in !held.contains(where: { Self.similar($0, c) }) }.map(head))
+            held = held.filter { h in
+                let k = head(h)
+                if k.count > 2, worn.contains(where: { $0.contains(k) }) { refused.append(h + " (you wear it)"); return false }
+                if k.count > 2, !heads.insert(k).inserted { refused.append(h + " (the same thing as one you have)"); return false }
+                return true
+            }
+        }
         asked.append("What do you have? → " + (held.isEmpty ? "nothing new" : held.joined(separator: "; ")))
         commit { now in
             guard !held.isEmpty else { return }
@@ -2929,10 +3020,27 @@ final class StoryEngine {
             refused.append(f + " (a passing moment, not a lasting fact)")
             return false
         }
-        asked.append("Anything lasting? → " + (fresh.isEmpty ? "nothing new" : fresh.joined(separator: " ")))
+        // Each one, the model says whether it really lasts and whose card it belongs on: a line of
+        // dialogue ("Walter said here's to staying dry") is only this moment.
+        var lasting: [String] = []
+        let owners: [String] = present.filter { !$0.isPlayer }.map(\.name)
+        for f in fresh {
+            let opts = owners.map { "about " + $0 + ", still true tomorrow" } + ["about you, still true tomorrow", "only this moment: something said or done just now"]
+            let lm = await ask("Does it last?", "THE SENTENCE: \"" + f + "\"\nQUESTION: Is this something that stays true (a person's life, work, plans, a promise, a relationship, something given), and about whom? Or only what was said or done this moment?\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
+            let said = ((lm?["answer"] as? String) ?? "").lowercased()
+            if said.hasPrefix("only") { refused.append(f + " (only this moment)"); continue }
+            // Filed under the person the model named, even when the sentence doesn't name them.
+            if let who = owners.first(where: { said.hasPrefix("about " + $0.lowercased()) }), !f.lowercased().contains(Cards.first(who).lowercased()) {
+                lasting.append(Cards.first(who) + ": " + f)
+            } else {
+                lasting.append(f)
+            }
+        }
+        let freshKept = lasting
+        asked.append("Anything lasting? → " + (freshKept.isEmpty ? "nothing new" : freshKept.joined(separator: " ")))
         commit { now in
             var facts = now.facts
-            for f in fresh where !facts.contains(where: { Self.similar($0, f) }) {
+            for f in freshKept where !facts.contains(where: { Self.similar($0, f) }) {
                 if let i = facts.firstIndex(where: { Self.sameOpening($0, f) }) { facts[i] = clip(f, 200) } else { facts.append(clip(f, 200)) }
                 let under = start.cast.first { Cards.mentions($0, in: f) }?.name ?? (f.hasPrefix("You") ? "you" : "the world")
                 filed.append("Fact, under \(under): " + f)
