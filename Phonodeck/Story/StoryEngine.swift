@@ -845,7 +845,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z46"
+    static let build = "build 2026-11-14z47"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1717,8 +1717,17 @@ final class StoryEngine {
             let items: [Fovea.Item] = Fovea.items(a, input: input, asking: playerAsks)
             // Talking to one person, staying where you are: no pass over the cards at all. The reply
             // gets only the two of you, the date, the city and the weather, and more room to answer.
-            let talk = !arrivedNow && !(read?.to ?? "").isEmpty && (read?.going ?? "") == "staying"
-                && (read?.newPlace ?? "").isEmpty && (read?.spot ?? "").isEmpty
+            // A "spot" the look hears only counts as a move when it is somewhere else on the map
+            // ("at the bar" while already on a stool at the bar is not a move).
+            let spotSaid = read?.spot ?? ""
+            var moves = !spotSaid.isEmpty
+            if moves, let r = a.room, let me = r.player, let z = Adventure.zone(from: spotSaid, in: r) {
+                let c = Placer.centroid(Placer.cells(z, in: r, forPeople: true))
+                moves = hypot(c.0 - me.centre.x, c.1 - me.centre.y) > 1.6
+            }
+            let going = read?.going ?? ""
+            let talk = !arrivedNow && !(read?.to ?? "").isEmpty && (going.isEmpty || going == "staying")
+                && (read?.newPlace ?? "").isEmpty && !moves
             talkThisTurn = talk
             if talk { maxOut = 420 }
             var keep: [Bool] = []
@@ -2693,80 +2702,10 @@ final class StoryEngine {
             if !added.isEmpty { filed.append("Props here: " + added.joined(separator: "; ")) }
         }
 
-        // Each new thing the story showed goes on the map only through the model: what kind of thing
-        // it is, its size, the space people need by it, and where it goes (with a where-else when the
-        // rules say no). Small things go on whatever they sit on.
-        for e in around.filter({ !handSized.contains($0) }).prefix(3) {
-            guard var r = adventure?.room, r.named(e) == nil else { continue }
-            let short = Zone.short(e)
-            let im = await ask("What kind of thing is the " + clip(short, 40) + "?", "About \"" + e + "\" in this room: what kind of thing is it (from KINDS), what is it made of, its real size in whole metres seen from above (1 for anything small), and where people need space by it.\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"length\":1,\"width\":1,\"space\":\"none, in front, behind or all round\"}\nThe form:", JSONGrammar.thingInfo(kinds: Rules.kinds), 60)
-            guard let im else { return }
-            var kind = ((im["kind"] as? String) ?? "").lowercased()
-            if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: e) }
-            // One of a kind already on the map? Ask whether it is the same one ("long mahogany bar"
-            // and "mahogany bar"), so nothing is drawn twice.
-            // The question says who is at the one already drawn and where the story puts them, so
-            // "corner booth" finds "Dolores's booth" when the story has Dolores in a corner booth.
-            var isTwin = false
-            if !Rules.seats.contains(kind), kind != "small" {
-                let mates = r.objects.filter { $0.on == nil && ($0.icon == kind || (Rules.surfaces.contains(kind) && Rules.surfaces.contains($0.icon))) }
-                for twin in mates.prefix(2) {
-                    let by: [String] = r.people.filter { RoomGrid.distance($0, twin) < 1.6 }.map { p in
-                        let told = (adventure ?? start).whereabouts.first { Cards.first($0.name).lowercased() == Cards.first(p.name).lowercased() }?.at ?? ""
-                        return p.kind == .player ? "you" : p.name + (told.isEmpty ? "" : " (the story has them " + clip(told, 60) + ")")
-                    }
-                    var sq = "THE ONE ALREADY DRAWN: \"" + twin.name + "\"" + (by.isEmpty ? "" : ", where " + by.joined(separator: " and ") + (by.count > 1 ? " are" : " is")) + ".\n"
-                    sq += "Is the \"" + e + "\" in THE STORY the same thing as the \"" + twin.name + "\"? Two names for one thing count as the same."
-                    let sm = await ask("Is it the " + clip(Zone.short(twin.name), 30) + "?", sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-                    if ((sm?["answer"] as? String) ?? "").lowercased().hasPrefix("y") {
-                        asked.append("Is " + e + " the " + twin.name + "? → yes, already drawn")
-                        isTwin = true
-                        break
-                    }
-                }
-            }
-            if isTwin { continue }
-            var t = Thing(kind: .object, name: e, icon: kind)
-            t.makeup = ((im["made_of"] as? String) ?? "")
-            func metres(_ k: String) -> Int { (im[k] as? Int) ?? Int(((im[k] as? String) ?? "").filter(\.isNumber)) ?? 1 }
-            if !Rules.rule(kind).small {
-                let l = max(1, min(metres("length"), max(r.width, r.depth) - 2, 6)), w = max(1, min(metres("width"), 3))
-                t.w = max(l, w); t.d = min(l, w)
-                let sp = ((im["space"] as? String) ?? "").lowercased()
-                if ["in front", "behind", "all round"].contains(sp) { t.space = sp }
-                let rr = Rules.rule(kind)
-                if t.w != t.d || rr.w != rr.d {
-                    let opts = Self.wallSides.filter { $0.1 != "staff" || Rules.staffed.contains(kind) }.map(\.0)
-                    let lm = await ask("Which side of the " + clip(short, 30) + " goes to the wall?", Self.alongQuestion(e) + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 64)
-                    t.along = Self.wallSide((lm?["answer"] as? String) ?? "")
-                    if t.along == "staff" { t.space = "behind" }
-                    if t.along == "staff" || t.along == "flush" { t.d = 1; t.w = max(t.w, 2) }
-                    asked.append("Which side of the " + short + " goes to the wall? → " + Self.wallSideLabel(t.along))
-                }
-            }
-            asked.append("What kind of thing is the " + short + "? → " + kind + (t.w > 1 || t.d > 1 ? ", \(t.w) by \(t.d) m" : ""))
-            let menu = Zone.menu(r)
-            let wm = await ask("Where does the " + clip(short, 40) + " go?", "THE ROOM: " + r.name + ", \(r.width) by \(r.depth) metres, with " + r.objects.map(\.name).joined(separator: ", ") + ".\nWhere does the " + short + " go?\nPLACES: " + menu.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: menu), 30)
-            guard let wm else { return }
-            let z = Zone.parse((wm["where"] as? String) ?? "") ?? RoomBuilder.defaultZone(kind, in: r)
-            let out = Placer.place(&r, t, zone: z)
-            if out.placed {
-                r.log.append("place: " + e + " → " + z.text)
-            } else {
-                r.log.append("refuse: " + e + " " + z.text + " (" + out.reason + ")")
-                let ok = Placer.allowed(t, in: r)
-                var done = false
-                if !ok.isEmpty {
-                    r.log.append("ask: where else for " + e + "?")
-                    let em = await ask("Where else for the " + clip(short, 40) + "?", "The " + short + " can't go " + z.text + ", because " + out.reason + ".\nWhere else does it go?\nPLACES: " + ok.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: ok), 30)
-                    let said = (em?["where"] as? String) ?? ""
-                    if let z2 = Zone.parse(said), ok.contains(said), Placer.place(&r, t, zone: z2).placed { r.log.append("place: " + e + " → " + z2.text); done = true }
-                }
-                if !done { Placer.fallback(&r, t, near: z); r.log.append("move: " + e + " → nearest allowed spot") }
-            }
-            let placed = r
-            commit { now in now.room = placed }
-        }
+        // A room is drawn once, when the place is new. After that the story's props are kept as
+        // words with the place, and nothing new is added to the map: no lamps, glows or "rooms"
+        // peppered in around the furniture that was laid out.
+        _ = handSized
 
         // The background of the place: its sounds and light, kept with the place.
         let bm = await ask("What's the background like?", Prompts.rebuildSound, JSONGrammar.text("background", chars: 100), 50)
@@ -3022,7 +2961,14 @@ final class StoryEngine {
         // 1. You walk over: the look heard a move toward someone who is more than an arm's length away.
         let faced = Fovea.facing(a)
         let target = faced.first { $0.name.caseInsensitiveCompare(to) == .orderedSame } ?? faced.first
-        if !walk.isEmpty, let z = Adventure.zone(from: walk, in: r), !walk.lowercased().contains(Cards.first(target?.name ?? "\u{0}").lowercased()) {
+        // Already there ("at the bar" while on a stool at the bar): no walk, and you stay seated.
+        func already(_ z: Zone) -> Bool {
+            let c = Placer.centroid(Placer.cells(z, in: r, forPeople: true))
+            return hypot(c.0 - me0.centre.x, c.1 - me0.centre.y) <= 1.6
+        }
+        if !walk.isEmpty, let z = Adventure.zone(from: walk, in: r), already(z) {
+            log.append("you are already " + z.text)
+        } else if !walk.isEmpty, let z = Adventure.zone(from: walk, in: r), !walk.lowercased().contains(Cards.first(target?.name ?? "\u{0}").lowercased()) {
             // "I sit on the warm stool": you go to the thing you named, and face whoever you turned to.
             let note = Placer.placePerson(&r, me0, zone: z)
             if let w = target { Placer.turn(&r, me0.id, toward: w.name) }
