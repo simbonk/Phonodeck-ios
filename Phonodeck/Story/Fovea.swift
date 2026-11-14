@@ -303,10 +303,19 @@ enum Fovea {
 
     /// The private note before the player's words: when and where, who they face, this turn's
     /// events from code, and the items marked yes.
-    static func lead(_ a: Adventure, input: String, arrived: Bool, events: [String], kept: [Item], instruction: Bool = false) -> String {
+    static func lead(_ a: Adventure, input: String, arrived: Bool, events: [String], kept: [Item], instruction: Bool = false, talkTo: String? = nil) -> String {
         var l: [String] = ["[FOR THIS MOMENT: private, never mention it]", "WHEN AND WHERE: " + whenWhere(a)]
-        let room = roomLine(a)
-        if !room.isEmpty { l.append("THE ROOM: " + room) }
+        // Talking to one person: only fixed facts typed straight in (the city, the weather), the two
+        // of you, and nothing else in the room.
+        let talk = talkTo != nil
+        if talk {
+            if !a.setup.place.isEmpty { l.append("CITY: " + clip(a.setup.place, 80)) }
+            let outside = a.room.flatMap { $0.name.caseInsensitiveCompare(a.location) == .orderedSame ? $0.outside : nil } ?? ""
+            if !outside.isEmpty { l.append("WEATHER: " + clip(outside, 100)) }
+        } else {
+            let room = roomLine(a)
+            if !room.isEmpty { l.append("THE ROOM: " + room) }
+        }
         if arrived {
             // Every new room is grounded first, always in this order: when, outside, inside.
             let y = year(a)
@@ -320,7 +329,31 @@ enum Fovea {
             l.append(g)
             if let card = Cards.placeCard(a), !card.desc.isEmpty { l.append("THE PLACE: " + clip(card.desc, 200)) }
         }
-        let faced = facing(a)
+        var faced = facing(a)
+        if let to = talkTo, !to.isEmpty {
+            let one = faced.filter { Cards.first($0.name).lowercased() == Cards.first(to).lowercased() || $0.name.lowercased().contains(to.lowercased()) }
+            if !one.isEmpty { faced = Array(one.prefix(1)) } else { faced = Array(faced.prefix(1)) }
+        }
+        // Always: where you are and where the person you face is, read off the map, and whether
+        // they can reach you. The reply keeps to it (no offering a seat to someone already seated,
+        // no touching across a bar).
+        if let r = a.room, let me = r.player {
+            // Without the "facing <name>" part: a name the player hasn't heard stays out of the reply.
+            let spot = youAt(r, me).components(separatedBy: ", facing").first ?? ""
+            var line = "WHERE YOU ARE (from the map, always true): you are " + spot
+            if let f = faced.first, let t = r.named(f.name) {
+                line += "; the person you face is " + (gridSpot(a, f.name) ?? "near you")
+                let d = RoomGrid.distance(me, t)
+                if d > 1.5 {
+                    line += String(format: ". %.0f m apart: out of arm's reach, so they can't touch you or hand you anything without coming round", d)
+                    if let between = r.objects.first(where: { Rules.staffed.contains($0.icon) && $0.on == nil && RoomGrid.distance($0, me) < 1.6 && RoomGrid.distance($0, t) < 1.6 }) {
+                        line += " or sliding it across the " + bare(between.name)
+                    }
+                }
+                if me.on != nil { line += ". You are already seated" }
+            }
+            l.append(line + ".")
+        }
         if faced.isEmpty {
             l.append("FACING: nobody in particular.")
         } else {
@@ -328,7 +361,7 @@ enum Fovea {
             l += faced.map { "- " + facingLine($0, in: a) }
         }
         if !events.isEmpty { l += events.map { "- " + $0 } }
-        if !kept.isEmpty { l.append("ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
+        if !kept.isEmpty, !talk { l.append("ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
         l.append("[END]")
         return l.joined(separator: "\n") + "\n\n" + (instruction ? "INSTRUCTION: " : "THE PLAYER: ") + input
     }

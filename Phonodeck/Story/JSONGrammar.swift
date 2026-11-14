@@ -275,7 +275,7 @@ enum JSONGrammar {
     static func roomList(kinds: [String]) -> String {
         [
             "root ::= \"{\" ws " + key("things") + " things ws \"}\"",
-            #"things ::= "[" ws ( th ( "," ws th ){0,4} )? ws "]""#,
+            #"things ::= "[" ws ( th ( "," ws th ){0,6} )? ws "]""#,
             "th ::= \"{\" ws " + [key("name") + " s40", key("kind") + " kd", key("made_of") + " s40", key("length") + " num", key("width") + " num", key("space") + " sp"]
                 .joined(separator: " \",\" ws ") + " ws \"}\"",
             #"num ::= [1-9]"#,
