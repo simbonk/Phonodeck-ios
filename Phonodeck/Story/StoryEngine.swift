@@ -976,7 +976,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z59"
+    static let build = "build 2026-11-14z60"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -5223,7 +5223,9 @@ extension StoryEngine {
                         let v = str(m, "answer").lowercased()
                         return v.isEmpty ? nil : v.hasPrefix("y")
                     })
-                    if !(what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn")) { r.log.append("refuse: " + item + " (" + what + ")"); return nil }
+                    // What someone "has" is carried: furniture ("the mahogany bar" Walter "has") is
+                    // already on the map or isn't theirs to hold.
+                    if !(what.hasPrefix("small") || what.hasPrefix("worn")) { r.log.append("refuse: " + item + " (" + what + ", not something they carry)"); return nil }
                     // Worn on the body (a dress, glasses, a hat) is clothing, not a thing set down: the
                     // funnel's one answer settles it, with no second question.
                     return what.hasPrefix("worn") ? "worn" : "thing"
@@ -5331,7 +5333,9 @@ extension StoryEngine {
             let oq = "Where is the \"" + item + "\" as the story opens?"
             let om = await ask("Where is the " + clip(Zone.short(item), 30) + "?", base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: " + oq + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 30)
             let said = str(om, "answer")
-            if said.hasSuffix("'s hands"), let p = r.people.first(where: { Cards.first($0.name) + "'s hands" == said }), let i = r.index(p.id), r.things[i].holding.count < 2 {
+            // The model put it in their hands: it goes there (up to three things), not onto the
+            // first surface in the room.
+            if said.hasSuffix("'s hands"), let p = r.people.first(where: { Cards.first($0.name) + "'s hands" == said }), let i = r.index(p.id), r.things[i].holding.count < 3 {
                 r.things[i].holding.append(item)
                 r.log.append("edit: " + item + " → in " + p.name + "'s hands")
             } else if let top = tops.first(where: { $0 == said }) ?? tops.first,

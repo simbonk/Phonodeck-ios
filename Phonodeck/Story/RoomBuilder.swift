@@ -258,6 +258,21 @@ extension Adventure {
     /// The zone a whereabouts line puts someone in ("at the bar", "by the window"), if it names one.
     static func zone(from at: String, in r: Room) -> Zone? {
         let s = at.lowercased()
+        // "on the stool next to Dolores": the seat is the one by her, read off the map, not the
+        // first thing called "stool" (which was your own, so you never moved).
+        if let me = r.player, let p = r.people.first(where: { p in
+            p.id != me.id && p.isPerson && {
+                let f = p.name.split(separator: " ").first.map { String($0).lowercased() } ?? ""
+                return f.count > 1 && s.range(of: "\\b(next to|beside|by|near|close to|with|across from)\\s+" + NSRegularExpression.escapedPattern(for: f) + "\\b(?!')", options: .regularExpression) != nil
+            }()
+        }) {
+            let taken = Set(r.people.filter { $0.id != me.id }.compactMap(\.on))
+            let seats = r.objects.filter { Rules.seats.contains($0.icon) && $0.id != p.on && !taken.contains($0.id) && RoomGrid.distance($0, p) <= 1.6 }
+                .sorted { RoomGrid.distance($0, p) < RoomGrid.distance($1, p) }
+            let wantsSeat = ["sit", "seat", "stool", "chair", "bench", "spot", "place"].contains { s.contains($0) }
+            if wantsSeat, let seat = seats.first(where: { o in r.objects.filter { $0.name == o.name }.count == 1 }) { return .on(seat.name) }
+            return .beside(p.name)
+        }
         if let z = Zone.parse(s) {
             switch z {
             case .on(let n), .beside(let n), .behind(let n): return r.named(n) == nil ? nil : z
