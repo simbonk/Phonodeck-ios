@@ -50,8 +50,32 @@ final class StoryEngine {
         guard let a = adventure else { return }
         if questionLogFor != a.id { questionLog = []; questionLogFor = a.id }
         let ans = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        trace("ASK " + phase, label + "\n      → " + clip(ans.isEmpty ? "(no answer)" : ans, 600) + String(format: "  (%.1fs)", Date().timeIntervalSince(t0)))
         questionLog.append("[turn \(a.playerTurns) · " + phase + "] " + label + " → " + clip(ans.isEmpty ? "(no answer)" : ans, 180) + String(format: " (%.1fs)", Date().timeIntervalSince(t0)))
         if questionLog.count > 900 { questionLog.removeFirst(questionLog.count - 900) }
+    }
+
+    /// The full trace: everything the engine does, in the order it happens, with the time since
+    /// the story started. Only kept when "Full trace" is on in Settings (it gets long).
+    @ObservationIgnored private var traceLog: [String] = []
+    @ObservationIgnored private var traceFor: UUID?
+    @ObservationIgnored private var traceStart = Date()
+    @ObservationIgnored private var traceSystem = ""
+    static var tracing: Bool { UserDefaults.standard.object(forKey: "fullTrace") as? Bool ?? true }
+    private func trace(_ kind: String, _ text: String) {
+        guard Self.tracing, let a = adventure else { return }
+        if traceFor != a.id { traceLog = []; traceFor = a.id; traceStart = Date(); traceSystem = "" }
+        let t = Date().timeIntervalSince(traceStart)
+        let stamp = String(format: "[%02d:%04.1f]", Int(t) / 60, t.truncatingRemainder(dividingBy: 60))
+        traceLog.append(stamp + " " + kind + ": " + text)
+        if traceLog.count > 4000 { traceLog.removeFirst(traceLog.count - 4000) }
+    }
+    /// A loud block in the trace, for what the player said and what the story said.
+    private func traceBlock(_ title: String, _ text: String) {
+        guard Self.tracing, let a = adventure else { return }
+        if traceFor != a.id { traceLog = []; traceFor = a.id; traceStart = Date(); traceSystem = "" }
+        let bar = String(repeating: "#", count: 12)
+        traceLog += ["", bar + " " + title + " " + bar, text, bar + String(repeating: "#", count: title.count + 2) + bar, ""]
     }
 
     /// What the player put down or gave away this turn: the rebuild doesn't put it back in their hands.
@@ -855,6 +879,15 @@ final class StoryEngine {
                     "```", RoomGrid.ascii(r), "```"]
             if !r.log.isEmpty { out += ["How it was built and changed:"] + r.log.suffix(30).map { "- " + RoomMapView.logText($0) } }
         }
+        // The full trace, when it is on: one log, in order, with times, instead of the sections.
+        if prompts, Self.tracing, traceFor == a.id, !traceLog.isEmpty {
+            out += ["", "## Full trace (every step in order; [mm:ss] from the start; ASK = a question to the model, CODE/MAP/FILED = worked out in code, SENT TO STORYTELLER = the reply's prompt)", ""]
+            out += traceLog
+            if let said = pendingInput, !said.isEmpty { out += ["", "(STILL RUNNING when copied" + (stage.isEmpty ? "" : ": " + stage) + ")"] }
+            if !streaming.isEmpty { out += ["", "STORY (so far):", streaming] }
+            if !rebuildStep.isEmpty { out += ["(rebuild still running when copied: " + rebuildStep + ")"] }
+            return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
         var lastSystem = ""
@@ -943,7 +976,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z58"
+    static let build = "build 2026-11-14z59"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1559,11 +1592,13 @@ final class StoryEngine {
         // worked out before the reply as it is settled.
         var pre: [String] = []
         func step(_ line: String) {
+            trace("CODE", line)
             pre.append(line)
             Self.updateFrame(&a, looked: [], asked: [], notes: catchUpNotes, steps: [], pre: pre)
             adventure?.frames = a.frames
         }
         if let pickedNow { step("You pick up → " + pickedNow + " (in your hands now)") }
+        if hidden { traceBlock("OPENING", "(no player words: the app asks for the opening scene)") } else { traceBlock("YOU SAID", input) }
         if !hidden { step("You said → " + clip(input.replacingOccurrences(of: "\n", with: " "), 140)) }
 
         // 1. Look. One short call: who the player turns to, where they go, and what to look up.
@@ -2141,6 +2176,13 @@ final class StoryEngine {
         }
         let took = String(format: "%.1fs", Date().timeIntervalSince(turnBegan))
         before.append("TIMES: " + times.joined(separator: " · ") + " · total " + took + " before the rebuild")
+        if Self.tracing {
+            for b in before { trace("TURN NOTE", b) }
+            var sys = traceSystem
+            trace("SENT TO STORYTELLER", "\n" + Self.compactPrompt(sentPrompt, lastSystem: &sys))
+            traceSystem = sys
+            traceBlock("STORY SAID", reply)
+        }
         a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.joined(separator: "\n"), prompt: sentPrompt))
         streaming = ""
         if a.left == 0 && !hidden { a.ended = true }
@@ -2337,6 +2379,7 @@ final class StoryEngine {
             guard var now = adventure, now.id == start.id else { return }
             change(&now)
             now.scene = Cards.sceneLine(now)
+            for f in filed.dropFirst(filedSeen) { trace("FILED", f) }
             if !asked.isEmpty {
                 while stepChanges.count < asked.count { stepChanges.append([]) }
                 stepChanges[asked.count - 1] += filed.dropFirst(filedSeen)
@@ -4740,10 +4783,13 @@ extension StoryEngine {
         let from: String = previous?.name ?? ""
         let fromName = from
         defer { rebuildStep = "" }
+        var mapTraced = 0
 
         /// Shows the room as it stands, so the map follows each decision. The first show makes it
         /// the player's room (and takes the player out of the one they left).
         func show(_ r: Room, pause: Double = 0.4) async {
+            for l in r.log.dropFirst(mapTraced) { trace("MAP", RoomMapView.logText(l)) }
+            mapTraced = max(mapTraced, r.log.count)
             guard var a = adventure else { return }
             if let i = a.rooms.firstIndex(where: { $0.id == roomID }) { a.rooms[i] = r } else {
                 for k in a.rooms.indices { a.rooms[k].things.removeAll { $0.kind == .player } }
