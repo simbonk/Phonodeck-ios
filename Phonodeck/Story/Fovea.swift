@@ -278,8 +278,14 @@ enum Fovea {
 
     /// The storyteller's rules in this mode: short, and the facing person always reacts with what
     /// they do, then what they say.
-    static func system(_ a: Adventure, nameless: Bool, playerNamed: Bool, age: Int) -> String {
-        var s = """
+    static func system(_ a: Adventure, nameless: Bool, playerNamed: Bool, age: Int, talk: Bool = false) -> String {
+        // Talking to one person: the same rules, said in a few lines.
+        var s = talk ? """
+        You voice an audio story the player hears. Second person ("you"), present tense, plain words, 100 to 180 words.
+        - The person the player faces answers them fully: first what they do, then what they say, in their own voice.
+        - Never speak, choose or feel for the player. Use only the people and things given; nothing appears from nowhere.
+        - End on that person, leaving room to answer.
+        """ : """
         You are the storyteller of an audio story the player hears read aloud: their vacation from reality.
 
         - Second person, present tense: the player is "you". 60 to 140 words of plain, vivid words that are easy to hear. No headings, lists or notes.

@@ -753,8 +753,16 @@ final class StoryEngine {
         func flushLeftOut() {
             if leftOut > 0 { out.append("  (\(leftOut) more left out)"); leftOut = 0 }
         }
-        for line in b.components(separatedBy: "\n") {
-            if !line.hasPrefix(" ") { flushLeftOut(); section = line }
+        // Each heading says where it came from: the model's answers, or code reading the map.
+        let labels: [(String, String)] = [
+            ("LOOK:", "[MODEL ANSWERED] "), ("WHAT MATTERS", "[MODEL ANSWERED] "), ("REBUILT", "[MODEL ANSWERED] "),
+            ("NAME CHECK", "[CODE] "), ("SETTLED IN CODE", "[CODE] "), ("FILED", "[CODE] "), ("THE ROOM AS TOLD", "[CODE, from the map] "),
+            ("NOTES", "[CODE] "), ("PROMPT:", "[CODE] size of what was sent: "), ("TIMES", "[CODE] "), ("REFUSED", "[CODE] "),
+        ]
+        for raw in b.components(separatedBy: "\n") {
+            var line = raw
+            if !line.hasPrefix(" "), let l = labels.first(where: { line.hasPrefix($0.0) }) { line = l.1 + line }
+            if !raw.hasPrefix(" ") { flushLeftOut(); section = raw }
             if section.hasPrefix("WHAT MATTERS"), line.hasPrefix("  - ") { leftOut += 1; continue }
             if section.hasPrefix("REBUILT"), line.hasPrefix("  - ") {
                 let answer = line.components(separatedBy: " → ").last?.lowercased() ?? ""
@@ -821,7 +829,7 @@ final class StoryEngine {
             out.append("")
             if let b = t.after, !b.isEmpty { out += [Self.compactNotes(b), ""] }
             if prompts, let p = t.prompt, !p.isEmpty {
-                out += ["PROMPT SENT FOR THIS REPLY (only what is new this turn):", "<<<", Self.compactPrompt(p, lastSystem: &lastSystem), ">>>", ""]
+                out += ["[SENT TO THE MODEL] the prompt for this reply (only what is new this turn):", "<<<", Self.compactPrompt(p, lastSystem: &lastSystem), ">>>", ""]
             }
         }
         // Copied while a turn is still running: what the player said, and how far it got, so the
@@ -900,7 +908,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z49"
+    static let build = "build 2026-11-14z50"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1827,7 +1835,7 @@ final class StoryEngine {
             if !plan.log.isEmpty { step("Plan → " + plan.log); lastRead += "; plan: " + plan.log }
             lap("plan")
             events.insert(contentsOf: plan.brief, at: 0)
-            system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age)
+            system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age, talk: talk)
             if talk {
                 events.append("Answer what the player said fully and specifically, in 100 to 180 words, most of it what the person you face says and does.")
             }
@@ -1852,7 +1860,8 @@ final class StoryEngine {
         var used = Self.tokens(system) + Self.tokens(lead)
         var kept: [StoryTurn] = []
         let past = hidden ? a.transcript : Array(a.transcript.dropLast())
-        for t in past.suffix(4).reversed() {
+        // Talking to one person: only the last exchange goes along (what they said, and what you said).
+        for t in past.suffix(talkThisTurn ? 2 : 4).reversed() {
             var t = t
             if t.text.count > 1400 { t.text = "…" + String(t.text.suffix(1400)) }
             let cost = Self.tokens(t.text) + 8
