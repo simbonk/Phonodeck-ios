@@ -269,7 +269,11 @@ final class Dictation {
             s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
         }
         let a = words(old), b = words(new)
-        guard a.count >= 2, b.count < a.count else { return false }
+        guard a.count >= 2 else { return false }
+        // Shorter and starting differently: a fresh start. Not shorter but with a different first
+        // word after a long stretch ("I move to the empty seat across from Walter" then "And I
+        // introduce myself as Simon, the traveller"): also a fresh start, so the first half is kept.
+        guard b.count < a.count || (a.count >= 4 && a.first != b.first) else { return false }
         return Array(a.prefix(min(2, b.count))) != Array(b.prefix(2))
     }
 
