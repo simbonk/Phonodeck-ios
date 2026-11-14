@@ -912,7 +912,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z55"
+    static let build = "build 2026-11-14z56"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1841,6 +1841,19 @@ final class StoryEngine {
                 let first = Cards.first(read?.to ?? "").lowercased()
                 if first.count > 1 {
                     kept = items.filter { $0.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil }
+                }
+            }
+            // A second person in focus: someone the player names in their own words ("tell me about
+            // Walter", "what does the bartender dream of?") brings their card along too.
+            let said = input.lowercased()
+            for c in a.lore where c.kind == .person && !c.isPlayer && !c.byPlayer && c.name.caseInsensitiveCompare(read?.to ?? "") != .orderedSame {
+                let first = Cards.first(c.name).lowercased()
+                let role = c.role.lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+                func named(_ w: String) -> Bool { w.count > 2 && said.range(of: "\\b" + NSRegularExpression.escapedPattern(for: w) + "\\b", options: .regularExpression) != nil }
+                guard named(first) || named(role) else { continue }
+                for item in items where !kept.contains(where: { $0.text == item.text })
+                    && item.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil {
+                    kept.append(item)
                 }
             }
             foveaYes = Set(kept.map(\.kind))
