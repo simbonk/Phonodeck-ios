@@ -176,6 +176,7 @@ enum Fovea {
             if let k = a.knows[c.name.lowercased()], !k.isEmpty { add("knows", c.name + " knows about you: " + k.suffix(3).joined(separator: "; ")) }
             // Their private life is always offered (hearing it is often why the player came); the
             // pass lets it in when the moment turns to their life, and they share only a little.
+            if !c.ties.isEmpty { add("ties", c.name + " and the others here (it shows in how they act; unsaid unless asked): " + c.ties) }
             if !c.privateLife.isEmpty { add("private", c.name + "'s private life (shared a little, only if the player asks about their life, work, hopes or plans): " + c.privateLife) }
         }
         // Everyone else keeps their own card; it is offered as one item each.
@@ -382,6 +383,25 @@ enum Fovea {
                 if !reach1.isEmpty { line += ". Within their reach: " + reach1.prefix(6).joined(separator: ", ") }
             }
             l.append(line + ".")
+            // Always, on every turn: everyone else in the room and what is in it, one short line,
+            // straight from the map. A sudden "who else is here?" or "what's that music?" finds
+            // its answer here, and nobody is invented.
+            let facedIDs = Set(faced.compactMap { r.named($0.name)?.id })
+            var others: [String] = []
+            for p in r.people where p.id != me.id && !facedIDs.contains(p.id) {
+                let w = a.whereabouts.first { $0.name == p.name && $0.here != false }
+                let c = w.flatMap { Cards.card(for: $0, in: a) }
+                var o = p.name
+                if let role = c?.role, !role.isEmpty { o += " (" + role + ")" }
+                o += ": " + (gridSpot(a, p.name) ?? "in the room")
+                if let d = w?.doing, !d.isEmpty { o += ", " + clip(d, 50) }
+                others.append(o)
+            }
+            l.append("ALSO HERE (from the map; they stay quiet unless the player turns to them): " + (others.isEmpty ? "nobody else." : others.joined(separator: "; ") + "."))
+            let things = r.objects.filter { $0.icon != "rug" }.map { bare($0.name) }
+            var seenThing = Set<String>()
+            let things1 = things.filter { seenThing.insert($0.lowercased()).inserted }
+            if !things1.isEmpty { l.append("IN THE ROOM: " + things1.prefix(10).joined(separator: ", ") + ".") }
         }
         if faced.isEmpty {
             l.append("FACING: nobody in particular.")

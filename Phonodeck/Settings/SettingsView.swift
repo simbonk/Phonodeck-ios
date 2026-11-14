@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage("playerInterest") private var playerInterest = ""
     @AppStorage("sendPhrase") private var sendPhrase = ""
     @AppStorage("computerSounds") private var computerSounds = true
+    @AppStorage("fullTrace") private var fullTrace = true
     @AppStorage(Reading.textSizeKey) private var textSize: Double = Reading.defaultTextSize
     @State private var editingCode = false
     @State private var tab = SettingsTab.gameplay
@@ -70,6 +71,14 @@ struct SettingsView: View {
                     Text("Reading")
                 } footer: {
                     Text("Shared by the Phonodeck and Chat, and also in each one's ••• menu. Tap any reply to hear it again, or to stop the voice.")
+                }
+
+                Section {
+                    Toggle("Full trace in the export", isOn: $fullTrace)
+                } header: {
+                    Text("Testing")
+                } footer: {
+                    Text("\"Copy with prompts\" gives one log of everything, in order and timed: what you said and what the story said in ### blocks, every question to the model, and every step worked out in code. It gets long. Off: the shorter sectioned export.")
                 }
 
                 Section {

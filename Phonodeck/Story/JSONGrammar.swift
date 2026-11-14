@@ -181,6 +181,17 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
+    /// The plan's four short answers in one form: what the player did (as the person sees it),
+    /// whether they'd rather avoid the player, whether they must get up, and what they need.
+    static func planForm() -> String {
+        [
+            "root ::= \"{\" ws " + key("did") + " sd \",\" ws " + key("avoids") + " yn \",\" ws " + key("gets_up") + " yn \",\" ws " + key("needs") + " sn ws \"}\"",
+            choice("yn", ["yes", "no"]),
+            capped("sd", 60), capped("sn", 40),
+            common,
+        ].joined(separator: "\n")
+    }
+
     /// A yes or no under one key, then a short text under another.
     static func yesNo(_ k: String, then k2: String, chars: Int) -> String {
         [

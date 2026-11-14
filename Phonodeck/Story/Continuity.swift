@@ -82,7 +82,7 @@ enum Continuity {
         let plain = #"(?i:my name is|my name's|name's|call me|they call me|the name is|mine is|mine's)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)"#
         let short = #"(?i:\bi'm|\bi am|\bim)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)"#
         let notNames: Set<String> = ["Sorry", "Fine", "Good", "Okay", "Ok", "Not", "Just", "Here", "So", "Tired", "Exhausted", "Hungry", "Lost", "New", "From",
-                                     "Looking", "Going", "Trying", "The", "A", "An", "Very", "Really", "Happy", "Glad", "Sure", "Well", "Alright", "All", "In", "On", "At"]
+                                     "Looking", "Going", "Trying", "Can", "Could", "Would", "Will", "Do", "Does", "Is", "And", "What", "Who", "How", "Where", "Please", "The", "A", "An", "Very", "Really", "Happy", "Glad", "Sure", "Well", "Alright", "All", "In", "On", "At"]
         for pattern in [plain, short] {
             guard let re = try? NSRegularExpression(pattern: pattern),
                   let m = re.firstMatch(in: input, range: NSRange(location: 0, length: (input as NSString).length)),
@@ -90,10 +90,24 @@ enum Continuity {
             var name = (input as NSString).substring(with: m.range(at: 1))
             let words = name.split(separator: " ").map(String.init)
             guard let first = words.first, !notNames.contains(first) else { continue }
-            if words.count > 1, notNames.contains(words[1]) || words[1].first?.isUppercase != true { name = first }
+            // A second capitalised word is only a surname when Apple's tagger reads the pair as a
+            // name: dictation capitalises a restart ("My name is Bob Can you tell me…").
+            if words.count > 1, notNames.contains(words[1]) || words[1].first?.isUppercase != true || !taggedAsName(words[1], in: input) { name = first }
             return name
         }
         return nil
+    }
+
+    /// Whether the on-device tagger reads this word, in this sentence, as part of a person's name.
+    static func taggedAsName(_ word: String, in text: String) -> Bool {
+        let tagger = NLTagger(tagSchemes: [.nameType])
+        tagger.string = text
+        var found = false
+        tagger.enumerateTags(in: text.startIndex..<text.endIndex, unit: .word, scheme: .nameType, options: [.omitWhitespace, .omitPunctuation, .joinNames]) { tag, range in
+            if tag == .personalName, text[range].split(separator: " ").contains(where: { $0 == word }) { found = true; return false }
+            return true
+        }
+        return found
     }
 
     /// Whom the player asks the name of: "you" (the person they are speaking to), "other" (someone

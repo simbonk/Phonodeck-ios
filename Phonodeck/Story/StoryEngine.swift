@@ -50,8 +50,32 @@ final class StoryEngine {
         guard let a = adventure else { return }
         if questionLogFor != a.id { questionLog = []; questionLogFor = a.id }
         let ans = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        trace("ASK " + phase, label + "\n      → " + clip(ans.isEmpty ? "(no answer)" : ans, 600) + String(format: "  (%.1fs)", Date().timeIntervalSince(t0)))
         questionLog.append("[turn \(a.playerTurns) · " + phase + "] " + label + " → " + clip(ans.isEmpty ? "(no answer)" : ans, 180) + String(format: " (%.1fs)", Date().timeIntervalSince(t0)))
         if questionLog.count > 900 { questionLog.removeFirst(questionLog.count - 900) }
+    }
+
+    /// The full trace: everything the engine does, in the order it happens, with the time since
+    /// the story started. Only kept when "Full trace" is on in Settings (it gets long).
+    @ObservationIgnored private var traceLog: [String] = []
+    @ObservationIgnored private var traceFor: UUID?
+    @ObservationIgnored private var traceStart = Date()
+    @ObservationIgnored private var traceSystem = ""
+    static var tracing: Bool { UserDefaults.standard.object(forKey: "fullTrace") as? Bool ?? true }
+    private func trace(_ kind: String, _ text: String) {
+        guard Self.tracing, let a = adventure else { return }
+        if traceFor != a.id { traceLog = []; traceFor = a.id; traceStart = Date(); traceSystem = "" }
+        let t = Date().timeIntervalSince(traceStart)
+        let stamp = String(format: "[%02d:%04.1f]", Int(t) / 60, t.truncatingRemainder(dividingBy: 60))
+        traceLog.append(stamp + " " + kind + ": " + text)
+        if traceLog.count > 4000 { traceLog.removeFirst(traceLog.count - 4000) }
+    }
+    /// A loud block in the trace, for what the player said and what the story said.
+    private func traceBlock(_ title: String, _ text: String) {
+        guard Self.tracing, let a = adventure else { return }
+        if traceFor != a.id { traceLog = []; traceFor = a.id; traceStart = Date(); traceSystem = "" }
+        let bar = String(repeating: "#", count: 12)
+        traceLog += ["", bar + " " + title + " " + bar, text, bar + String(repeating: "#", count: title.count + 2) + bar, ""]
     }
 
     /// What the player put down or gave away this turn: the rebuild doesn't put it back in their hands.
@@ -435,6 +459,35 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
+            // The people here know each other somehow: one small question per pair (at most
+            // three), so the bartender and the regular stay consistent about each other. Neither
+            // tells the player unless asked.
+            if source == nil {
+                let here = a.cast.filter { c in !c.isPlayer && Cards.first(c.name).lowercased() != me1
+                    && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
+                var pairs: [(LoreEntry, LoreEntry)] = []
+                for i in here.indices { for j in here.indices where j > i { pairs.append((here[i], here[j])) } }
+                for (x, y) in pairs.prefix(3) {
+                    stage = "How do they know each other?"
+                    func who(_ c: LoreEntry) -> String { c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") }
+                    let q = "THE STORY: " + clip(a.bible, 500) + "\nPEOPLE: " + who(x) + ": " + clip(x.desc, 160) + "\n" + who(y) + ": " + clip(y.desc, 160)
+                        + "\nQUESTION: How do " + x.name + " and " + y.name + " know each other? One short, concrete line, true to the story and its feeling (how long, what they share, one small thing one does for the other). Something the player has not been told.\nOutput ONLY one JSON object:\n{\"tie\":\"one short line\"}\nThe form:"
+                    let q0 = Date()
+                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 80, temperature: 0.6, repetitionPenalty: 1.1,
+                                                                                         grammar: JSONGrammar.text("tie", chars: 160)))) ?? ""
+                    noteQ("cards", "How do " + Cards.first(x.name) + " and " + Cards.first(y.name) + " know each other?", raw, since: q0)
+                    guard !Task.isCancelled else { return }
+                    let tie = ((JSONExtract.object(raw) ?? Self.salvageJSON(raw))["tie"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard tie.count > 8 else { continue }
+                    for (c, other) in [(x, y), (y, x)] {
+                        guard let k = a.lore.firstIndex(where: { $0.id == c.id }), !a.lore[k].byPlayer else { continue }
+                        a.lore[k].ties += (a.lore[k].ties.isEmpty ? "" : " ") + Cards.first(other.name) + ": " + clip(tie, 160)
+                    }
+                }
+                stage = ""
+                adventure = a
+                library.save(a)
+            }
             forge.reach(forge.stages.count - 1)
 
             var told = ending?.recap ?? ""
@@ -807,6 +860,8 @@ final class StoryEngine {
             let spot: String = w.map { ", " + Continuity.placed($0.at) } ?? ""
             let filed: String = facts == 0 ? "" : facts == 1 ? " · 1 fact on file" : " · \(facts) facts on file"
             out.append("- \(p.name)\(role)\(hidden): \(state)\(spot)\(filed)")
+            if !p.privateLife.isEmpty { out.append("  kept from you until you ask: " + clip(p.privateLife, 160)) }
+            if !p.ties.isEmpty { out.append("  how they know the others (unsaid): " + clip(p.ties, 200)) }
         }
         let placeCards = a.lore.filter { $0.kind == .place }.map(\.name)
         if !placeCards.isEmpty { out.append("- Place cards: " + placeCards.joined(separator: ", ")) }
@@ -823,6 +878,15 @@ final class StoryEngine {
             out += ["", "## Room: " + r.name + " (\(r.type), \(r.width) × \(r.depth) m" + (r.id == a.roomID ? ", you are here" : "") + ")",
                     "```", RoomGrid.ascii(r), "```"]
             if !r.log.isEmpty { out += ["How it was built and changed:"] + r.log.suffix(30).map { "- " + RoomMapView.logText($0) } }
+        }
+        // The full trace, when it is on: one log, in order, with times, instead of the sections.
+        if prompts, Self.tracing, traceFor == a.id, !traceLog.isEmpty {
+            out += ["", "## Full trace (every step in order; [mm:ss] from the start; ASK = a question to the model, CODE/MAP/FILED = worked out in code, SENT TO STORYTELLER = the reply's prompt)", ""]
+            out += traceLog
+            if let said = pendingInput, !said.isEmpty { out += ["", "(STILL RUNNING when copied" + (stage.isEmpty ? "" : ": " + stage) + ")"] }
+            if !streaming.isEmpty { out += ["", "STORY (so far):", streaming] }
+            if !rebuildStep.isEmpty { out += ["(rebuild still running when copied: " + rebuildStep + ")"] }
+            return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
@@ -912,7 +976,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z54"
+    static let build = "build 2026-11-14z59"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1528,11 +1592,13 @@ final class StoryEngine {
         // worked out before the reply as it is settled.
         var pre: [String] = []
         func step(_ line: String) {
+            trace("CODE", line)
             pre.append(line)
             Self.updateFrame(&a, looked: [], asked: [], notes: catchUpNotes, steps: [], pre: pre)
             adventure?.frames = a.frames
         }
         if let pickedNow { step("You pick up → " + pickedNow + " (in your hands now)") }
+        if hidden { traceBlock("OPENING", "(no player words: the app asks for the opening scene)") } else { traceBlock("YOU SAID", input) }
         if !hidden { step("You said → " + clip(input.replacingOccurrences(of: "\n", with: " "), 140)) }
 
         // 1. Look. One short call: who the player turns to, where they go, and what to look up.
@@ -1787,13 +1853,29 @@ final class StoryEngine {
             // gets only the two of you, the date, the city and the weather, and more room to answer.
             // A "spot" the look hears only counts as a move when it is somewhere else on the map
             // ("at the bar" while already on a stool at the bar is not a move).
-            let spotSaid = read?.spot ?? ""
+            var spotSaid = read?.spot ?? ""
             var moves = !spotSaid.isEmpty
+            var whereTo = ""
             if moves, let r = a.room, let me = r.player, let z = Adventure.zone(from: spotSaid, in: r) {
                 let c = Placer.centroid(Placer.cells(z, in: r, forPeople: true))
                 moves = hypot(c.0 - me.centre.x, c.1 - me.centre.y) > 1.6
+                whereTo = z.text
             }
             let going = read?.going ?? ""
+            // The map would walk you across the room ("in her chair beside you" read as somewhere
+            // 3 m away): the model says whether you really got up and went, from your own words.
+            if moves, !arrivedNow, (read?.newPlace ?? "").isEmpty {
+                let q0 = Date()
+                let mq = "THE LAST REPLY: " + Fovea.clip(lastGMBefore, 500) + "\nTHE PLAYER SAID: " + input
+                    + "\nQUESTION: Did the player get up or walk somewhere else in the room just now" + (whereTo.isEmpty ? "" : " (to " + whereTo + ")")
+                    + ", in their own words? Asking, talking, sitting back or turning to someone is no.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
+                let mraw = (try? await llm.complete(system: nil, prompt: mq, options: .init(maxTokens: 24, temperature: 0.1, repetitionPenalty: 1.0,
+                                                                                         grammar: JSONGrammar.one("answer", from: ["yes", "no"])))) ?? ""
+                noteQ("turn", "Did you walk somewhere just now?", mraw, since: q0)
+                guard !Task.isCancelled else { adventure = snapshot; return }
+                let mm: [String: Any] = JSONExtract.object(mraw) ?? Self.salvageJSON(mraw)
+                if ((mm["answer"] as? String) ?? "").lowercased().hasPrefix("n") { moves = false; spotSaid = "" }
+            }
             let talk = !arrivedNow && !(read?.to ?? "").isEmpty && (going.isEmpty || going == "staying")
                 && (read?.newPlace ?? "").isEmpty && !moves
             talkThisTurn = talk
@@ -1827,6 +1909,19 @@ final class StoryEngine {
                     kept = items.filter { $0.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil }
                 }
             }
+            // A second person in focus: someone the player names in their own words ("tell me about
+            // Walter", "what does the bartender dream of?") brings their card along too.
+            let said = input.lowercased()
+            for c in a.lore where c.kind == .person && !c.isPlayer && !c.byPlayer && c.name.caseInsensitiveCompare(read?.to ?? "") != .orderedSame {
+                let first = Cards.first(c.name).lowercased()
+                let role = c.role.lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+                func named(_ w: String) -> Bool { w.count > 2 && said.range(of: "\\b" + NSRegularExpression.escapedPattern(for: w) + "\\b", options: .regularExpression) != nil }
+                guard named(first) || named(role) else { continue }
+                for item in items where !kept.contains(where: { $0.text == item.text })
+                    && item.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil {
+                    kept.append(item)
+                }
+            }
             foveaYes = Set(kept.map(\.kind))
             foveaView = []
             for (i, item) in items.enumerated() {
@@ -1841,7 +1936,7 @@ final class StoryEngine {
             // you face stays or gets up, with what is in their reach.
             stage = "Planning the moment"
             stayingThisTurn = (read?.going ?? "") == "staying" && (read?.newPlace ?? "").isEmpty
-            let plan = await planMoment(&a, input: input, walk: read?.spot ?? "", to: read?.to ?? "", body: read?.body ?? "")
+            let plan = await planMoment(&a, input: input, walk: spotSaid, to: read?.to ?? "", body: read?.body ?? "")
             guard !Task.isCancelled else { adventure = snapshot; return }
             adventure?.room = a.room
             adventure?.spot = a.spot
@@ -1849,14 +1944,15 @@ final class StoryEngine {
             lap("plan")
             events.insert(contentsOf: plan.brief, at: 0)
             system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age, talk: talk)
+            // A question about the room or who is in it ("Who else is here?"), on any turn: a
+            // second pass, straight from the map, puts everyone and everything in view into the
+            // moment, so the reply names the real people and never invents more.
+            let roomKinds: Set<Looks.Kind> = [.whoIsHere, .around, .whereIs, .lookAt]
+            if playerAsks, (read?.looks ?? []).contains(where: { roomKinds.contains($0.kind) }) {
+                let view = Fovea.roomView(a).filter { !$0.hasPrefix("THE ROOM:") }
+                if !view.isEmpty { events.append("THE PLAYER ASKED ABOUT THE ROOM. Everyone and everything here, from the map (always true), and nobody else: " + view.joined(separator: " ")) }
+            }
             if talk {
-                // A question about the room or who is in it ("Who else is here?"): a second pass,
-                // straight from the map, puts everyone and everything in view into the moment.
-                let roomKinds: Set<Looks.Kind> = [.whoIsHere, .around, .whereIs, .lookAt]
-                if playerAsks, (read?.looks ?? []).contains(where: { roomKinds.contains($0.kind) }) {
-                    let view = Fovea.roomView(a).filter { !$0.hasPrefix("THE ROOM:") }
-                    if !view.isEmpty { events.append("THE PLAYER ASKED ABOUT THE ROOM. Everyone and everything here, from the map (always true): " + view.joined(separator: " ")) }
-                }
                 events.append("Answer what the player said fully and specifically, in 100 to 180 words, most of it what the person you face says and does.")
             }
             if !didThisTurn.isEmpty { events.append("WHAT THE PLAYER DID, read plainly (their words may be a speech slip): " + didThisTurn) }
@@ -2080,6 +2176,13 @@ final class StoryEngine {
         }
         let took = String(format: "%.1fs", Date().timeIntervalSince(turnBegan))
         before.append("TIMES: " + times.joined(separator: " · ") + " · total " + took + " before the rebuild")
+        if Self.tracing {
+            for b in before { trace("TURN NOTE", b) }
+            var sys = traceSystem
+            trace("SENT TO STORYTELLER", "\n" + Self.compactPrompt(sentPrompt, lastSystem: &sys))
+            traceSystem = sys
+            traceBlock("STORY SAID", reply)
+        }
         a.transcript.append(StoryTurn(role: .gm, text: reply, before: before.joined(separator: "\n"), prompt: sentPrompt))
         streaming = ""
         if a.left == 0 && !hidden { a.ended = true }
@@ -2276,6 +2379,7 @@ final class StoryEngine {
             guard var now = adventure, now.id == start.id else { return }
             change(&now)
             now.scene = Cards.sceneLine(now)
+            for f in filed.dropFirst(filedSeen) { trace("FILED", f) }
             if !asked.isEmpty {
                 while stepChanges.count < asked.count { stepChanges.append([]) }
                 stepChanges[asked.count - 1] += filed.dropFirst(filedSeen)
@@ -2660,7 +2764,7 @@ final class StoryEngine {
             if !whereSaid.isEmpty, whereSaid != "stays put", !isSeatMove, let seatID = (adventure ?? start).room?.player?.on,
                let seat = (adventure ?? start).room?.thing(seatID) {
                 let uq = "You are sitting on the " + Fovea.bare(seat.name) + ". Do THE PLAYER's words or THE STORY say outright that you stand up, get off it or walk somewhere?"
-                let um = await ask("Did you get up?", uq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let um = await ask("Did you get up?", uq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                 standsUp = ((um?["answer"] as? String) ?? "").lowercased().hasPrefix("y")
                 asked.append("Did you get up? → " + (standsUp ? "yes" : "no, still on the " + Fovea.bare(seat.name)))
             }
@@ -2750,7 +2854,9 @@ final class StoryEngine {
                 let m = await ask(clip(q, 70), q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 64)
                 return (m?["answer"] as? String) ?? ""
             }, yesNo: { _ in nil })
-            if what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn") { heldThings.append(h) } else { refused.append(h + " (" + what + ")") }
+            // Only what can be carried: furniture can't be in your hands, and neither can a
+            // "shivering frame".
+            if what.hasPrefix("small") || what.hasPrefix("worn") { heldThings.append(h) } else { refused.append(h + " (" + what + ")") }
         }
         held = heldThings
         asked.append("What do you have? → " + (held.isEmpty ? "nothing new" : held.joined(separator: "; ")))
@@ -2801,7 +2907,7 @@ final class StoryEngine {
                 let m = await ask(clip(q, 70), q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 64)
                 return (m?["answer"] as? String) ?? ""
             }, yesNo: { q in
-                let m = await ask(clip(q, 70), q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let m = await ask(clip(q, 70), q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                 guard let a = (m?["answer"] as? String)?.lowercased(), !a.isEmpty else { return nil }
                 return a.hasPrefix("y")
             })
@@ -2846,7 +2952,7 @@ final class StoryEngine {
         if let g = (adventure ?? start).room, !(g.outside.isEmpty && g.inside.isEmpty) {
             let card = "THE ROOM CARD: outside: " + (g.outside.isEmpty ? "(not set)" : g.outside) + "; inside: " + (g.inside.isEmpty ? "(not set)" : g.inside) + ".\n"
             let cq = card + "Does THE STORY or THE PLAYER say outright that the weather outside has changed (the rain stops), or that something huge happened to the room itself (it burns, it floods)? People moving, talking or handing things over never count.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
-            let cm = await ask("Did the weather or the air change?", cq, JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+            let cm = await ask("Did the weather or the air change?", cq, JSONGrammar.one("answer", from: ["yes", "no"]), 24)
             guard cm != nil else { return }
             var changed = ((cm?["answer"] as? String) ?? "") == "yes"
             asked.append("Did the weather or the air change? → " + (changed ? "yes" : "no"))
@@ -2936,7 +3042,7 @@ final class StoryEngine {
 
         // Did the player get an answer? An unanswered question stays hanging, in code.
         if Self.asks(playerSaid) {
-            let am = await ask("Did you get an answer?", Prompts.rebuildAnswered, JSONGrammar.one("answered", from: ["yes", "no"]), 12)
+            let am = await ask("Did you get an answer?", Prompts.rebuildAnswered, JSONGrammar.one("answered", from: ["yes", "no"]), 24)
             guard am != nil else { return }
             let answered = ((am?["answered"] as? String) ?? "yes") != "no"
             asked.append("Did you get an answer? → " + (answered ? "yes" : "no"))
@@ -3127,7 +3233,7 @@ final class StoryEngine {
         // they turned to (or a stool brought over), so they end up seated, never left standing by it.
         if let meNow = r.player, meNow.on == nil, !(walk + " " + body).trimmingCharacters(in: .whitespaces).isEmpty {
             let sq = "THE PLAYER JUST SAID: \"" + clip(input, 200) + "\"" + (body.isEmpty ? "" : " (their body: " + clip(body, 60) + ")") + "\nQUESTION: Does the player sit down this moment?\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
-            let sraw = (try? await llm.complete(system: nil, prompt: sq, options: .init(maxTokens: 10, temperature: 0.1, repetitionPenalty: 1.0, grammar: JSONGrammar.one("answer", from: ["yes", "no"])))) ?? ""
+            let sraw = (try? await llm.complete(system: nil, prompt: sq, options: .init(maxTokens: 24, temperature: 0.1, repetitionPenalty: 1.0, grammar: JSONGrammar.one("answer", from: ["yes", "no"])))) ?? ""
             noteQ("plan", "Do you sit down?", sraw, since: Date())
             if ((JSONExtract.object(sraw)?["answer"] as? String) ?? "").lowercased().hasPrefix("y"), let me1 = r.player {
                 let anchor: Thing? = target.flatMap { r.named($0.name) }
@@ -3189,27 +3295,29 @@ final class StoryEngine {
             noteQ("plan", label, raw, since: q0)
             return JSONExtract.object(raw) ?? Self.salvageJSON(raw)
         }
-        func yes(_ label: String, _ q: String) async -> Bool? {
-            let m = await ask(label, q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-            let v = ((m["answer"] as? String) ?? "").lowercased()
-            return v.isEmpty ? nil : v.hasPrefix("y")
-        }
-        func text(_ label: String, _ q: String, _ k: String, _ n: Int) async -> String {
-            let m = await ask(label, q + "\nOutput ONLY one JSON object:\n{\"" + k + "\":\"a few words\"}\nThe form:", JSONGrammar.text(k, chars: n), n / 2 + 12)
-            let v = ((m[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+        // 1-4 in one form (four short answers about one person and one moment, which this model
+        // answers as well together as apart, in a third of the time): what did the player just
+        // do, to them; would they rather avoid the player; do they truly need to get up; do they
+        // need something in their hands.
+        let pq = "Answer four short things about " + who + " in this moment.\n"
+            + "did: in a few words, what did the player just do or ask, as " + who + " sees it?\n"
+            + "avoids: would " + who + " rather avoid the player right now, ignoring them or turning away? Only someone upset with the player, busy with an emergency, or walking off from them says yes.\n"
+            + "gets_up: does " + who + " truly need to get up and go somewhere else in the room? People answering someone who came up to them stay where they are and turn to them, so usually no.\n"
+            + "needs: does " + who + " need to pick up or use something for this, like a pencil, a glass or a cloth? A few words, or empty.\n"
+            + "Output ONLY one JSON object:\n{\"did\":\"a few words\",\"avoids\":\"yes or no\",\"gets_up\":\"yes or no\",\"needs\":\"a few words, or empty\"}\nThe form:"
+        let pm = await ask("What did you do, and what does " + first + " do?", pq, JSONGrammar.planForm(), 90)
+        func pv(_ k: String) -> String {
+            let v = ((pm[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
             return Self.echoesPrompt(v) ? "" : v
         }
-        // 1. What did the player just do, to them?
-        let theyDid = await text("What did you just do to " + first + "?", "In a few words, what did the player just do or ask, as " + who + " sees it?", "did", 60)
+        let theyDid = pv("did")
         if !theyDid.isEmpty { chain.append("you: " + theyDid); didThisTurn = theyDid }
-        // 2. Do they want to engage? Most people do, and stay where they are to do it.
-        // Asked the other way round: a yes-or-no slip then leaves them engaging, as most people would.
-        let avoids = await yes("Would " + first + " rather avoid you?", "Would " + who + " rather avoid the player right now, ignoring them or turning away, instead of answering them? Only someone upset with the player, busy with an emergency, or walking off from them avoids them.") ?? false
+        // A slip on a yes or no leaves them engaging and staying put, as most people would.
+        let avoids = pv("avoids").lowercased().hasPrefix("y")
         let engage = !avoids
         chain.append(engage ? "engages" : "would rather not engage")
-        // 3. Do they need to move? Only when what they do truly needs it.
         var moved: Zone? = nil
-        let getsUp = await yes("Does " + first + " need to get up?", "To " + (engage ? "answer the player" : "keep to themselves") + ", does " + who + " truly need to get up and go somewhere else in the room? People answering someone who came up to them stay where they are and turn to them.") ?? false
+        let getsUp = pv("gets_up").lowercased().hasPrefix("y")
         if getsUp {
             let m = await ask("Where does " + first + " go?", "Where does " + who + " go?\nPLACES: " + places.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: places), 30)
             let said = (m["where"] as? String) ?? ""
@@ -3232,7 +3340,7 @@ final class StoryEngine {
         // 4. Do they need something in their hands? Then, is it within reach on the map?
         var reached = ""
         var missing = ""
-        let need = await text("Does " + first + " need anything?", "Does " + who + " need to pick up or use something for this, like a pencil, a glass or a cloth? Name it in a few words, or say nothing.", "needs", 40)
+        let need = pv("needs")
         if !need.isEmpty, !["nothing", "none", "no"].contains(need.lowercased()) {
             let nw = Continuity.wordSet(need).filter { $0.count > 2 }
             if let hit = reach.first(where: { !Continuity.wordSet($0).filter { $0.count > 2 }.isDisjoint(with: nw) }) {
@@ -4377,16 +4485,8 @@ final class StoryEngine {
         if Continuity.speaksForPlayer(reply) {
             out.append("The last reply put words in the player's mouth (\"...\", you say). Never write what the player says; only they decide that.")
         }
-        let s = a.setup
-        var sources: [String] = [a.bible, a.scene, s.describe, s.world, s.who, s.traits, s.place, s.goal, s.hook, s.beats]
-        sources += a.facts
-        sources += a.carrying
-        sources += a.lore.map { $0.name + " " + $0.desc }
-        sources += a.transcript.map(\.text)
-        let known = sources.joined(separator: "\n")
-        for thing in Continuity.inventedPossessions(reply, known: known) {
-            out.append("The player has no \(thing): nothing in the story gave it to them. Leave it out unless the story hands it over.")
-        }
+        // The old word-pattern guess at "things the player never had" is gone: it read "your
+        // sightline" and "your own name" as possessions. What you hold comes from the map.
         return out
     }
 
@@ -4632,7 +4732,9 @@ extension StoryEngine {
         // First: which word names the object? It has to be one of the name's own words, and not
         // "none": a material, a smell or a glow names no object and stops here.
         var what = "a thing in the room"
-        let said = (await noun(nounQuestion(name))).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .\"'"))
+        // A one-word name is its own naming word: nothing to ask ("key" came back as "bar").
+        let oneWord = !bare.contains(" ")
+        let said = oneWord ? bare.lowercased() : (await noun(nounQuestion(name))).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .\"'"))
         let words = Continuity.wordSet(name)
         let saidWords = Continuity.wordSet(said)
         let fromName = saidWords.contains { w in words.contains { $0.hasPrefix(w) || w.hasPrefix($0) } }
@@ -4653,14 +4755,17 @@ extension StoryEngine {
         headKnown[key] = head.lowercased()
         // Short answers (the long ones came back cut off or garbled, "a lamp" for tobacco leaves),
         // with what each means spelled out in the question.
+        // The model leaned on the last choice ("furniture" for a whiskey, a napkin, someone's
+        // hands), so the harmless one comes last: a small thing never takes a square of floor.
         let sorts: [(String, String)] = [
             ("not solid", "not an object (a material, smell, sound, light or feeling)"),
+            ("body", "part of a person's body"),
             ("building", "part of the building or the sky"),
+            ("furniture", "a thing in the room"),
             ("worn", "worn or carried by someone"),
             ("small", "small, set on a surface"),
-            ("furniture", "a thing in the room"),
         ]
-        let q = "A " + head + ": which is it?\nnot solid = a smell, a sound, a light, a feeling, or stuff like wood, water, dust or mahogany\nbuilding = part of the building or the sky: a wall, a window, a door, a beam, a skylight\nworn = worn on someone's body: a dress, a smock, glasses, a hat, a ring, a coat\nsmall = picked up with one hand and set on a table, bar or shelf: a glass, a cloth, a book, a tray, leaves, a needle\nfurniture = a big thing standing on the floor: a table, a stool, a piano, a bar, a lamp, a gramophone"
+        let q = "A " + head + ": which is it?\nnot solid = a smell, a sound, a light, a feeling, or stuff like wood, water, dust or mahogany\nbody = part of a person or how they look: hands, eyes, a smile, a frame, a shiver, hair\nbuilding = part of the building or the sky: a wall, a window, a door, a beam, a skylight\nfurniture = big and heavy, standing on the floor, too big to lift with one hand: a table, a stool, a piano, a bar, a gramophone\nworn = worn on someone's body: a dress, a smock, glasses, a hat, a ring, a coat\nsmall = picked up with one hand and set on a table, bar or shelf: a glass, a drink, a napkin, a key, a cloth, a book, a record, fabric, a needle"
         let sorted = (await choose(q, sorts.map(\.0))).lowercased()
         // Anything else said counts as small: it can't take a square of floor by mistake.
         what = sorts.first(where: { sorted.hasPrefix($0.0) })?.1 ?? "small, set on a surface"
@@ -4678,10 +4783,13 @@ extension StoryEngine {
         let from: String = previous?.name ?? ""
         let fromName = from
         defer { rebuildStep = "" }
+        var mapTraced = 0
 
         /// Shows the room as it stands, so the map follows each decision. The first show makes it
         /// the player's room (and takes the player out of the one they left).
         func show(_ r: Room, pause: Double = 0.4) async {
+            for l in r.log.dropFirst(mapTraced) { trace("MAP", RoomMapView.logText(l)) }
+            mapTraced = max(mapTraced, r.log.count)
             guard var a = adventure else { return }
             if let i = a.rooms.firstIndex(where: { $0.id == roomID }) { a.rooms[i] = r } else {
                 for k in a.rooms.indices { a.rooms[k].things.removeAll { $0.kind == .player } }
@@ -4800,7 +4908,7 @@ extension StoryEngine {
                 let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 64)
                 return str(m, "answer")
             }, yesNo: { q in
-                let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                 let a = str(m, "answer").lowercased()
                 return a.isEmpty ? nil : a.hasPrefix("y")
             })
@@ -4842,7 +4950,7 @@ extension StoryEngine {
             // one of a kind already listed is asked about before a second is drawn.
             if !Rules.seats.contains(kind), let twin = wanted.first(where: { $0.icon == kind || (Rules.staffed.contains($0.icon) && Rules.staffed.contains(kind)) }) {
                 let sq = "Is the \"" + name + "\" the same thing as the \"" + twin.name + "\" already in the room? Two names for one thing count as the same."
-                let sm = await ask("Is it the " + clip(Zone.short(twin.name), 30) + "?", base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let sm = await ask("Is it the " + clip(Zone.short(twin.name), 30) + "?", base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                 let same = str(sm, "answer").lowercased().hasPrefix("y")
                 r.log.append("ask: is " + name + " the " + twin.name + "? → " + (same ? "yes, drawn once" : "no"))
                 if same {
@@ -4891,7 +4999,7 @@ extension StoryEngine {
         if let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
             for t in wanted where !Rules.rule(t.icon).small && !Rules.seats.contains(t.icon) {
                 let sq = "Is the \"" + t.name + "\" the " + Zone.short(lead.name) + " of this room?"
-                let sm = await ask(clip(sq, 70), base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let sm = await ask(clip(sq, 70), base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                 if str(sm, "answer").lowercased().hasPrefix("y") {
                     leadFound = true
                     if let i = wanted.firstIndex(where: { $0.id == t.id }) { wanted[i].icon = lead.icon }
@@ -4903,11 +5011,11 @@ extension StoryEngine {
         if !leadFound, let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
             // Asked two ways: one "no" alone doesn't leave a bar without its bar.
             let q1 = "Does this story need " + lead.name + " in this room?"
-            let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: " + q1 + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+            let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: " + q1 + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
             var need = str(nm, "answer").lowercased().hasPrefix("y")
             if !need {
                 let q2 = "Would anyone in this story sit at, stand at or work behind " + lead.name + " here?"
-                let nm2 = await ask("Would anyone use " + lead.name + "?", base + "QUESTION: " + q2 + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let nm2 = await ask("Would anyone use " + lead.name + "?", base + "QUESTION: " + q2 + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                 need = str(nm2, "answer").lowercased().hasPrefix("y")
             }
             r.log.append("ask: does it need " + lead.name + "? → " + (need ? "yes" : "no"))
@@ -5035,7 +5143,7 @@ extension StoryEngine {
                 // A work spot is checked on its own: is this person really staff here, working behind it?
                 if !worksBehind.isEmpty, worksBehind != "nothing" {
                     let wq = "Is " + who + " someone who works here, serving from behind the " + worksBehind + ", rather than a guest or a customer?"
-                    let yn = await ask(clip(wq, 70), base + "QUESTION: " + wq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                    let yn = await ask(clip(wq, 70), base + "QUESTION: " + wq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                     let staff = str(yn, "answer").lowercased().hasPrefix("y")
                     r.log.append("ask: does " + name + " work behind the " + worksBehind + "? → " + (staff ? "yes" : "no"))
                     if !staff { worksBehind = "nothing" }
@@ -5045,7 +5153,7 @@ extension StoryEngine {
                 // the evening is usually sitting, with a seat under them.
                 if !sitting, worksBehind == "nothing" {
                     let sq = "Has " + who + " settled in here for a while, so that they would be sitting down rather than standing?"
-                    let sm = await ask(clip(sq, 70), base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                    let sm = await ask(clip(sq, 70), base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                     sitting = str(sm, "answer").lowercased().hasPrefix("y")
                     r.log.append("ask: has " + name + " settled in, sitting? → " + (sitting ? "yes" : "no"))
                 }
@@ -5111,7 +5219,7 @@ extension StoryEngine {
                         let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 64)
                         return str(m, "answer")
                     }, yesNo: { q in
-                        let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                        let m = await ask(clip(q, 70), base + "QUESTION: " + q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                         let v = str(m, "answer").lowercased()
                         return v.isEmpty ? nil : v.hasPrefix("y")
                     })
@@ -5164,7 +5272,7 @@ extension StoryEngine {
                     // A seat beside someone not yet sitting: the model says whether they sit on it.
                     if out.placed, Rules.seats.contains(t.icon), let seat = r.named(t.name), let me = r.thing(p.id), me.on == nil {
                         let sq = "There is now a " + kind + " beside " + who + ". As the story opens, does " + who + " sit on it?"
-                        let sm = await ask("Does " + Cards.first(name) + " sit on the " + kind + "?", base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                        let sm = await ask("Does " + Cards.first(name) + " sit on the " + kind + "?", base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                         let sits = str(sm, "answer").lowercased().hasPrefix("y")
                         r.log.append("ask: does " + name + " sit on the " + kind + "? → " + (sits ? "yes" : "no"))
                         if sits, let i = r.index(p.id) {
@@ -5177,8 +5285,8 @@ extension StoryEngine {
                 // it down; down means a table beside them.
                 if surfaceNear() == nil, !has.isEmpty {
                     let dq = who + " has " + has.joined(separator: ", ") + ". Would they set some of these down on a table beside them, rather than hold them all in their hands?"
-                    let dm = await ask("Would " + Cards.first(name) + " set things down?", base + "QUESTION: " + dq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-                    let down = str(dm, "answer").lowercased().hasPrefix("y") || has.count > 2
+                    let dm = await ask("Would " + Cards.first(name) + " set things down?", base + "QUESTION: " + dq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
+                    let down = str(dm, "answer").lowercased().hasPrefix("y")
                     r.log.append("ask: would " + name + " set things down? → " + (down ? "yes" : "no"))
                     if down {
                         let tb = Thing(kind: .object, name: Cards.first(name) + "'s table", icon: "table")
@@ -5252,7 +5360,7 @@ extension StoryEngine {
             // stool brought over. The model says whether you sit.
             if !opening.isEmpty, let meNow = r.player, meNow.on == nil {
                 let sq = "THE OPENING SAYS: " + clip(opening, 200) + "\nQUESTION: As the story opens, is the player sitting down?"
-                let sm = await ask("Are you sitting as it opens?", base + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                let sm = await ask("Are you sitting as it opens?", base + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
                 if str(sm, "answer").lowercased().hasPrefix("y") {
                     let taken = Set(r.people.compactMap(\.on))
                     if let seat = r.objects.filter({ Rules.seats.contains($0.icon) && !taken.contains($0.id) && RoomGrid.distance($0, meNow) < 2.5 })
