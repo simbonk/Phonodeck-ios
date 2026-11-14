@@ -714,6 +714,58 @@ final class StoryEngine {
     /// The whole story as plain text, for copying out to refine it. Kept short: the world as the
     /// app holds it now, then every turn with what happened behind the scenes (how the message was read, what was fetched and why, the prompt's size, and what was
     /// filed afterwards).
+    /// The prompt as sent, cut down for the export: the system rules once (then "same as before"),
+    /// the earlier story turns as one line with their size, the yes/no pass as one line (its marks
+    /// are under WHAT MATTERS), and the moment's own block in full. What the model was sent is unchanged.
+    static func compactPrompt(_ p: String, lastSystem: inout String) -> String {
+        let parts = p.components(separatedBy: "\n\n").reduce(into: [String]()) { acc, piece in
+            let heads = ["SYSTEM:\n", "USER:\n", "ASSISTANT:\n", "YES/NO PASS"]
+            if heads.contains(where: { piece.hasPrefix($0) }) || acc.isEmpty { acc.append(piece) } else { acc[acc.count - 1] += "\n\n" + piece }
+        }
+        var out: [String] = []
+        var history: [String] = []
+        let lastUser = parts.lastIndex { $0.hasPrefix("USER:\n") }
+        for (i, part) in parts.enumerated() {
+            if part.hasPrefix("YES/NO PASS") {
+                let items = part.components(separatedBy: "\n").filter { $0.range(of: #"^\d+\. "#, options: .regularExpression) != nil }.count
+                out.append("YES/NO PASS: asked first, over \(items) card items (\(tokens(part)) tokens); its marks are under WHAT MATTERS.")
+            } else if part.hasPrefix("SYSTEM:\n") {
+                if part == lastSystem { out.append("SYSTEM: the same rules as before (\(tokens(part)) tokens).") } else { out.append(part); lastSystem = part }
+            } else if i == lastUser {
+                if !history.isEmpty {
+                    out.append("PLUS THE LAST \(history.count) TURNS OF THE STORY, as written above (\(history.reduce(0) { $0 + tokens($1) }) tokens).")
+                    history = []
+                }
+                out.append(part)
+            } else {
+                history.append(part)
+            }
+        }
+        return out.joined(separator: "\n\n")
+    }
+
+    /// A turn's notes, cut down for the export: WHAT MATTERS keeps only what went in (with a count
+    /// of what was left out), and the rebuild leaves out answers that changed nothing.
+    static func compactNotes(_ b: String) -> String {
+        var out: [String] = []
+        var section = ""
+        var leftOut = 0
+        func flushLeftOut() {
+            if leftOut > 0 { out.append("  (\(leftOut) more left out)"); leftOut = 0 }
+        }
+        for line in b.components(separatedBy: "\n") {
+            if !line.hasPrefix(" ") { flushLeftOut(); section = line }
+            if section.hasPrefix("WHAT MATTERS"), line.hasPrefix("  - ") { leftOut += 1; continue }
+            if section.hasPrefix("REBUILT"), line.hasPrefix("  - ") {
+                let answer = line.components(separatedBy: " → ").last?.lowercased() ?? ""
+                if ["nothing new", "no", "nothing", "not this turn", ""].contains(answer.trimmingCharacters(in: .whitespaces)) { continue }
+            }
+            out.append(line)
+        }
+        flushLeftOut()
+        return out.joined(separator: "\n")
+    }
+
     func storyText(prompts: Bool = false) -> String {
         guard let a = adventure else { return "" }
         var out = ["# " + a.title, ""]
@@ -762,12 +814,15 @@ final class StoryEngine {
         }
         out += ["", "## The story", ""]
         let me = a.playerName.isEmpty ? "YOU" : a.playerName.uppercased()
+        var lastSystem = ""
         for t in a.transcript {
-            if let b = t.before, !b.isEmpty { out += [b, ""] }
+            if let b = t.before, !b.isEmpty { out += [Self.compactNotes(b), ""] }
             out.append((t.role == .player ? me : "GAME MASTER") + ":\n" + t.text)
             out.append("")
-            if let b = t.after, !b.isEmpty { out += [b, ""] }
-            if prompts, let p = t.prompt, !p.isEmpty { out += ["PROMPT SENT FOR THIS REPLY:", "<<<", p, ">>>", ""] }
+            if let b = t.after, !b.isEmpty { out += [Self.compactNotes(b), ""] }
+            if prompts, let p = t.prompt, !p.isEmpty {
+                out += ["PROMPT SENT FOR THIS REPLY (only what is new this turn):", "<<<", Self.compactPrompt(p, lastSystem: &lastSystem), ">>>", ""]
+            }
         }
         // Copied while a turn is still running: what the player said, and how far it got, so the
         // export never silently stops a turn short.
@@ -845,7 +900,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z47"
+    static let build = "build 2026-11-14z48"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
