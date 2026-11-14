@@ -943,7 +943,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z57"
+    static let build = "build 2026-11-14z58"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -3252,27 +3252,29 @@ final class StoryEngine {
             noteQ("plan", label, raw, since: q0)
             return JSONExtract.object(raw) ?? Self.salvageJSON(raw)
         }
-        func yes(_ label: String, _ q: String) async -> Bool? {
-            let m = await ask(label, q + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)
-            let v = ((m["answer"] as? String) ?? "").lowercased()
-            return v.isEmpty ? nil : v.hasPrefix("y")
-        }
-        func text(_ label: String, _ q: String, _ k: String, _ n: Int) async -> String {
-            let m = await ask(label, q + "\nOutput ONLY one JSON object:\n{\"" + k + "\":\"a few words\"}\nThe form:", JSONGrammar.text(k, chars: n), n / 2 + 12)
-            let v = ((m[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
+        // 1-4 in one form (four short answers about one person and one moment, which this model
+        // answers as well together as apart, in a third of the time): what did the player just
+        // do, to them; would they rather avoid the player; do they truly need to get up; do they
+        // need something in their hands.
+        let pq = "Answer four short things about " + who + " in this moment.\n"
+            + "did: in a few words, what did the player just do or ask, as " + who + " sees it?\n"
+            + "avoids: would " + who + " rather avoid the player right now, ignoring them or turning away? Only someone upset with the player, busy with an emergency, or walking off from them says yes.\n"
+            + "gets_up: does " + who + " truly need to get up and go somewhere else in the room? People answering someone who came up to them stay where they are and turn to them, so usually no.\n"
+            + "needs: does " + who + " need to pick up or use something for this, like a pencil, a glass or a cloth? A few words, or empty.\n"
+            + "Output ONLY one JSON object:\n{\"did\":\"a few words\",\"avoids\":\"yes or no\",\"gets_up\":\"yes or no\",\"needs\":\"a few words, or empty\"}\nThe form:"
+        let pm = await ask("What did you do, and what does " + first + " do?", pq, JSONGrammar.planForm(), 90)
+        func pv(_ k: String) -> String {
+            let v = ((pm[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
             return Self.echoesPrompt(v) ? "" : v
         }
-        // 1. What did the player just do, to them?
-        let theyDid = await text("What did you just do to " + first + "?", "In a few words, what did the player just do or ask, as " + who + " sees it?", "did", 60)
+        let theyDid = pv("did")
         if !theyDid.isEmpty { chain.append("you: " + theyDid); didThisTurn = theyDid }
-        // 2. Do they want to engage? Most people do, and stay where they are to do it.
-        // Asked the other way round: a yes-or-no slip then leaves them engaging, as most people would.
-        let avoids = await yes("Would " + first + " rather avoid you?", "Would " + who + " rather avoid the player right now, ignoring them or turning away, instead of answering them? Only someone upset with the player, busy with an emergency, or walking off from them avoids them.") ?? false
+        // A slip on a yes or no leaves them engaging and staying put, as most people would.
+        let avoids = pv("avoids").lowercased().hasPrefix("y")
         let engage = !avoids
         chain.append(engage ? "engages" : "would rather not engage")
-        // 3. Do they need to move? Only when what they do truly needs it.
         var moved: Zone? = nil
-        let getsUp = await yes("Does " + first + " need to get up?", "To " + (engage ? "answer the player" : "keep to themselves") + ", does " + who + " truly need to get up and go somewhere else in the room? People answering someone who came up to them stay where they are and turn to them.") ?? false
+        let getsUp = pv("gets_up").lowercased().hasPrefix("y")
         if getsUp {
             let m = await ask("Where does " + first + " go?", "Where does " + who + " go?\nPLACES: " + places.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: places), 30)
             let said = (m["where"] as? String) ?? ""
@@ -3295,7 +3297,7 @@ final class StoryEngine {
         // 4. Do they need something in their hands? Then, is it within reach on the map?
         var reached = ""
         var missing = ""
-        let need = await text("Does " + first + " need anything?", "Does " + who + " need to pick up or use something for this, like a pencil, a glass or a cloth? Name it in a few words, or say nothing.", "needs", 40)
+        let need = pv("needs")
         if !need.isEmpty, !["nothing", "none", "no"].contains(need.lowercased()) {
             let nw = Continuity.wordSet(need).filter { $0.count > 2 }
             if let hit = reach.first(where: { !Continuity.wordSet($0).filter { $0.count > 2 }.isDisjoint(with: nw) }) {
