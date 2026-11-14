@@ -908,7 +908,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z51"
+    static let build = "build 2026-11-14z52"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2217,6 +2217,12 @@ final class StoryEngine {
                 times.append(label + " skipped (room just drawn)")
                 return [:]
             }
+            // Once this place's room is drawn, the map says what is in it: the story's passing
+            // words ("a sunlight smile", "warm glow behind you") don't become props.
+            if label == "What is around?", let a = adventure, let r = a.room, r.name.caseInsensitiveCompare(a.location) == .orderedSame {
+                times.append(label + " skipped (the room is drawn)")
+                return [:]
+            }
             if lean, foveaSkip(label, wanted: wanted, start: start, playerSaid: playerSaid) {
                 times.append(label + " skipped (out of view)")
                 return [:]
@@ -2704,6 +2710,19 @@ final class StoryEngine {
             held.append(taken)
             notes.append("Picked up, from your own words: " + taken)
         }
+        // The same thing under another name ("wet coat", "dripping coat") or something you wear
+        // ("You wear an umbrella-laden coat") is not a second thing in your hands.
+        do {
+            func head(_ s: String) -> String { s.lowercased().split(whereSeparator: { !$0.isLetter }).last.map(String.init) ?? "" }
+            let worn = start.facts.filter { $0.hasPrefix("You wear") }.map { Continuity.wordSet($0) }
+            var heads = Set(start.carrying.filter { c in !held.contains(where: { Self.similar($0, c) }) }.map(head))
+            held = held.filter { h in
+                let k = head(h)
+                if k.count > 2, worn.contains(where: { $0.contains(k) }) { refused.append(h + " (you wear it)"); return false }
+                if k.count > 2, !heads.insert(k).inserted { refused.append(h + " (the same thing as one you have)"); return false }
+                return true
+            }
+        }
         asked.append("What do you have? → " + (held.isEmpty ? "nothing new" : held.joined(separator: "; ")))
         commit { now in
             guard !held.isEmpty else { return }
@@ -3001,10 +3020,27 @@ final class StoryEngine {
             refused.append(f + " (a passing moment, not a lasting fact)")
             return false
         }
-        asked.append("Anything lasting? → " + (fresh.isEmpty ? "nothing new" : fresh.joined(separator: " ")))
+        // Each one, the model says whether it really lasts and whose card it belongs on: a line of
+        // dialogue ("Walter said here's to staying dry") is only this moment.
+        var lasting: [String] = []
+        let owners: [String] = present.filter { !$0.isPlayer }.map(\.name)
+        for f in fresh {
+            let opts = owners.map { "about " + $0 + ", still true tomorrow" } + ["about you, still true tomorrow", "only this moment: something said or done just now"]
+            let lm = await ask("Does it last?", "THE SENTENCE: \"" + f + "\"\nQUESTION: Is this something that stays true (a person's life, work, plans, a promise, a relationship, something given), and about whom? Or only what was said or done this moment?\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
+            let said = ((lm?["answer"] as? String) ?? "").lowercased()
+            if said.hasPrefix("only") { refused.append(f + " (only this moment)"); continue }
+            // Filed under the person the model named, even when the sentence doesn't name them.
+            if let who = owners.first(where: { said.hasPrefix("about " + $0.lowercased()) }), !f.lowercased().contains(Cards.first(who).lowercased()) {
+                lasting.append(Cards.first(who) + ": " + f)
+            } else {
+                lasting.append(f)
+            }
+        }
+        let freshKept = lasting
+        asked.append("Anything lasting? → " + (freshKept.isEmpty ? "nothing new" : freshKept.joined(separator: " ")))
         commit { now in
             var facts = now.facts
-            for f in fresh where !facts.contains(where: { Self.similar($0, f) }) {
+            for f in freshKept where !facts.contains(where: { Self.similar($0, f) }) {
                 if let i = facts.firstIndex(where: { Self.sameOpening($0, f) }) { facts[i] = clip(f, 200) } else { facts.append(clip(f, 200)) }
                 let under = start.cast.first { Cards.mentions($0, in: f) }?.name ?? (f.hasPrefix("You") ? "you" : "the world")
                 filed.append("Fact, under \(under): " + f)
