@@ -908,7 +908,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z50"
+    static let build = "build 2026-11-14z51"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1814,6 +1814,14 @@ final class StoryEngine {
             }
             var kept: [Fovea.Item] = []
             for (i, item) in items.enumerated() where i < keep.count && keep[i] { kept.append(item) }
+            if talk {
+                // Talking to one person: their whole card goes along, picked by code (how they feel
+                // about you, what they want, what has passed between you, their facts), and nothing else.
+                let first = Cards.first(read?.to ?? "").lowercased()
+                if first.count > 1 {
+                    kept = items.filter { $0.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil }
+                }
+            }
             foveaYes = Set(kept.map(\.kind))
             foveaView = []
             for (i, item) in items.enumerated() {

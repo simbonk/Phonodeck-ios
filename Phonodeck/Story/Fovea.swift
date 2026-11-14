@@ -382,7 +382,7 @@ enum Fovea {
             l += faced.map { "- " + facingLine($0, in: a) }
         }
         if !events.isEmpty { l += events.map { "- " + $0 } }
-        if !kept.isEmpty, !talk { l.append("ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
+        if !kept.isEmpty { l.append(talk ? "ABOUT THEM (their card):" : "ALSO RELEVANT:"); l += kept.map { "- " + $0.text } }
         l.append("[END]")
         return l.joined(separator: "\n") + "\n\n" + (instruction ? "INSTRUCTION: " : "THE PLAYER: ") + input
     }
