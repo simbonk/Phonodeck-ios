@@ -56,6 +56,11 @@ enum Fovea {
         if let c, !c.desc.isEmpty { line += ": " + clip(c.desc, 160) }
         if let g = gridSpot(a, name) {
             line += " Now: " + g + (w.doing.isEmpty ? "" : ", " + clip(w.doing, 80)) + "."
+            // What they wear and hold, from the map: only these, so no glasses or hat appear from nowhere.
+            if let t = a.room?.named(name) {
+                let on = [t.wearing.isEmpty ? "" : "wearing " + t.wearing, t.holding.isEmpty ? "" : "holding " + t.holding.joined(separator: " and ")].filter { !$0.isEmpty }
+                line += " On them: " + (on.isEmpty ? "only what the card above says" : on.joined(separator: "; ")) + ", nothing else."
+            }
             if let r = a.room, let me = r.player, let t = r.named(name), let b = RoomGrid.wayBlocker(r, from: me, to: t) {
                 line += " Between you: " + bare(b) + " (you can talk across it, not walk through it)."
             }
@@ -70,6 +75,8 @@ enum Fovea {
     static func bare(_ n: String) -> String {
         let l = n.lowercased()
         if l.hasPrefix("the ") { return l }
+        // "Dolores's chair" stays hers: never "the dolores's chair".
+        if n.range(of: #"^[A-Z][a-z]+'s "#, options: .regularExpression) != nil { return n }
         if l.hasPrefix("a ") { return "the " + l.dropFirst(2) }
         if l.hasPrefix("an ") { return "the " + l.dropFirst(3) }
         return "the " + l
