@@ -176,6 +176,7 @@ enum Fovea {
             if let k = a.knows[c.name.lowercased()], !k.isEmpty { add("knows", c.name + " knows about you: " + k.suffix(3).joined(separator: "; ")) }
             // Their private life is always offered (hearing it is often why the player came); the
             // pass lets it in when the moment turns to their life, and they share only a little.
+            if !c.ties.isEmpty { add("ties", c.name + " and the others here (it shows in how they act; unsaid unless asked): " + c.ties) }
             if !c.privateLife.isEmpty { add("private", c.name + "'s private life (shared a little, only if the player asks about their life, work, hopes or plans): " + c.privateLife) }
         }
         // Everyone else keeps their own card; it is offered as one item each.

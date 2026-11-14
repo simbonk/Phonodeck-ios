@@ -435,6 +435,35 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
+            // The people here know each other somehow: one small question per pair (at most
+            // three), so the bartender and the regular stay consistent about each other. Neither
+            // tells the player unless asked.
+            if source == nil {
+                let here = a.cast.filter { c in !c.isPlayer && Cards.first(c.name).lowercased() != me1
+                    && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
+                var pairs: [(LoreEntry, LoreEntry)] = []
+                for i in here.indices { for j in here.indices where j > i { pairs.append((here[i], here[j])) } }
+                for (x, y) in pairs.prefix(3) {
+                    stage = "How do they know each other?"
+                    func who(_ c: LoreEntry) -> String { c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") }
+                    let q = "THE STORY: " + clip(a.bible, 500) + "\nPEOPLE: " + who(x) + ": " + clip(x.desc, 160) + "\n" + who(y) + ": " + clip(y.desc, 160)
+                        + "\nQUESTION: How do " + x.name + " and " + y.name + " know each other? One short, concrete line, true to the story and its feeling (how long, what they share, one small thing one does for the other). Something the player has not been told.\nOutput ONLY one JSON object:\n{\"tie\":\"one short line\"}\nThe form:"
+                    let q0 = Date()
+                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 80, temperature: 0.6, repetitionPenalty: 1.1,
+                                                                                         grammar: JSONGrammar.text("tie", chars: 160)))) ?? ""
+                    noteQ("cards", "How do " + Cards.first(x.name) + " and " + Cards.first(y.name) + " know each other?", raw, since: q0)
+                    guard !Task.isCancelled else { return }
+                    let tie = ((JSONExtract.object(raw) ?? Self.salvageJSON(raw))["tie"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard tie.count > 8 else { continue }
+                    for (c, other) in [(x, y), (y, x)] {
+                        guard let k = a.lore.firstIndex(where: { $0.id == c.id }), !a.lore[k].byPlayer else { continue }
+                        a.lore[k].ties += (a.lore[k].ties.isEmpty ? "" : " ") + Cards.first(other.name) + ": " + clip(tie, 160)
+                    }
+                }
+                stage = ""
+                adventure = a
+                library.save(a)
+            }
             forge.reach(forge.stages.count - 1)
 
             var told = ending?.recap ?? ""
@@ -807,6 +836,8 @@ final class StoryEngine {
             let spot: String = w.map { ", " + Continuity.placed($0.at) } ?? ""
             let filed: String = facts == 0 ? "" : facts == 1 ? " · 1 fact on file" : " · \(facts) facts on file"
             out.append("- \(p.name)\(role)\(hidden): \(state)\(spot)\(filed)")
+            if !p.privateLife.isEmpty { out.append("  kept from you until you ask: " + clip(p.privateLife, 160)) }
+            if !p.ties.isEmpty { out.append("  how they know the others (unsaid): " + clip(p.ties, 200)) }
         }
         let placeCards = a.lore.filter { $0.kind == .place }.map(\.name)
         if !placeCards.isEmpty { out.append("- Place cards: " + placeCards.joined(separator: ", ")) }
@@ -912,7 +943,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z56"
+    static let build = "build 2026-11-14z57"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
