@@ -769,6 +769,17 @@ final class StoryEngine {
             if let b = t.after, !b.isEmpty { out += [b, ""] }
             if prompts, let p = t.prompt, !p.isEmpty { out += ["PROMPT SENT FOR THIS REPLY:", "<<<", p, ">>>", ""] }
         }
+        // Copied while a turn is still running: what the player said, and how far it got, so the
+        // export never silently stops a turn short.
+        if let said = pendingInput, !said.isEmpty, a.transcript.last(where: { $0.role == .player })?.text != said {
+            out += [me + ":\n" + said, ""]
+            var now = "STILL RUNNING when copied"
+            if !stage.isEmpty { now += ": " + stage }
+            out.append("(" + now + ")")
+            if !streaming.isEmpty { out += ["", "GAME MASTER (so far):\n" + streaming] }
+            out.append("")
+        }
+        if !rebuildStep.isEmpty { out += ["(The rebuild after the last reply was still running when copied: " + rebuildStep + ")", ""] }
         if !qs.isEmpty { out += ["", "## Every question asked, in order (\(qs.count))"] + qs.enumerated().map { "\($0.offset + 1). " + $0.element } }
         return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -834,7 +845,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z45"
+    static let build = "build 2026-11-14z46"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -3281,6 +3292,8 @@ final class StoryEngine {
             let said = ns.substring(with: m.range(at: 1))
             let low = said.lowercased()
             if known.contains(low) || notNames.contains(low) { continue }
+            // The player's own name, as they just gave it ("I introduced myself as Simon"), is theirs.
+            if Continuity.wordSet(playerSaid).contains(low) { continue }
             // Someone known only by a description ("The young man") who gives a name has told
             // the player who they are: the card takes the name.
             if c.name.hasPrefix("The ") {
@@ -4538,15 +4551,19 @@ extension StoryEngine {
         // surface, or standing on the floor.
         let head: String = (fromName && !said.hasPrefix("none") && !said.isEmpty) ? said : (bare.split(separator: " ").last.map(String.init) ?? bare)
         headKnown[key] = head.lowercased()
+        // Short answers (the long ones came back cut off or garbled, "a lamp" for tobacco leaves),
+        // with what each means spelled out in the question.
         let sorts: [(String, String)] = [
-            ("not a solid thing: a smell, a sound, a light, a feeling, or stuff like wood, water or dust", "not an object (a material, smell, sound, light or feeling)"),
-            ("part of the building or the sky: a wall, a window, a door, a beam, a skylight", "part of the building or the sky"),
-            ("worn on someone's body: glasses, a hat, a ring, a coat", "worn or carried by someone"),
-            ("small, picked up with one hand, set on a table, bar or shelf: a glass, a book, a tray, a needle", "small, set on a surface"),
-            ("furniture or a big thing standing on the floor: a table, a stool, a piano, a bar, a lamp", "a thing in the room"),
+            ("not solid", "not an object (a material, smell, sound, light or feeling)"),
+            ("building", "part of the building or the sky"),
+            ("worn", "worn or carried by someone"),
+            ("small", "small, set on a surface"),
+            ("furniture", "a thing in the room"),
         ]
-        let sorted = (await choose("A " + head + ": which is it?", sorts.map(\.0))).lowercased()
-        if let hit = sorts.first(where: { sorted.hasPrefix(String($0.0.prefix(14)).lowercased()) }) { what = hit.1 }
+        let q = "A " + head + ": which is it?\nnot solid = a smell, a sound, a light, a feeling, or stuff like wood, water, dust or mahogany\nbuilding = part of the building or the sky: a wall, a window, a door, a beam, a skylight\nworn = worn on someone's body: a dress, a smock, glasses, a hat, a ring, a coat\nsmall = picked up with one hand and set on a table, bar or shelf: a glass, a cloth, a book, a tray, leaves, a needle\nfurniture = a big thing standing on the floor: a table, a stool, a piano, a bar, a lamp, a gramophone"
+        let sorted = (await choose(q, sorts.map(\.0))).lowercased()
+        // Anything else said counts as small: it can't take a square of floor by mistake.
+        what = sorts.first(where: { sorted.hasPrefix($0.0) })?.1 ?? "small, set on a surface"
         whatIsKnown[key] = what
         return what
     }
@@ -4651,18 +4668,14 @@ extension StoryEngine {
         await show(r, pause: 0.6)
 
         // 2. The things: only what the story needs, at most five (no decoration for its own sake).
+        // Names only (the long form with sizes took 20 s and came back cut off): each name then
+        // goes through the funnel, and only furniture is asked its kind and size.
         let q2 = base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres.\n"
-            + "QUESTION: List every thing the story names in this room, at most 7, each once (two only if the story says there are two): furniture, small things on it, and things people wear or carry; plus the one or two pieces of furniture the scene can't do without (a bar to sit at, a bed to sleep in). Leave out lamps, plants, rugs and decoration unless the story names them, and anything that is not a thing (a sound, a smell, a light). For each: a short name in the story's words, its kind from KINDS, what it is made of, its real size in whole metres seen from above (length and width; 1 for anything small), and where people need space to walk or work by it: none, in front (a fireplace, a bookcase), behind (a bar the bartender works behind) or all round (a pool table).\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"length\":2,\"width\":1,\"space\":\"none, in front, behind or all round\"}]}\nThe form:"
-        let m2 = await ask("What does the story name in this room?", q2, JSONGrammar.roomList(kinds: Rules.kinds), 380)
+            + "QUESTION: List every thing the story names in this room, at most 7, each once, in the story's own words (two only if the story says there are two): furniture, small things on it, and things people wear or carry; plus the one or two pieces of furniture the scene can't do without (a bar to sit at, a bed to sleep in). Leave out lamps, plants, rugs and decoration unless the story names them, and anything that is not a thing (a sound, a smell, a light).\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
+        let m2 = await ask("What does the story name in this room?", q2, JSONGrammar.strings("things", max: 7, chars: 40), 140)
         guard !Task.isCancelled else { return }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
-        var listed: [[String: Any]] = ((m2["things"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
-        if listed.isEmpty {
-            // The long form came back empty or cut off: just the names, then each is asked about.
-            let q2b = base + "QUESTION: Name only the things this story needs in the room, at most 5: the things the story names, and the one or two pieces of furniture the scene can't do without. No clothing, sounds, smells or decoration.\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
-            let m2b = await ask("What does the story name? (names only)", q2b, JSONGrammar.strings("things", max: 7, chars: 40), 120)
-            listed = ((m2b["things"] as? [Any]) ?? []).compactMap { $0 as? String }.map { ["name": $0] }
-        }
+        let listed: [[String: Any]] = ((m2["things"] as? [Any]) ?? []).compactMap { $0 as? String }.map { ["name": $0] }
         r.log.append("ask: what does the story name here? → " + (listed.isEmpty ? "nothing" : listed.map { str($0, "name") }.joined(separator: ", ")))
         var wanted: [Thing] = []
         var worn: [(String, String)] = []
@@ -4674,7 +4687,8 @@ extension StoryEngine {
         // says whether it is on the map at all (a smell, a sound, a material or part of the building
         // stops right there, with nothing more asked), then whether it is a second name for something
         // already kept, then on a person, small on a surface, or standing on the floor.
-        for d in listed.prefix(7) {
+        for d0 in listed.prefix(7) {
+            var d = d0
             let name = str(d, "name")
             guard name.count >= 3, !Self.echoesPrompt(name), !castNames.contains(name.lowercased()),
                   !kept.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame || Self.similar($0, name) }) else { continue }
@@ -4693,9 +4707,16 @@ extension StoryEngine {
             r.log.append("ask: what is " + name + "? → " + what)
             let onMap = what.hasPrefix("a thing") || what.hasPrefix("small") || what.hasPrefix("worn")
             if !onMap { r.log.append("refuse: " + name + " (" + what + "), nothing more asked"); continue }
-            // Two names with the same naming word ("record", "jazz record"): one thing, or two?
-            if let h = Self.headKnown[name.lowercased()], h.count > 2,
-               let other = kept.first(where: { Self.headKnown[$0.lowercased()] == h }) {
+            // Two names with the same naming word ("record", "jazz record"), or sharing a word
+            // ("long mahogan" and "mahogany bar"): one thing, or two? Code only finds the pair;
+            // the model decides.
+            let myWords = Continuity.wordSet(name).filter { $0.count >= 4 }
+            func shares(_ o: String) -> Bool {
+                if let h = Self.headKnown[name.lowercased()], h.count > 2, Self.headKnown[o.lowercased()] == h { return true }
+                return Continuity.wordSet(o).filter { $0.count >= 4 }.contains { w in myWords.contains { $0.hasPrefix(w) || w.hasPrefix($0) } }
+            }
+            if let other = kept.first(where: shares) {
+                let h = Self.headKnown[other.lowercased()] ?? Zone.short(other)
                 let opts = ["one " + h + ", named twice", "two different ones"]
                 let dq = "The story names \"" + other + "\" and \"" + name + "\". Is that one " + h + " or two?"
                 let dm = await ask("One " + clip(h, 20) + " or two?", base + "QUESTION: " + dq + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 30)
@@ -4712,6 +4733,9 @@ extension StoryEngine {
                 continue
             }
             if what.hasPrefix("small") { smalls.append(name); continue }
+            // Furniture only: what kind, what it is made of, how big, and the space people need by it.
+            let im = await ask("What kind of thing is the " + clip(Zone.short(name), 40) + "?", base + "QUESTION: About \"" + name + "\" in this room: what kind of thing is it (from KINDS), what is it made of, its real size in whole metres seen from above, and where people need space to walk or work by it: none, in front (a fireplace, a bookcase), behind (a bar the bartender works behind) or all round (a pool table).\nKINDS: " + Rules.kinds.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"kind\":\"one of KINDS\",\"made_of\":\"a few words\",\"length\":2,\"width\":1,\"space\":\"none, in front, behind or all round\"}\nThe form:", JSONGrammar.thingInfo(kinds: Rules.kinds), 60)
+            for (k, v) in im { d[k] = v }
             var kind = str(d, "kind").lowercased()
             if !Rules.kinds.contains(kind) || kind == "other" { kind = Rules.icon(for: name) }
             // The list can name one thing twice ("mahogany counter", "chipped mahogany counter"):
@@ -4980,13 +5004,9 @@ extension StoryEngine {
                         return v.isEmpty ? nil : v.hasPrefix("y")
                     })
                     if !(what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn")) { r.log.append("refuse: " + item + " (" + what + ")"); return nil }
-                    if what.hasPrefix("worn") {
-                        // Worn on the body (glasses, a hat, a ring) is clothing, not a thing set down.
-                        let wq = "Does " + who + " wear the " + item + " on their body, the way you wear glasses, a hat or a ring, rather than carry it?"
-                        let wm = await ask(clip(wq, 70), base + "QUESTION: " + wq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
-                        if str(wm, "answer").lowercased().hasPrefix("y") { return "worn" }
-                    }
-                    return "thing"
+                    // Worn on the body (a dress, glasses, a hat) is clothing, not a thing set down: the
+                    // funnel's one answer settles it, with no second question.
+                    return what.hasPrefix("worn") ? "worn" : "thing"
                 }
                 // 1. What they have.
                 let hq = base + "QUESTION: What is " + who + " doing as the story opens, " + (sitting ? "sitting" : "standing") + ", and what do they have with them for it, in hand or close by (a glass and a cloth, a needle and fabric, a book)? Up to 3 short names of real objects; they may be things the story doesn't name.\nOutput ONLY one JSON object:\n{\"things\":[\"a short name\"]}\nThe form:"
@@ -5104,11 +5124,41 @@ extension StoryEngine {
         // You start where the opening puts you ("on a stool at the long mahogany bar").
         if let a = adventure, let me = r.player {
             let opening = [a.spot, a.scene].first { !$0.isEmpty } ?? ""
-            if let z = Adventure.zone(from: opening, in: r) {
+            // Where: read off the opening's own words when they name a thing on the map, or else the
+            // model picks from the places.
+            var z = Adventure.zone(from: opening, in: r)
+            if z == nil, !opening.isEmpty {
+                let menu = Zone.menu(r, people: true)
+                let om = await ask("Where are you as it opens?", base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nTHE OPENING SAYS: " + clip(opening, 200) + "\nQUESTION: Where is the player as the story opens?\nPLACES: " + menu.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"where\":\"one of PLACES\"}\nThe form:", JSONGrammar.one("where", from: menu), 30)
+                z = Zone.parse(str(om, "where"))
+            }
+            if let z {
                 let note = Placer.placePerson(&r, me, zone: z)
                 r.log.append("move: you → " + z.text + (note.isEmpty ? "" : " (" + note + ")"))
+            }
+            // Sitting, when the opening has you sit: on the free seat nearest where you are, or a
+            // stool brought over. The model says whether you sit.
+            if !opening.isEmpty, let meNow = r.player, meNow.on == nil {
+                let sq = "THE OPENING SAYS: " + clip(opening, 200) + "\nQUESTION: As the story opens, is the player sitting down?"
+                let sm = await ask("Are you sitting as it opens?", base + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
+                if str(sm, "answer").lowercased().hasPrefix("y") {
+                    let taken = Set(r.people.compactMap(\.on))
+                    if let seat = r.objects.filter({ Rules.seats.contains($0.icon) && !taken.contains($0.id) && RoomGrid.distance($0, meNow) < 2.5 })
+                        .min(by: { RoomGrid.distance($0, meNow) < RoomGrid.distance($1, meNow) }), let i = r.index(meNow.id) {
+                        r.things[i].x = seat.x; r.things[i].y = seat.y; r.things[i].on = seat.id
+                        r.log.append("move: you → on the " + Fovea.bare(seat.name))
+                    } else {
+                        let stool = Thing(kind: .object, name: "stool", icon: "stool")
+                        if Placer.place(&r, stool, zone: .beside(meNow.name)).placed, let placed = r.objects.last(where: { $0.icon == "stool" }), let i = r.index(meNow.id) {
+                            r.things[i].x = placed.x; r.things[i].y = placed.y; r.things[i].on = placed.id
+                            r.log.append("move: you → on a stool")
+                        }
+                    }
+                }
+            }
+            if let me2 = r.player {
                 let staff = r.people.first { p in p.kind == .person && (p.pastMoves.first ?? "").hasPrefix("behind") }
-                if let first = staff ?? r.people.first(where: { $0.kind == .person && $0.id != me.id }) { Placer.turn(&r, me.id, toward: first.name) }
+                if let first = staff ?? r.people.first(where: { $0.kind == .person && $0.id != me2.id }) { Placer.turn(&r, me2.id, toward: first.name) }
             }
         }
         r.log = Array(r.log.suffix(80))
