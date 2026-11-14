@@ -561,6 +561,7 @@ enum Placer {
         if let best = legal(t1, rule: loose, room: room).min(by: { score($0, to: target) < score($1, to: target) }) {
             t.x = best.x; t.y = best.y; t.w = 1; t.d = 1
             room.things.append(t)
+            return
         }
         // Even then it is not dropped: it takes any free square, so what the story named is on the map.
         if let c = freeCells(room).min(by: { cellScore($0, target) < cellScore($1, target) }) {

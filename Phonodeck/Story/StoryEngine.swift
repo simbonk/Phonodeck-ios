@@ -831,7 +831,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z43"
+    static let build = "build 2026-11-14z44"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2086,6 +2086,7 @@ final class StoryEngine {
         defer { rebuildStep = "" }
         // After a foveated turn, questions about things that were out of view are skipped.
         let lean = foveaUsed
+        var drawnNow = false
         let wanted = foveaYes
         let plannedNow = plannedThisTurn
         // Foveated: after a turn spent with one person, only the space between you and them is
@@ -2105,6 +2106,12 @@ final class StoryEngine {
 
         func ask(_ label: String, _ question: String, _ grammar: String, _ tokens: Int) async -> [String: Any]? {
             guard !Task.isCancelled else { return nil }
+            // The room was drawn from this very reply a moment ago: what is in it and where you
+            // are were just decided, so they are not asked again.
+            if drawnNow, ["What is around?", "Where are you in the room?"].contains(label) {
+                times.append(label + " skipped (room just drawn)")
+                return [:]
+            }
             if lean, foveaSkip(label, wanted: wanted, start: start, playerSaid: playerSaid) {
                 times.append(label + " skipped (out of view)")
                 return [:]
@@ -2238,6 +2245,7 @@ final class StoryEngine {
         // it places from this same reply are not moved again by the questions below.
         let roomBefore = adventure?.rooms.count ?? 0
         await furnishRoom(story: (playerSaid.isEmpty ? "" : "THE PLAYER: " + clip(playerSaid, 300) + "\n") + "THE STORY: " + clip(reply, 900))
+        drawnNow = (adventure?.rooms.count ?? 0) > roomBefore
         guard !Task.isCancelled else { return }
 
         // How long the moment took: the story clock moves by it (unless the player set the time).
@@ -2522,7 +2530,7 @@ final class StoryEngine {
             var standsUp = true
             var isSeatMove = false
             if case .on = Zone.parse(whereSaid) { isSeatMove = true }
-            if whereSaid != "stays put", !isSeatMove, let seatID = (adventure ?? start).room?.player?.on,
+            if !whereSaid.isEmpty, whereSaid != "stays put", !isSeatMove, let seatID = (adventure ?? start).room?.player?.on,
                let seat = (adventure ?? start).room?.thing(seatID) {
                 let uq = "You are sitting on the " + Fovea.bare(seat.name) + ". Do THE PLAYER's words or THE STORY say outright that you stand up, get off it or walk somewhere?"
                 let um = await ask("Did you get up?", uq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
@@ -4457,7 +4465,7 @@ extension StoryEngine {
     /// The question that names the object: one noun from the name itself, or none. Small models
     /// answer this far better than "is it a material?" ("polished oak" kept passing that one).
     static func nounQuestion(_ name: String) -> String {
-        "What object does \"" + name + "\" name? Answer with one noun for the object itself, taken from those words, or none if it names no object you could put in a room. For example: \"long mahogany bar\" → bar; \"crackling gramophone\" → gramophone; \"brass lamp\" → lamp; \"polished oak\" → none (oak is a wood); \"velvet\" → none (a cloth); \"soft jazz\" → none (a sound); \"warm cinnamon\" → none (a smell); \"golden glow\" → none (a light)."
+        "Is there a thing in \"" + name + "\" you could hold or bump into? Name the thing itself, one word taken from those words, or none. The other words only describe it. For example: \"long mahogany bar\" → bar; \"crackling jazz record\" → record; \"paper lanterns\" → lantern; \"silver chain\" → chain; \"a cloth\" → cloth; \"a needle\" → needle; \"brass lamp\" → lamp; \"polished oak\" → none (just wood); \"soft jazz\" → none (a sound); \"warm cinnamon\" → none (a smell); \"golden glow\" → none (a light); \"vanilla dust\" → none (just dust)."
     }
 
     /// Whether a long thing runs lengthwise along a wall.
@@ -4502,19 +4510,16 @@ extension StoryEngine {
             whatIsKnown[key] = what
             return what
         }
-        if fromName, !said.hasPrefix("none") {
-            let kind = (await choose("What does " + n + " name as a whole?", ["an object (a glass, a book, a table)", "a smell", "a sound", "a light or a glow", "a material (oak, velvet)", "a feeling or a mood"])).lowercased()
-            if !kind.isEmpty, !kind.hasPrefix("an object") {
-                // The noun and the choice disagree ("bar" named, yet "a material" picked): one plain
-                // question settles it, so a single slip can't throw out the room's main furniture.
-                headOK = await yesNo("Could you touch the " + bare + " or pick it up, the way you could a glass, a book or a chair, and not the way you could a smell, a sound or a glow?") == true
-            }
-        }
-        // No noun from its own words ("coins", "tray" can come back as none): the plain hand question
-        // gets the last word, so one slip can't refuse a solid thing.
-        if headOK, said.isEmpty || said.hasPrefix("none") || !fromName {
-            headOK = await yesNo("Could you touch the " + bare + " or pick it up, the way you could a glass, a book or a chair, and not the way you could a smell, a sound, a glow or a mood?") == true
-        }
+        // Then one question about that one word alone, so the other words can't pull the answer
+        // ("silver" chain read as a material, "crackling" record as a sound). With no word from the
+        // name, its last word is asked about ("coins", "tray").
+        let head: String = (fromName && !said.hasPrefix("none") && !said.isEmpty) ? said : (bare.split(separator: " ").last.map(String.init) ?? bare)
+        let solid = (await choose("A " + head + ": which is it?", [
+            "a solid thing you could hold or bump into (a cup, a needle, a chain, a chair, a lantern)",
+            "not a solid thing (a smell, a sound, a light, a feeling, or stuff like wood, water or dust)",
+        ])).lowercased()
+        headOK = solid.hasPrefix("a solid")
+        _ = n
         if !headOK {
             what = "not an object (a material, smell, sound, light or feeling)"
         } else {
@@ -4846,7 +4851,12 @@ extension StoryEngine {
                 guard !Task.isCancelled else { return }
                 let card = a0.cast.first { $0.name == name }
                 let workSpots = ["nothing"] + r.objects.filter { $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" }.map { Zone.short($0.name) }
-                let who = name + ((card?.role ?? "").isEmpty ? "" : " (" + Continuity.roleLabel(card!.role) + ")")
+                var who = name + ((card?.role ?? "").isEmpty ? "" : " (" + Continuity.roleLabel(card!.role) + ")")
+                // Where the story itself puts them ("at a corner table with her sketchbook") goes with
+                // every question about them.
+                if let told = (adventure ?? a0).whereabouts.first(where: { $0.name == name })?.at, told.count > 3 {
+                    who += ", whom the story puts " + clip(told, 80)
+                }
                 let q = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + (r.people.count > 1 ? "; already placed: " + r.people.filter { $0.kind == .person }.map(\.name).joined(separator: ", ") : "") + ".\n"
                     + "QUESTION: About " + who + " as the story opens: are they with the others, or apart on their own (a separate conversation the player can go to)? Are they sitting or standing, and on what (a stool, a chair, a booth, a bench; none if standing)? Do they work behind something here (WORK SPOTS), or nothing?\nWORK SPOTS: " + workSpots.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"company\":\"with the others or apart\",\"posture\":\"sitting or standing\",\"seat\":\"what they sit on, or none\",\"works_behind\":\"one of WORK SPOTS\"}\nThe form:"
                 let m = await ask("Is " + Cards.first(name) + " with the others, or apart?", q, JSONGrammar.personSetup(work: workSpots), 60)
