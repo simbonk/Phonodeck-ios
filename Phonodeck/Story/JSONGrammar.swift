@@ -87,7 +87,9 @@ enum JSONGrammar {
         let personNames = safe(people, max: 40)
         var looks: [String] = Looks.Kind.allCases.filter { !$0.takesTarget }.map { #""\""# + $0.rawValue + #"\"""# }
         if !cardNames.isEmpty { looks.append(#""\"look at " lname "\"""#) }
-        if !personNames.isEmpty { looks.append(#""\"where is " pname "\"""#) }
+        if !personNames.isEmpty {
+            for k in Looks.Kind.allCases where k.aboutPerson { looks.append("\"\\\"" + k.rawValue + " \" pname \"\\\"\"") }
+        }
         looks.append(#""\"remember " topic "\"""#)
         return [
             "root ::= \"{\" ws " + [
