@@ -827,7 +827,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-13z39"
+    static let build = "build 2026-11-14z40"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2685,6 +2685,7 @@ final class StoryEngine {
                     let lm = await ask("Which side of the " + clip(short, 30) + " goes to the wall?", Self.alongQuestion(e) + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
                     t.along = Self.wallSide((lm?["answer"] as? String) ?? "")
                     if t.along == "staff" { t.space = "behind" }
+                    if t.along == "staff" || t.along == "flush" { t.d = 1; t.w = max(t.w, 2) }
                     asked.append("Which side of the " + short + " goes to the wall? → " + Self.wallSideLabel(t.along))
                 }
             }
@@ -4401,7 +4402,9 @@ extension StoryEngine {
     static func whatIs(_ name: String, noun: (String) async -> String, choose: (String, [String]) async -> String, yesNo: (String) async -> Bool?) async -> String {
         let key = name.lowercased()
         if let known = whatIsKnown[key] { return known }
-        let n = "\"" + name + "\""
+        // "a glass" is asked about as "glass", so no question reads "the a glass".
+        let bare = name.replacingOccurrences(of: #"^(?i)(a|an|the|some)\s+"#, with: "", options: .regularExpression)
+        let n = "\"" + bare + "\""
         // First: which word names the object? It has to be one of the name's own words, and not
         // "none": a material, a smell or a glow names no object and stops here.
         var what = "a thing in the room"
@@ -4420,17 +4423,17 @@ extension StoryEngine {
             return what
         }
         if fromName, !said.hasPrefix("none") {
-            let kind = (await choose("What does " + n + " name as a whole?", ["an object", "a smell", "a sound", "a light or a glow", "a material or a surface", "a feeling or a mood"])).lowercased()
+            let kind = (await choose("What does " + n + " name as a whole?", ["an object you could touch, big or small (a glass, a book, a table)", "a smell", "a sound", "a light or a glow", "a material, like oak or velvet", "a feeling or a mood"])).lowercased()
             if !kind.isEmpty, !kind.hasPrefix("an object") {
                 // The noun and the choice disagree ("bar" named, yet "a material" picked): one plain
                 // question settles it, so a single slip can't throw out the room's main furniture.
-                headOK = await yesNo("Could you walk up to the " + name + " and lay your hand on it, the way you could a bar, a table or a chair, and not the way you could a smell, a sound or a glow?") == true
+                headOK = await yesNo("Could you touch the " + bare + " or pick it up, the way you could a glass, a book or a chair, and not the way you could a smell, a sound or a glow?") == true
             }
         }
         // No noun from its own words ("coins", "tray" can come back as none): the plain hand question
         // gets the last word, so one slip can't refuse a solid thing.
         if headOK, said.isEmpty || said.hasPrefix("none") || !fromName {
-            headOK = await yesNo("Could you walk up to the " + name + " and lay your hand on it, the way you could a tray, a book or a chair, and not the way you could a smell, a sound, a glow or a mood?") == true
+            headOK = await yesNo("Could you touch the " + bare + " or pick it up, the way you could a glass, a book or a chair, and not the way you could a smell, a sound, a glow or a mood?") == true
         }
         if !headOK {
             what = "not an object (a material, smell, sound, light or feeling)"
@@ -4610,6 +4613,9 @@ extension StoryEngine {
                 let lm = await ask("Which side of the " + clip(Zone.short(name), 30) + " goes to the wall?", base + "QUESTION: " + Self.alongQuestion(name) + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
                 t.along = Self.wallSide(str(lm, "answer"))
                 if t.along == "staff" { t.space = "behind" }
+                // Against a wall, a long piece is one metre deep (a bar, a dresser), whatever size
+                // the list gave it.
+                if t.along == "staff" || t.along == "flush" { t.d = 1; t.w = max(t.w, 2) }
                 r.log.append("ask: which side of the " + Zone.short(name) + " goes to the wall? → " + Self.wallSideLabel(t.along))
             }
             wanted.append(t)
@@ -4699,7 +4705,9 @@ extension StoryEngine {
             let already = r.objects.filter { Rules.seats.contains($0.icon) && atBar.contains(Cell(x: $0.x, y: $0.y)) }.count
             let bq = base + "THE ROOM NOW: " + r.objects.map(\.name).joined(separator: ", ") + ".\nQUESTION: Customers sit at a bar on stools along its open side; most bars have three to six. There " + (already == 1 ? "is 1 stool" : "are \(already) stools") + " at the " + Zone.short(bar.name) + " so far. How many more stools does it need in this story (0 if that is enough)?\nOutput ONLY one JSON object:\n{\"seats\":\"a number from 0 to 6\"}\nThe form:"
             let bm = await ask("How many seats at the " + clip(Zone.short(bar.name), 30) + "?", bq, JSONGrammar.one("seats", from: ["0", "1", "2", "3", "4", "5", "6"]), 12)
-            let want = min(Int(str(bm, "seats")) ?? 0, max(bar.w, bar.d) + 1)
+            // The grammar asks for a string, but a bare number ({"seats":4}) counts too.
+            let saidSeats = (bm["seats"] as? Int) ?? (bm["seats"] as? Double).map { Int($0) } ?? Int(str(bm, "seats")) ?? 0
+            let want = min(saidSeats, max(bar.w, bar.d) + 1)
             var got = 0
             for _ in 0..<want {
                 let stool = Thing(kind: .object, name: "stool", icon: "stool")
@@ -4870,8 +4878,10 @@ extension StoryEngine {
                 let nm = await ask("What would " + Cards.first(name) + " need?", nq, JSONGrammar.personNeeds(options: needOptions), 50)
                 var needs: [String] = []
                 for k in ["first", "second"] {
-                    let v = str(nm, k)
-                    if needOptions.contains(v), v != "nothing", !needs.contains(v) { needs.append(v) }
+                    // "stool" for "a stool": the answer counts without its article.
+                    let said = str(nm, k).lowercased()
+                    guard let v = needOptions.first(where: { $0 == said || $0.hasSuffix(" " + said) }) else { continue }
+                    if v != "nothing", !needs.contains(v) { needs.append(v) }
                 }
                 r.log.append("ask: what would " + name + " need? → " + (needs.isEmpty ? "nothing" : needs.joined(separator: ", ")))
                 for need in needs {
