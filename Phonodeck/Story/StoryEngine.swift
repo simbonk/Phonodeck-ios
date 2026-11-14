@@ -66,6 +66,9 @@ final class StoryEngine {
     /// A turn that is only you talking to one person, staying put: the reply and the rebuild look
     /// at nothing but the two of you (and the date, the city and the weather).
     private var talkThisTurn = false
+    /// The plan's plain reading of what the player did ("turned toward Dolores and smiled at her"),
+    /// so a dictation slip ("I turned it, Dolores") isn't taken literally by the reply.
+    private var didThisTurn = ""
     /// The look heard the player stay in this place this turn (no going anywhere new).
     private var stayingThisTurn = false
     /// The plan already put the player where they went this turn (sat them down, walked them over).
@@ -909,7 +912,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z53"
+    static let build = "build 2026-11-14z54"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1406,6 +1409,7 @@ final class StoryEngine {
         plannedThisTurn = [:]
         focusThisTurn = ""
         talkThisTurn = false
+        didThisTurn = ""
         stayingThisTurn = false
         placedByPlan = false
         var introduced = hidden ? false : learnPlayerName(&a, input: input)
@@ -1846,8 +1850,16 @@ final class StoryEngine {
             events.insert(contentsOf: plan.brief, at: 0)
             system = Fovea.system(a, nameless: a.nameless, playerNamed: !a.nameless || nameTold(a), age: PlayerDetails.saved.age, talk: talk)
             if talk {
+                // A question about the room or who is in it ("Who else is here?"): a second pass,
+                // straight from the map, puts everyone and everything in view into the moment.
+                let roomKinds: Set<Looks.Kind> = [.whoIsHere, .around, .whereIs, .lookAt]
+                if playerAsks, (read?.looks ?? []).contains(where: { roomKinds.contains($0.kind) }) {
+                    let view = Fovea.roomView(a).filter { !$0.hasPrefix("THE ROOM:") }
+                    if !view.isEmpty { events.append("THE PLAYER ASKED ABOUT THE ROOM. Everyone and everything here, from the map (always true): " + view.joined(separator: " ")) }
+                }
                 events.append("Answer what the player said fully and specifically, in 100 to 180 words, most of it what the person you face says and does.")
             }
+            if !didThisTurn.isEmpty { events.append("WHAT THE PLAYER DID, read plainly (their words may be a speech slip): " + didThisTurn) }
             lead = Fovea.lead(a, input: input, arrived: arrivedNow, events: events, kept: kept, talkTo: talk ? (read?.to ?? "") : nil)
             roomSent = lead.components(separatedBy: "\n").filter { $0.hasPrefix("THE ROOM: ") || $0.hasPrefix("WHERE YOU ARE") || $0.hasPrefix("- ") && $0.contains(" Now: ") }
             let shown: String = talk ? "only you and " + (read?.to ?? "them") + ", the date, the city and the weather" : kept.isEmpty ? "only the room and who you face" : kept.map { Fovea.clip($0.text, 50) }.joined(separator: "; ")
@@ -2727,6 +2739,20 @@ final class StoryEngine {
                 return true
             }
         }
+        // Only real things go in your hands: "shivering" or "soaked to the bone" is not one.
+        var heldThings: [String] = []
+        for h in held {
+            if start.carrying.contains(where: { Self.similar($0, h) }) { heldThings.append(h); continue }
+            let what = await Self.whatIs(h, noun: { q in
+                let m = await ask("What object is " + clip(h, 40) + "?", q + "\nOutput ONLY one JSON object:\n{\"object\":\"one noun, or none\"}\nThe form:", JSONGrammar.text("object", chars: 24), 16)
+                return (m?["object"] as? String) ?? ""
+            }, choose: { q, opts in
+                let m = await ask(clip(q, 70), q + "\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 64)
+                return (m?["answer"] as? String) ?? ""
+            }, yesNo: { _ in nil })
+            if what.hasPrefix("small") || what.hasPrefix("a thing") || what.hasPrefix("worn") { heldThings.append(h) } else { refused.append(h + " (" + what + ")") }
+        }
+        held = heldThings
         asked.append("What do you have? → " + (held.isEmpty ? "nothing new" : held.joined(separator: "; ")))
         commit { now in
             guard !held.isEmpty else { return }
@@ -3028,7 +3054,9 @@ final class StoryEngine {
         // dialogue ("Walter said here's to staying dry") is only this moment.
         var lasting: [String] = []
         let owners: [String] = present.filter { !$0.isPlayer }.map(\.name)
-        for f in fresh {
+        for f0 in fresh {
+            // "Dolores said she was finishing a dress…" is asked as what it says about her.
+            let f = f0.replacingOccurrences(of: #"^([A-Z][\w']+(?: [A-Z][\w']+)?) (?:said|says|told you|mentioned|explained)(?: that)? (?:she|he|they) "#, with: "$1 ", options: .regularExpression)
             let opts = owners.map { "about " + $0 + ", still true tomorrow" } + ["about you, still true tomorrow", "only this moment: a toast, a greeting or an action just now"]
             let lm = await ask("Does it last?", "THE SENTENCE: \"" + f + "\"\nQUESTION: Is this something that stays true about someone: their life, work, past, plans, habits, why they come here, what they love or fear, a promise, something given? And about whom? Or only a toast, a greeting or an action this moment?\nCHOICES: " + opts.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: opts), 40)
             let said = ((lm?["answer"] as? String) ?? "").lowercased()
@@ -3173,7 +3201,7 @@ final class StoryEngine {
         }
         // 1. What did the player just do, to them?
         let theyDid = await text("What did you just do to " + first + "?", "In a few words, what did the player just do or ask, as " + who + " sees it?", "did", 60)
-        if !theyDid.isEmpty { chain.append("you: " + theyDid) }
+        if !theyDid.isEmpty { chain.append("you: " + theyDid); didThisTurn = theyDid }
         // 2. Do they want to engage? Most people do, and stay where they are to do it.
         // Asked the other way round: a yes-or-no slip then leaves them engaging, as most people would.
         let avoids = await yes("Would " + first + " rather avoid you?", "Would " + who + " rather avoid the player right now, ignoring them or turning away, instead of answering them? Only someone upset with the player, busy with an emergency, or walking off from them avoids them.") ?? false
@@ -4817,7 +4845,16 @@ extension StoryEngine {
                 let sm = await ask("Is it the " + clip(Zone.short(twin.name), 30) + "?", base + "QUESTION: " + sq + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 10)
                 let same = str(sm, "answer").lowercased().hasPrefix("y")
                 r.log.append("ask: is " + name + " the " + twin.name + "? → " + (same ? "yes, drawn once" : "no"))
-                if same { continue }
+                if same {
+                    // Keep the name that names the thing ("mahogany bar" over "polished oak").
+                    let twinHead = Self.headKnown[twin.name.lowercased()] ?? ""
+                    if !Continuity.wordSet(twin.name).contains(twinHead), let i = wanted.firstIndex(where: { $0.id == twin.id }),
+                       let h = Self.headKnown[name.lowercased()], Continuity.wordSet(name).contains(h) {
+                        wanted[i].name = name
+                        r.log.append("edit: " + twin.name + " → called " + name)
+                    }
+                    continue
+                }
             }
             var t = Thing(kind: .object, name: name, icon: kind)
             t.makeup = Self.echoesPrompt(str(d, "made_of")) ? "" : str(d, "made_of")
@@ -5060,7 +5097,8 @@ extension StoryEngine {
                 if !seatTable.isEmpty {
                     let tb = Thing(kind: .object, name: Cards.first(name) + "'s " + Zone.short(seatTable), icon: Rules.icon(for: seatTable))
                     let out = Placer.place(&r, tb, zone: .beside(name))
-                    r.log.append(out.placed ? "place: " + tb.name + " → beside " + name : "refuse: " + tb.name + " (" + out.reason + ")")
+                    if !out.placed { Placer.fallback(&r, tb, near: .beside(name)) }
+                    r.log.append(out.placed ? "place: " + tb.name + " → beside " + name : "move: " + tb.name + " → nearest spot to " + name + " (" + out.reason + " beside)")
                 }
                 // Then, as a person would: what do they have with them, and what would they need
                 // close by for it? The things may be ones the story never names; they only need to
