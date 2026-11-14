@@ -14,6 +14,16 @@ import Foundation
 ///   look at <name>    one card: a person, a place, an item, or a thing here
 ///   where is <name>   where a person is right now
 ///   remember <topic>  older moments of the story about a topic
+///   the time          the story clock
+///   outside           the weather and what the windows show
+///   the ways out      the doors and where they lead
+///   what is served    what this place serves or sells, from its card and its counters
+///   belongings of <p> what a person holds and wears
+///   known to <p>      what a person knows about the player
+///   history with <p>  what has passed between the player and a person
+///   backstory of <p>  who a person is, and what they share only because the player asked
+///   ties of <p>       how a person knows the others here
+///   other question    the player asked something no lookup covers: flagged, nothing invented
 enum Looks {
     enum Kind: String, CaseIterable {
         case whoIsHere = "who is here"
@@ -23,9 +33,21 @@ enum Looks {
         case lookAt = "look at"
         case whereIs = "where is"
         case remember = "remember"
+        case time = "the time"
+        case outside = "outside"
+        case waysOut = "the ways out"
+        case served = "what is served"
+        case otherQuestion = "other question"
+        case belongings = "belongings of"
+        case knownTo = "known to"
+        case history = "history with"
+        case backstory = "backstory of"
+        case ties = "ties of"
 
         /// Lookups that take a name or a topic after them.
-        var takesTarget: Bool { self == .lookAt || self == .whereIs || self == .remember }
+        var takesTarget: Bool { self == .lookAt || self == .remember || aboutPerson }
+        /// Lookups about one person, named after them.
+        var aboutPerson: Bool { [.whereIs, .belongings, .knownTo, .history, .backstory, .ties].contains(self) }
     }
 
     struct Look: Hashable {
@@ -54,7 +76,7 @@ enum Looks {
             switch k {
             case .lookAt:
                 if let c = cards.first(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) { return Look(kind: k, target: c) }
-            case .whereIs:
+            case _ where k.aboutPerson:
                 if let p = people.first(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) { return Look(kind: k, target: p) }
             default:
                 if t.count >= 3 { return Look(kind: k, target: String(t.prefix(40))) }
@@ -146,6 +168,65 @@ enum Looks {
             return Answer(look: look, lines: [l + "."])
         case .lookAt:
             return Answer(look: look, lines: [card(look.target, in: a)])
+        case .time:
+            var l = a.storyTime.isEmpty ? (a.clock.map { Continuity.clockText($0) } ?? "") : a.storyTime
+            if l.isEmpty { l = "No time on file: keep it vague." }
+            return Answer(look: look, lines: [l + "."])
+        case .outside:
+            var l: [String] = []
+            if let r = a.room {
+                if !r.outside.isEmpty { l.append("Outside: " + Cards.clip(r.outside, 160) + ".") }
+                for w in r.windows where !w.view.isEmpty { l.append("Through the " + w.wall.rawValue + " window: " + Cards.clip(w.view, 100) + ".") }
+            }
+            l += a.facts.filter { $0.range(of: #"(?i)\b(weather|rain|storm|snow|wind|sun|cold|hot|fog)\b"#, options: .regularExpression) != nil }.prefix(2).map { Cards.clip($0, 140) }
+            return Answer(look: look, lines: l.isEmpty ? ["Nothing on file about outside: keep it to the weather already told."] : l)
+        case .waysOut:
+            guard let r = a.room, !r.doors.isEmpty else { return Answer(look: look, lines: ["No doors on the map yet."]) }
+            return Answer(look: look, lines: r.doors.map { "A door in the " + $0.wall.rawValue + " wall" + ($0.leadsTo.isEmpty ? "." : ", to " + $0.leadsTo + ".") })
+        case .served:
+            var l: [String] = []
+            if let d = Cards.placeCard(a)?.desc, !d.isEmpty { l.append(a.location + ": " + Cards.clip(d, 200)) }
+            if let r = a.room {
+                let onTops = r.objects.filter { o in o.on != nil && Rules.rule(o.icon).small }.map(\.name)
+                if !onTops.isEmpty { l.append("On the counters and tables: " + onTops.prefix(8).joined(separator: ", ") + ".") }
+            }
+            l.append("Anything else served is ordinary for the place and time, and comes from whoever works here.")
+            return Answer(look: look, lines: l)
+        case .otherQuestion:
+            return Answer(look: look, lines: ["No lookup covers this question. Answer only from what is given; anything the person you face wouldn't know, they say they don't know. Invent nobody and nothing in the room."])
+        case .belongings:
+            var l: [String] = []
+            if let t = a.room?.named(look.target) {
+                if !t.wearing.isEmpty { l.append("Wearing: " + t.wearing + ".") }
+                if !t.holding.isEmpty { l.append("Holding: " + t.holding.joined(separator: ", ") + ".") }
+                if let r = a.room {
+                    let near = r.objects.filter { $0.icon != "rug" && RoomGrid.distance($0, t) < 1.6 }.map(\.name)
+                    if !near.isEmpty { l.append("Within their reach: " + near.prefix(6).joined(separator: ", ") + ".") }
+                }
+            }
+            if let c = a.lore.first(where: { $0.name.caseInsensitiveCompare(look.target) == .orderedSame }) {
+                l += Cards.facts(about: c, in: a).filter { $0.range(of: #"(?i)\b(wear|wears|carr|keeps|holds|has)\b"#, options: .regularExpression) != nil }.prefix(2).map { Cards.clip($0, 140) }
+            }
+            return Answer(look: look, lines: l.isEmpty ? ["Nothing on file beyond what the card says."] : l)
+        case .knownTo:
+            let k = a.knows[look.target.lowercased()] ?? []
+            return Answer(look: look, lines: [k.isEmpty ? Cards.first(look.target) + " knows nothing about you yet beyond what they can see." : Cards.first(look.target) + " knows: " + k.suffix(5).joined(separator: "; ") + "."])
+        case .history:
+            var l: [String] = []
+            if let b = a.between[look.target.lowercased()], !b.isEmpty { l.append("So far: " + b.suffix(5).joined(separator: "; ") + ".") }
+            if let f = a.feelings[look.target.lowercased()] { l.append(Cards.first(look.target) + " feels " + f + " about you.") }
+            return Answer(look: look, lines: l.isEmpty ? ["Nothing has passed between you yet."] : l)
+        case .backstory:
+            guard let c = a.lore.first(where: { $0.name.caseInsensitiveCompare(look.target) == .orderedSame }) else { return Answer(look: look, lines: ["Nothing on file."]) }
+            var l: [String] = []
+            if !c.desc.isEmpty { l.append(Cards.clip(c.desc, 200)) }
+            if !c.privateLife.isEmpty { l.append("Kept to themselves until now; they share a little of it, because you asked: " + Cards.clip(c.privateLife, 220)) }
+            return Answer(look: look, lines: l.isEmpty ? ["Nothing on file: they keep it simple and true to their card."] : l)
+        case .ties:
+            guard let c = a.lore.first(where: { $0.name.caseInsensitiveCompare(look.target) == .orderedSame }), !c.ties.isEmpty else {
+                return Answer(look: look, lines: ["Nothing on file about how they know the others."])
+            }
+            return Answer(look: look, lines: [Cards.clip(c.ties, 240)])
         case .remember:
             let kw = Cards.keywords(look.target)
             let hits = a.facts.filter { !Cards.keywords($0).isDisjoint(with: kw) }.suffix(2).map { Cards.clip($0, 160) }

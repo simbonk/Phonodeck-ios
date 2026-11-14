@@ -976,7 +976,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-14z60"
+    static let build = "build 2026-11-14z61"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1678,9 +1678,12 @@ final class StoryEngine {
                 }
             }
         }
-        if !hidden, !fov {
+        if !hidden {
             let asked = read?.looks ?? []
-            let looks = asked + Looks.auto(a, input: input, to: read?.to ?? "", asked: asked)
+            // In the foveated story the person you face already has their whole card, so code only
+            // adds the lookups the model didn't ask for that aren't that card.
+            let looks = asked + Looks.auto(a, input: input, to: read?.to ?? "", asked: asked).filter { !(fov && $0.kind == .lookAt && $0.target.caseInsensitiveCompare(read?.to ?? "") == .orderedSame) }
+            if looks.contains(where: { $0.kind == .otherQuestion }) { trace("FLAGGED", "no lookup covers this question: " + input) }
             stage = looks.isEmpty ? "Gathering the world" : "Looking things up"
             lapFrom = Date()
             for l in looks {
@@ -1948,7 +1951,14 @@ final class StoryEngine {
             // second pass, straight from the map, puts everyone and everything in view into the
             // moment, so the reply names the real people and never invents more.
             let roomKinds: Set<Looks.Kind> = [.whoIsHere, .around, .whereIs, .lookAt]
-            if playerAsks, (read?.looks ?? []).contains(where: { roomKinds.contains($0.kind) }) {
+            let roomAsked = playerAsks && (read?.looks ?? []).contains(where: { roomKinds.contains($0.kind) })
+            // Every other lookup the model asked for (the time, what someone holds, their
+            // backstory, what has passed between you): code's answer, from the store.
+            let lookedLines: [String] = looked.filter { l in
+                !(roomAsked && [.whoIsHere, .around].contains(l.look.kind)) && !l.text.isEmpty
+            }.map { $0.look.text + ": " + clip($0.text, 260) }
+            if !lookedLines.isEmpty { events.append("LOOKED UP for this moment (from the store, always true): " + lookedLines.joined(separator: " | ")) }
+            if roomAsked {
                 let view = Fovea.roomView(a).filter { !$0.hasPrefix("THE ROOM:") }
                 if !view.isEmpty { events.append("THE PLAYER ASKED ABOUT THE ROOM. Everyone and everything here, from the map (always true), and nobody else: " + view.joined(separator: " ")) }
             }
