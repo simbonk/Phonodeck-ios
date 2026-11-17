@@ -1,9 +1,12 @@
 name: Build
 
 # Checks that the app compiles for iPhone on every push. It does not sign or install anything.
+# Changes that only touch Markdown (the README) skip it.
 on:
   push:
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
   workflow_dispatch:
 
 jobs:
