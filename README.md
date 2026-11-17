@@ -2,12 +2,13 @@
 
 An audio storytelling app that runs entirely on your iPhone. You download a language model once, and from then on it works in Airplane Mode: nothing you say or write leaves the phone.
 
-- **Phonodeck tab:** the same flow as the web app. A set-up wizard asks how long you have, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made: story, map, characters and lore, the Game Master and the Director. Then the Game Master tells it aloud, keeps an eye on the clock, lands a real ending, then offers **Continue**: pick a length (10 minutes up to 4 hours) and the next part starts, with the same cast and world, a "last time" recap, and the story's facts, timeline and scene carried over. The parts are linked on the start screen. Play by typing, or tap **hands-free** and just talk (say **"make it so"** to send).
-- **World button:** the globe in a story opens the Mission (feeling meter, mission track, events), the Story bible, and the World: every character, place, item and faction the story has collected. Edit or add anything; your words always win.
+- **Phonodeck tab:** tap **Set up a new experience**. A short wizard asks how long you have, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made, ending with the first room drawn on the map, and the opening is told from it. The story has no clock: it runs until you choose **Finish the experience now** in the ••• menu. Then **Continue** starts the next part, with the same cast and world, a "last time" recap, and the story's facts and scene carried over. The parts are linked on the start screen.
+- **Playing:** type, or tap **Hands-free** and just talk. With **Do, then say** (Settings, on by default) each spoken turn has two parts, each with its own chirp: first what you do, then what you say (or "nothing"). Say **"make it so"** to send.
+- **Three tabs along the top of a story:** the story itself (the Phonodeck mark), the **World** (the globe: a map of the room you are in, the cards of everyone and everything in it, and a turn guide showing how each turn was worked out), and the **Live log** of every question the model was asked. Tap anything on the map to open its card; edit any card and your words win.
 - **Chat tab:** a plain conversation with the same on-device model.
-- **Models tab:** download the storyteller, narrator voice and listening models from Hugging Face. Every model shows whether it will run comfortably on *this* phone before you download it. Paste a link to add any other MLX model.
+- **Models tab:** download the models for **Thinking** (the storyteller), **Speaking** (the narrator) and **Listening**. Every model shows whether it will run comfortably on *this* phone before you download it. Search Hugging Face or paste a link to add another.
 - **Share experiences:** export a set-up as a small `.phonodeck` file and send it to someone; they tap it to import.
-- **Privacy:** your stories and chats are encrypted on the phone. An optional passcode (or Face ID) locks Phonodeck whenever you leave it, and only it can open them. Settings and the lock screen also show the 988 crisis line.
+- **Privacy and support:** your stories and chats are encrypted on the phone. An optional passcode (or Face ID) locks Phonodeck whenever you leave it. Settings and the lock screen link to the 988 crisis line, and a check-in card offers it if something you write sounds like you might hurt yourself.
 
 This is the on-device sibling of the [Phonodeck web app](https://github.com/simbonk/phonodeck), which uses Gemini in the cloud.
 
@@ -25,17 +26,19 @@ Small on-device models tell shorter, simpler stories than Gemini Pro, so the pro
 
 ## How a turn works
 
-Every turn is a **foveated story** turn: like the eye, the storyteller sees sharply only what this moment is about.
+Every story plays on a **room grid**: each room is a grid of 1 m squares, and code holds where every person and thing is, which way they face, and what they wear and hold. The storyteller never sees the grid, only code's reading of it in plain words ("Dolores: in front of you, 1 m, behind the bar, facing you"). The full design, with a flow chart, is in [How the room grid works](https://claude.ai/artifact/XgH7m1p37PVYD8qMXiftcE).
 
-1. **Read.** One short call reads your message into fixed choices: who you are talking to, where you are going, what you are doing or asking about.
-2. **Settle.** Code settles the scene from that reading: where you are, who is here and who you face, what you picked up or put down. Recall searches the cards, older turns and chapter summaries for anything you mention.
-3. **Yes or no.** Every item on the cards is listed, and one short question marks each one yes or no for this moment only (`Fovea.swift`). The storyteller sees just the year, the time, the room, the person you are facing and the items marked yes. A glass in your hand is left out when you ask someone's name, and comes back the moment you take a sip.
-4. **Paint.** The reply is written from short rules, the premise and that narrow view, then checked in code (names, pronouns, people who are elsewhere, near-copies of earlier replies) before it is read aloud.
-5. **Rebuild.** While the reply is read aloud, short questions update the cards piece by piece: who is where, what they are doing, what you are holding, what was learned. After a foveated turn, questions about things that were out of view are skipped. Every 6 turns older turns fold into a chapter summary.
+1. **Look.** One short call reads your message into fixed choices: who you turn to, where you go, what to look up, what happens next.
+2. **Build the room** (first visit only). A new place is laid out before the reply: its size, doors and windows, the things the story names, where each one goes (checked against placement rules), and each person, one at a time. You watch it go up on the map.
+3. **Settle.** Code moves you, seats you and puts what you take in your hands, and answers each lookup from the store.
+4. **What matters.** One yes/no pass picks which card items this moment needs (`Fovea.swift`). On a quiet turn, talking to one person and staying put, it is skipped: the reply gets just the two of you.
+5. **Plan the moment.** On the map: you walk over if you said so, and the person you face stays, gets up or reaches for what is near.
+6. **Tell it.** The reply is written from short rules, the premise, the room in words and that narrow view, then checked in code (names, pronouns, people who are elsewhere, near-copies of earlier replies) before it is read aloud.
+7. **Rebuild.** While it is read aloud, the grid and the cards catch up: one state-diff call after a quiet turn, short questions otherwise. Questions about things that were out of view are skipped.
 
-The World panel's turn guide shows each step, and "Copy story text" in the ••• menu copies the world and every turn with what happened behind the scenes.
+The World tab's turn guide shows each step, and "Copy story text" in the ••• menu copies the world, the room maps and every turn with what happened behind the scenes.
 
-**Continue.** When a story ends, Continue starts its next part at the length you pick, right where it left off or some time later. One short call reads the final scene (where you are, the time, who is where, what is true now, and a recap), the returning people, places and facts carry over, and recall can search earlier parts.
+**Continue.** When you finish a story, Continue starts its next part at the length you pick, right where it left off or some time later. One short call reads the final scene (where you are, the time, who is where, what is true now, and a recap), the returning people, places and facts carry over, and recall can search earlier parts.
 
 **Memory.** Only one model call runs at a time, and every prompt is held to the 4,096-token conversation size the fit check below budgets for, so the extra steps never raise peak memory above a normal turn.
 
