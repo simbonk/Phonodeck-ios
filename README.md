@@ -2,6 +2,14 @@
 
 An audio storytelling app that runs entirely on your iPhone. You download a language model once, and from then on it works in Airplane Mode: nothing you say or write leaves the phone.
 
+<p align="center">
+  <img src="docs/screens/story.png" width="24%" alt="A story in play: the opening scene in a 1962 barbershop, the player's turn, and the reply">
+  <img src="docs/screens/world.png" width="24%" alt="The World tab: a map of the barbershop with the player, two people, shelves and the door">
+  <img src="docs/screens/live-log.png" width="24%" alt="The Live log: the prompt sent to the storyteller, its reply, and the rebuild questions after it">
+  <img src="docs/screens/models.png" width="24%" alt="The Models tab: memory in use and the recommended Thinking model">
+</p>
+<p align="center"><sub>The story, the World map, the Live log, and the Models tab.</sub></p>
+
 - **Phonodeck tab:** tap **Set up a new experience**. A short wizard asks how long you have, then offers curated worlds or walks you through building your own (the storyteller suggests answers if you pause). A build screen shows the world being made, ending with the first room drawn on the map, and the opening is told from it. The story has no clock: it runs until you choose **Finish the experience now** in the ••• menu. Then **Continue** starts the next part, with the same cast and world, a "last time" recap, and the story's facts and scene carried over. The parts are linked on the start screen.
 - **Playing:** type, or tap **Hands-free** and just talk. With **Do, then say** (Settings, on by default) each spoken turn has two parts, each with its own chirp: first what you do, then what you say (or "nothing"). Say **"make it so"** to send.
 - **Three tabs along the top of a story:** the story itself (the Phonodeck mark), the **World** (the globe: a map of the room you are in, the cards of everyone and everything in it, and a turn guide showing how each turn was worked out), and the **Live log** of every question the model was asked. Tap anything on the map to open its card; edit any card and your words win.
