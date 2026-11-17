@@ -26,7 +26,22 @@ Small on-device models tell shorter, simpler stories than Gemini Pro, so the pro
 
 ## How a turn works
 
-Every story plays on a **room grid**: each room is a grid of 1 m squares, and code holds where every person and thing is, which way they face, and what they wear and hold. The storyteller never sees the grid, only code's reading of it in plain words ("Dolores: in front of you, 1 m, behind the bar, facing you"). The full design, with a flow chart, is in [How the room grid works](https://claude.ai/artifact/XgH7m1p37PVYD8qMXiftcE).
+Every story plays on a **room grid**: each room is a grid of 1 m squares, and code holds where every person and thing is, which way they face, and what they wear and hold. The storyteller never sees the grid, only code's reading of it in plain words ("Dolores: in front of you, 1 m, behind the bar, facing you").
+
+```mermaid
+flowchart TD
+    speak["1. You speak<br/>typed, or aloud hands-free"] --> look["2. Look<br/>who you turn to, where you go,<br/>what to look up, what happens next"]
+    look --> newroom{"New place<br/>with no map?"}
+    newroom -- yes --> build["Room builder, first visit only<br/>shell: size, doors, windows<br/>things: one batch, sorted and sized<br/>places: checked against the rules<br/>people: one by one"]
+    build --> settle
+    newroom -- no --> settle["3. Settle on the grid<br/>code moves you, seats you,<br/>puts what you take in your hands"]
+    settle --> matters["4. What matters<br/>yes/no pass over the cards<br/>(skipped on a quiet talk turn)"]
+    matters --> plan["5. Plan the moment<br/>you walk over; the person you face<br/>stays, moves or reaches"]
+    plan --> tell["6. Tell it<br/>the room in plain words goes to<br/>the storyteller; code checks the reply"]
+    tell --> aloud["7. Read aloud"]
+    tell -. meanwhile .-> rebuild["Rebuild<br/>quiet turn: one state-diff call<br/>otherwise short questions"]
+    rebuild -. next turn .-> speak
+```
 
 1. **Look.** One short call reads your message into fixed choices: who you turn to, where you go, what to look up, what happens next.
 2. **Build the room** (first visit only). A new place is laid out before the reply: its size, doors and windows, the things the story names, where each one goes (checked against placement rules), and each person, one at a time. You watch it go up on the map.
