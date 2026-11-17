@@ -30,17 +30,20 @@ Every story plays on a **room grid**: each room is a grid of 1 m squares, and co
 
 ```mermaid
 flowchart TD
-    speak["1. You speak<br/>typed, or aloud hands-free"] --> look["2. Look<br/>who you turn to, where you go,<br/>what to look up, what happens next"]
-    look --> newroom{"New place<br/>with no map?"}
-    newroom -- yes --> build["Room builder, first visit only<br/>shell: size, doors, windows<br/>things: one batch, sorted and sized<br/>places: checked against the rules<br/>people: one by one"]
-    build --> settle
-    newroom -- no --> settle["3. Settle on the grid<br/>code moves you, seats you,<br/>puts what you take in your hands"]
-    settle --> matters["4. What matters<br/>yes/no pass over the cards<br/>(skipped on a quiet talk turn)"]
-    matters --> plan["5. Plan the moment<br/>you walk over; the person you face<br/>stays, moves or reaches"]
-    plan --> tell["6. Tell it<br/>the room in plain words goes to<br/>the storyteller; code checks the reply"]
-    tell --> aloud["7. Read aloud"]
-    tell -. meanwhile .-> rebuild["Rebuild<br/>quiet turn: one state-diff call<br/>otherwise short questions"]
-    rebuild -. next turn .-> speak
+    subgraph read [Before the reply]
+        direction LR
+        speak["1. You speak<br/>typed, or aloud"] --> look["2. Look<br/>who, where, what to look up"] --> room["New place?<br/>its room is built first"]
+    end
+    subgraph settleRow [On the map]
+        direction LR
+        settle["3. Settle<br/>move, sit, take things"] --> matters["4. What matters<br/>yes/no over the cards"] --> plan["5. Plan the moment<br/>who moves, who reaches"]
+    end
+    subgraph replyRow [The reply]
+        direction LR
+        tell["6. Tell it<br/>written, checked in code"] --> aloud["7. Read aloud"]
+        tell -. meanwhile .-> rebuild["Rebuild<br/>grid and cards catch up,<br/>then the next turn"]
+    end
+    read --> settleRow --> replyRow
 ```
 
 1. **Look.** One short call reads your message into fixed choices: who you turn to, where you go, what to look up, what happens next.
