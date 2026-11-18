@@ -108,39 +108,25 @@ enum Prompts {
     /// so it only looks at what is left.
     static let splitIntro = "Here is one message from a player in an interactive story. It is often spoken into a microphone, so it may run together."
 
-    /// Pass 1: something the player narrates happening, not their own action. Most messages
-    /// have none, so the examples lean to no.
+    /// Pass 1: something the player narrates happening, not their own action.
     static let splitHappens = """
-    QUESTION: Does the player step outside their character, like a storyteller, to make something happen that is not their own doing: a new person arriving, an event, a change to the place? Most messages do not. A player who looks at, walks to, talks to or does something with a person already there is only playing their own part: that is no.
-    Examples:
-    "I look at the bartender and ask for a beer" → no
-    "I sit down next to her and say hi" → no
-    "suddenly the lights go out" → yes: Suddenly, the lights go out.
-    "at that moment a man in a wet coat bursts through the door and I jump" → yes: At that moment, a man in a wet coat bursts through the door.
-    First write one sentence saying who does what in the message. Then answer yes or no. If yes, write ONLY that part, as a plain sentence; never something the message does not say.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the part, or empty"}
+    QUESTION: Is the player acting as storyteller here, bringing a new person, an event or a change to the place into the scene ("just then, in walks a police inspector"), rather than only moving their own body or talking? If yes, write ONLY that part as a plain sentence ("Just then, a police inspector walks in."). If no, write NONE.
+    First write one sentence saying who is doing what in the message. Then the answer.
+    Output ONLY one JSON object: {"why":"one sentence","found":"the part, or NONE"}
     """
 
     /// Pass 2: words the player speaks aloud, direct or described.
     static let splitSaying = """
-    QUESTION: Leaving out anything already taken, does the player speak out loud to someone, or ask or tell someone something? If yes, write ONLY the words that come out of the player's mouth, as they would say them, without quote marks. Leave out "I say", "I ask", "I tell her" and every action ("I look at", "I walk over"). Keep their own words; fix only obvious dictation slips. Described speech becomes the plain words they mean.
-    Examples:
-    "I look at the old man and say good evening, mind if I sit" → yes: Good evening, mind if I sit?
-    "I ask her where she's from" → yes: Where are you from?
-    "I pick up the glass and drink" → no
-    "what's your name" → yes: What's your name?
-    First write one sentence saying who does what in the message. Then answer yes or no, then the words.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the words, or empty"}
+    QUESTION: Leaving out what is already taken, is the player speaking out loud to someone in the scene, or asking or telling someone something? Count both exact words ("What's the problem, officer?") and described speech ("I ask him what the problem is"). Write ONLY the words that come out of the player's mouth, as they would say them, without quote marks. Keep their own words; fix only obvious dictation slips. Words that tell the story ("just at that moment", "suddenly", "in walks") are never something the player says. If they say nothing aloud, write NONE.
+    First write one sentence saying who is doing what in the message. Then the answer.
+    Output ONLY one JSON object: {"why":"one sentence","found":"the words, or NONE"}
     """
 
     /// Pass 3: the player's own physical action, from what is left.
     static let splitDoing = """
-    QUESTION: Take away the parts already taken (and the words "I say", "I ask" that introduced them). Is anything left where the player does something with their body: looks at someone, moves, sits, picks something up, or tries a move? If yes, write it as one short sentence in first person ("I look at the old man."). Speaking is not an action here.
-    Examples:
-    "I look at the old man and say good evening" with "Good evening" taken → yes: I look at the old man.
-    "what's your name" with "What's your name?" taken → no
-    First write one sentence saying what is left once the taken parts are removed. Then answer yes or no, then the action.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the action, or empty"}
+    QUESTION: Leaving out what is already taken, is anything left where the player describes a physical action of their own, or a move they want to try? If yes, write it as one clean sentence in first person ("I put my hands up."). If nothing is left but what is already taken, write NONE.
+    First write one sentence saying what is left once the taken parts are removed. Then the answer.
+    Output ONLY one JSON object: {"why":"one sentence","found":"the action, or NONE"}
     """
 
     /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
