@@ -254,10 +254,11 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
-    /// The player's message split in two (see `Prompts.splitTurn`).
-    static let splitTurn = [
-        "root ::= \"{\" ws " + key("doing") + " s400 \",\" ws " + key("saying") + " s600 ws \"}\"",
-        capped("s400", 400), capped("s600", 600),
+    /// One pass of splitting the player's message (see `Prompts.splitHappens`): a sentence of
+    /// reasoning first, then what was found.
+    static let splitPass = [
+        "root ::= \"{\" ws " + key("why") + " s200 \",\" ws " + key("found") + " s500 ws \"}\"",
+        capped("s200", 200), capped("s500", 500),
         common,
     ].joined(separator: "\n")
 
