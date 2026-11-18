@@ -4314,11 +4314,12 @@ final class StoryEngine {
         e.updatedTurn = a.playerTurns
         _ = addLore(&a, e)
         if !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            a.whereabouts.append(Whereabout(name: name, at: a.location.isEmpty ? "here" : a.location, here: true, engaged: engaged))
+            a.whereabouts.append(Whereabout(name: name, at: a.location.isEmpty ? (a.room?.name ?? "here") : a.location, here: true, engaged: engaged))
         }
         // On the map too: they have just come in, so they stand by the door, facing the player.
         // (Without this, someone new had a card but never a place in the room.)
-        if var r = a.room, r.name.caseInsensitiveCompare(a.location) == .orderedSame, r.named(name) == nil {
+        // Between places (the place not settled yet), the room the player still stands in counts.
+        if var r = a.room, a.location.isEmpty || r.name.caseInsensitiveCompare(a.location) == .orderedSame, r.named(name) == nil {
             let p = Thing(kind: .person, name: name)
             let note = Placer.placePerson(&r, p, zone: r.doors.isEmpty ? .anywhere : .doorCorner)
             Placer.turn(&r, p.id, toward: "you")
