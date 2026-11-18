@@ -75,7 +75,7 @@ final class AppModel {
         }
         dictation.onSend = { [weak self] text in
             guard let self else { return }
-            if self.tab == .chat || self.chat.handsFree { self.chat.send(text) } else { self.engine.heard(text) }
+            if self.tab == .chat || self.chat.handsFree { self.chat.send(text) } else { self.engine.send(text) }
         }
         ComputerSounds.shared.warm()
         MLXCrashRecorder.install()
