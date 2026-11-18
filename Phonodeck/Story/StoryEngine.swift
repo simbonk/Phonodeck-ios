@@ -330,21 +330,28 @@ final class StoryEngine {
     private var pendingParts: (did: String, said: String)?
     private var partsThisTurn: (did: String, said: String)?
 
-    /// One small question with no story around it: which part of the message the player
-    /// narrates happening in the world, which part is their own action and which part is words they
-    /// say aloud. Nil when it can't tell (the message is then used as it was).
+    /// Three small questions in a row with no story around them: what the player narrates
+    /// happening in the world, then the words they say aloud, then their own action. Each is shown
+    /// what the earlier ones took out, so it only looks at what is left. Nil when nothing was found
+    /// (the message is then used as it was).
     private func splitTurn(_ input: String) async -> (happens: String, did: String, said: String)? {
-        let prompt = Prompts.splitTurn + "\n\nTHE MESSAGE: " + clip(input, 800) + "\nThe form:"
-        let q0 = Date()
-        let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 360, temperature: 0, repetitionPenalty: 1.05, grammar: JSONGrammar.splitTurn))) ?? ""
-        noteQ("turn", "What happens, what do they do, and what do they say?", reply, since: q0)
-        guard let m = JSONExtract.object(reply) else { return nil }
-        func s(_ k: String) -> String {
-            let v = (m[k] as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ").union(.whitespacesAndNewlines))
-            return ["nothing", "none", "n/a", "-"].contains(v.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : v
+        let head = Prompts.splitIntro + "\n\nTHE MESSAGE: " + clip(input, 800)
+        func pass(_ question: String, _ label: String, taken: [(String, String)]) async -> String {
+            let took = taken.filter { !$0.1.isEmpty }.map { "\n" + $0.0 + ": " + $0.1 }.joined()
+            let prompt = head + (took.isEmpty ? "" : "\n\nALREADY TAKEN:" + took) + "\n\n" + question + "\nThe form:"
+            let q0 = Date()
+            let reply = (try? await llm.complete(system: nil, prompt: prompt,
+                                                 options: .init(maxTokens: 260, temperature: 0, repetitionPenalty: 1.05, grammar: JSONGrammar.splitPass))) ?? ""
+            noteQ("turn", label, reply, since: q0)
+            let v = ((JSONExtract.object(reply)?["found"] as? String) ?? "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ").union(.whitespacesAndNewlines))
+            return ["none", "nothing", "n/a", "-", "no"].contains(v.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : v
         }
-        let happens = s("happens"), did = s("doing"), said = s("saying")
+        let happens = await pass(Prompts.splitHappens, "Does the player bring something into the scene?", taken: [])
+        guard !Task.isCancelled else { return nil }
+        let said = await pass(Prompts.splitSaying, "What does the player say aloud?", taken: [("Happens in the scene", happens)])
+        guard !Task.isCancelled else { return nil }
+        let did = await pass(Prompts.splitDoing, "What does the player do?", taken: [("Happens in the scene", happens), ("Said aloud", said.isEmpty ? "" : "\"" + said + "\"")])
         return happens.isEmpty && did.isEmpty && said.isEmpty ? nil : (happens, did, said)
     }
 
@@ -1431,7 +1438,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z103"
+    static let build = "build 2026-11-18z104"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).

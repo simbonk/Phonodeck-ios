@@ -103,19 +103,30 @@ enum Prompts {
     /// where things stand and the player's new message, then the question.
     static let readIntro = "You help run an interactive audio story. Here is where things stand, then the player's new message, then one question for you."
 
-    /// Before the read: the player's message split into what they do and what they say, with no
-    /// story around it, so the words alone are taken as speech.
-    static let splitTurn = """
-    Here is one message from a player in an interactive story. It is often spoken into a microphone, so it may run together. Sort it into three parts:
-    - happens: something the player narrates happening in the story that is NOT their own action, such as someone arriving or an event ("Just then, a grumpy police inspector walks in, looking for a thief."). Write it as a plain sentence. Empty if there is none.
-    - doing: the player's own physical action, in first person ("I walk to the bar and sit down."). Empty if there is none.
-    - saying: only words the player themselves speaks aloud to someone in the story, without quote marks. Keep their own words; fix only obvious dictation slips. If they describe saying something without the words ("I ask her name"), write the plain words they mean ("What's your name?"). Empty if they say nothing aloud. Words that tell the story ("just at that moment", "suddenly", "in walks") are never something the player says.
-    Examples:
-    "just at that very moment in walks a police inspector looking grumpy and looking for a thief" → {"happens":"Just at that very moment, a grumpy police inspector walks in, looking for a thief.","doing":"","saying":""}
-    "I sit at the bar hi there can I get a whiskey" → {"happens":"","doing":"I sit at the bar.","saying":"Hi there, can I get a whiskey?"}
-    "where are you from" → {"happens":"","doing":"","saying":"Where are you from?"}
-    Nothing may be added that the message does not say, and nothing left out.
-    Output ONLY one JSON object: {"happens":"...","doing":"...","saying":"..."}
+    /// Before the read, three small questions in a row, with no story around them, each about one
+    /// thing in the player's message. Each later question is shown what the earlier ones took out,
+    /// so it only looks at what is left.
+    static let splitIntro = "Here is one message from a player in an interactive story. It is often spoken into a microphone, so it may run together."
+
+    /// Pass 1: something the player narrates happening, not their own action.
+    static let splitHappens = """
+    QUESTION: Is the player acting as storyteller here, bringing a new person, an event or a change to the place into the scene ("just then, in walks a police inspector"), rather than only moving their own body or talking? If yes, write ONLY that part as a plain sentence ("Just then, a police inspector walks in."). If no, write NONE.
+    First write one sentence saying who is doing what in the message. Then the answer.
+    Output ONLY one JSON object: {"why":"one sentence","found":"the part, or NONE"}
+    """
+
+    /// Pass 2: words the player speaks aloud, direct or described.
+    static let splitSaying = """
+    QUESTION: Leaving out what is already taken, is the player speaking out loud to someone in the scene, or asking or telling someone something? Count both exact words ("What's the problem, officer?") and described speech ("I ask him what the problem is"). Write ONLY the words that come out of the player's mouth, as they would say them, without quote marks. Keep their own words; fix only obvious dictation slips. Words that tell the story ("just at that moment", "suddenly", "in walks") are never something the player says. If they say nothing aloud, write NONE.
+    First write one sentence saying who is doing what in the message. Then the answer.
+    Output ONLY one JSON object: {"why":"one sentence","found":"the words, or NONE"}
+    """
+
+    /// Pass 3: the player's own physical action, from what is left.
+    static let splitDoing = """
+    QUESTION: Leaving out what is already taken, is anything left where the player describes a physical action of their own, or a move they want to try? If yes, write it as one clean sentence in first person ("I put my hands up."). If nothing is left but what is already taken, write NONE.
+    First write one sentence saying what is left once the taken parts are removed. Then the answer.
+    Output ONLY one JSON object: {"why":"one sentence","found":"the action, or NONE"}
     """
 
     /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
