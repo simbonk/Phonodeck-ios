@@ -60,7 +60,7 @@ final class TestRunner {
         return d
     }
 
-    static var testsFolder: URL {
+    nonisolated static var testsFolder: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appending(path: "OvernightTests", directoryHint: .isDirectory)
     }

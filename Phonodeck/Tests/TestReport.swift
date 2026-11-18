@@ -3,6 +3,7 @@ import Foundation
 /// The morning report: failures grouped by the check and the model question behind them, with
 /// counts, a few one-line examples and one or two full traces each, and the pass rates compared
 /// with the run before, so a fix (or a big change) shows at once what got better or worse.
+@MainActor
 enum TestReport {
     struct Summary: Codable {
         var date: Date
