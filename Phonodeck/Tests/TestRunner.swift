@@ -47,6 +47,8 @@ final class TestRunner {
         var got: String
         var evidence: String
         var pass: Bool
+        /// What the player did and said this turn (nil in older runs).
+        var input: String? = nil
         var line: String {
             (pass ? "PASS" : "FAIL") + "  b\(block) t\(turn)  \(story)  \(scenario)  \(check)  want: \(expected)  got: \(got)"
                 + (pass || step.isEmpty ? "" : "  step: \(step)" + (evidence.isEmpty ? "" : " → \(evidence)"))
@@ -210,7 +212,7 @@ final class TestRunner {
         func add(_ check: String, _ step: String, _ want: String, _ got: String, _ pass: Bool) {
             let ev = pass ? "" : evidence(step, in: asked)
             results.append(Result(block: block, turn: turnNo, story: story, scenario: scenario, check: check, step: step,
-                                  expected: want, got: got, evidence: ev, pass: pass))
+                                  expected: want, got: got, evidence: ev, pass: pass, input: input))
         }
 
         add("replied", "The reply", "a reply within 10 minutes", gotReply ? String(format: "replied in %.0fs", secs) : (engine.error ?? (finished ? "no reply" : "timed out")), gotReply)
@@ -488,34 +490,49 @@ extension TestRunner {
     @MainActor
     final class Context {
         let base: Adventure
-        let host: LoreEntry?
-        let other: LoreEntry?
+        var host: LoreEntry?
+        var other: LoreEntry?
         var fills: [String: String] = [:]
+        /// What a scenario can be filled from: the people in the opening room, its seats, the
+        /// small things in it, and where its door leads. Each scenario picks afresh, so the same
+        /// scenario plays a little differently every time.
+        let people: [LoreEntry]
+        let seats: [String]
+        let things: [String]
+        let outside: String
 
         init(_ a: Adventure) {
             base = a
             let inRoom = Set(a.room?.people.map { $0.name.lowercased() } ?? [])
             let here = a.cast.filter { inRoom.contains($0.name.lowercased()) }
-            let people = here.count >= 2 ? here : a.cast
-            host = people.first
-            other = people.dropFirst().first
-            if let h = host { fills["{host}"] = Self.ref(h) }
+            people = here.count >= 2 ? here : a.cast
+            let objects = a.room?.objects ?? []
+            seats = objects.filter { Rules.seats.contains($0.icon) }.map { Self.the($0.name) }
+            things = objects.filter { Rules.rule($0.icon).small && $0.name.count <= 28 }.map { Self.the($0.name) }
+            outside = Self.the(a.room?.doors.first { !$0.leadsTo.isEmpty }?.leadsTo ?? "outside")
+            roll()
+        }
+
+        /// Picks who is who and which seat and thing, for the next scenario.
+        func roll() {
+            fills = [:]
+            let order = people.shuffled()
+            host = order.first
+            other = order.dropFirst().first
+            func she(_ c: LoreEntry) -> Bool { base.facts.first { $0.hasPrefix(c.name + " uses ") }?.contains("she") == true }
+            if let h = host {
+                fills["{host}"] = Self.ref(h)
+                fills["{hostobj}"] = she(h) ? "her" : "him"
+                fills["{hostposs}"] = she(h) ? "her" : "his"
+            }
             if let o = other {
                 fills["{other}"] = Self.ref(o)
-                let she = a.facts.first { $0.hasPrefix(o.name + " uses ") }?.contains("she") == true
-                fills["{otherposs}"] = she ? "her" : "his"
+                fills["{otherobj}"] = she(o) ? "her" : "him"
+                fills["{otherposs}"] = she(o) ? "her" : "his"
             }
-            if let h = host {
-                let she = a.facts.first { $0.hasPrefix(h.name + " uses ") }?.contains("she") == true
-                fills["{hostobj}"] = she ? "her" : "him"
-            }
-            let objects = a.room?.objects ?? []
-            if let seat = objects.first(where: { Rules.seats.contains($0.icon) }) { fills["{seat}"] = Self.the(seat.name) }
-            let small = ["glass", "cup", "mug", "book", "newspaper", "bottle", "comb", "pencil", "towel", "lamp", "candle", "plate", "jar", "magazine", "letter", "ledger", "brush", "spoon", "napkin", "menu"]
-            if let t = objects.first(where: { o in Rules.rule(o.icon).small && small.contains { o.name.lowercased().contains($0) } })
-                ?? objects.first(where: { Rules.rule($0.icon).small && $0.name.count <= 24 }) { fills["{thing}"] = Self.the(t.name) }
-            let door = a.room?.doors.first { !$0.leadsTo.isEmpty }?.leadsTo
-            fills["{outside}"] = Self.the(door ?? "outside")
+            if let seat = seats.randomElement() { fills["{seat}"] = seat }
+            if let t = things.randomElement() { fills["{thing}"] = t }
+            fills["{outside}"] = outside
         }
 
         static func the(_ s: String) -> String {
@@ -538,9 +555,24 @@ extension TestRunner {
         /// The scenario's lines with the braces filled, or nil when this room lacks something it needs.
         /// In checks, a person in braces becomes "@Name" so the check finds them by their card.
         func fill(_ s: TestScenarios.Scenario) -> [TestScenarios.Line]? {
+            roll()
             var out: [TestScenarios.Line] = []
-            func sub(_ t: String, check: Bool) -> String? {
+            // One pick for the whole scenario: every <<a|b|c>> takes its option at the same
+            // place, so a check can follow the line it belongs to ("a violin case" ↔ "violin").
+            let pick = Int.random(in: 0..<840)
+            // Some turns are said the way people really talk: a filler word, no capital, no stop.
+            let fillers = ["um, ", "so, uh, ", "okay so ", "hmm. ", "uh, ", "right, ", "oh, "]
+            let casual = Double.random(in: 0..<1) < 0.3
+            func choose(_ t: String) -> String {
                 var t = t
+                while let open = t.range(of: "<<"), let close = t.range(of: ">>", range: open.upperBound..<t.endIndex) {
+                    let opts = t[open.upperBound..<close.lowerBound].components(separatedBy: "|")
+                    t.replaceSubrange(open.lowerBound..<close.upperBound, with: opts[pick % max(1, opts.count)])
+                }
+                return t
+            }
+            func sub(_ t: String, check: Bool) -> String? {
+                var t = choose(t)
                 for (k, v) in fills {
                     if check, k == "{host}", let h = host { t = t.replacingOccurrences(of: k, with: "@" + h.name); continue }
                     if check, k == "{other}", let o = other { t = t.replacingOccurrences(of: k, with: "@" + o.name); continue }
@@ -550,7 +582,17 @@ extension TestRunner {
                 return check ? t : t.prefix(1).uppercased() + t.dropFirst()
             }
             for l in s.lines {
-                guard let d = sub(l.did, check: false), let w = sub(l.said, check: false) else { return nil }
+                guard var d = sub(l.did, check: false), var w = sub(l.said, check: false) else { return nil }
+                if casual, Bool.random() {
+                    func loose(_ x: String) -> String {
+                        guard !x.isEmpty else { return x }
+                        let keepCap = x.hasPrefix("I ") || x.hasPrefix("I'")
+                        var y = fillers.randomElement()! + (keepCap ? x : x.prefix(1).lowercased() + x.dropFirst())
+                        if Bool.random(), let last = y.last, ".".contains(last) { y.removeLast() }
+                        return y
+                    }
+                    if !w.isEmpty, Bool.random() { w = loose(w) } else { d = loose(d) }
+                }
                 var checks: [String] = []
                 for c in l.checks { guard let x = sub(c, check: true) else { return nil }; checks.append(x) }
                 out.append(TestScenarios.Line(did: d, said: w, checks: checks))

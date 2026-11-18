@@ -12,6 +12,11 @@ import Foundation
 /// {outside} is where the door leads. A scenario that needs something the room hasn't got is
 /// skipped in that story.
 ///
+/// <<a|b|c>> picks one option each time the scenario runs; every <<...>> in a scenario picks at the
+/// same place, so a check can follow its line: "> <<an old man with a cane|a girl with a basket>> comes in"
+/// with "? newcomer <<cane|basket>>". Some turns are also loosened the way people talk ("um, so I...").
+/// The core set below stays fixed so runs compare fairly; `wide` adds new situations ("| wide").
+///
 /// Checks (see `TestRunner.expect`):
 ///   newcomer a|b|c      someone matching one of the words is on the map and has a card
 ///   gone {ref}          that person is not in the room with you
@@ -34,7 +39,7 @@ enum TestScenarios {
 # newcomer-violin | Someone walks in
 > I look over to the door as a young man with a violin case comes in out of the weather. ||
 ? newcomer violin|young man|musician
-> I nod to the young man with the violin case. || Come on in, get warm.
+> I nod to the young man with the violin case. || <<Come on in, get warm.|Rough night out there?|There's room over here.>>
 ? here violin|young man|musician
 > || Who is here with us now?
 ? mentions-present
@@ -102,11 +107,11 @@ enum TestScenarios {
 ? not-holding {thing}
 
 # time-short | A short wait
-> I sit quietly for a minute and listen. ||
+> <<I sit quietly for a minute and listen.|I take a sip and wait a moment.|I close my eyes for a few seconds.|I watch the room for a minute or two.>> ||
 ? clock 0 15
 
 # time-hour | An hour goes by
-> I talk with {host} for about an hour about nothing much. ||
+> <<I talk with {host} for about an hour about nothing much.|An hour slips by while {host} and I swap stories.|We pass the next hour or so just chatting.>> ||
 ? long-turn
 ? clock 40 120
 > || What time is it now?
@@ -165,6 +170,107 @@ enum TestScenarios {
 ? seated
 """#
 
+    static let wide = #"""
+# w-newcomer-any | Someone new arrives, described every which way | wide
+> <<An old man with a cane|A girl with a basket of flowers|A tall man in a wet hat|A woman carrying a sleeping baby|A boy with a dog on a rope|A sailor with a duffel bag|A nurse still in her uniform>> comes in from outside. ||
+? newcomer <<cane|basket|hat|baby|dog|sailor|nurse>>
+> I nod toward the newcomer. || <<Evening.|Come in, come in.|You picked a night for it.|There's a free spot here.>>
+? here <<cane|basket|hat|baby|dog|sailor|nurse>>
+> || <<Who else is here right now?|Who's around tonight?|So who all is in here with us?>>
+? mentions-present
+
+# w-two-at-once | Talking to two people at once | wide
+> I look from {host} to {other}. || <<How do you two know each other?|Have you two been friends long?|Which of you has been here longer?>>
+> || <<And what about you, {other}?|What do you think, {other}?>>
+> I turn back to {host}. || <<Is that true?|Do you agree?|Is that how you remember it?>>
+? facing {host}
+
+# w-memory | Asking about something said earlier | wide
+> I turn to {host}. || <<Tell me about your family.|Where did you grow up?|What did you do before this?>>
+> || Huh. Go on.
+> || <<Sorry, what was that you said a minute ago about where you grew up?|Wait, say that first part again?|What was it you told me earlier?>>
+
+# w-order | Ordering, waiting and getting it | wide
+> I catch {hostposs} eye. || <<Could I get something hot to drink?|What do you have to eat?|Can I have a glass of water?|Anything warm to eat around here?>>
+> I wait for it, drumming my fingers. ||
+> || <<Thanks, that looks good.|Thank you.|Perfect.>>
+> || <<What did I order again?|Remind me what this was?>>
+
+# w-give-take | Handing something over and getting it back | wide
+> I pick up {thing}. ||
+? holding {thing}
+> I hand {thing} to {other}. || <<Could you hold this a second?|Have a look at this.|What do you make of it?>>
+? not-holding {thing}
+> || <<Can I have that back?|I'll take that back now, thanks.>>
+? holding {thing}
+
+# w-world-event | The player narrates something happening | wide
+> <<The lights flicker and go out for a moment.|A dog barks somewhere outside.|Thunder cracks right overhead.|Someone knocks twice on the door.|A glass falls and breaks somewhere.>> ||
+> || <<What was that?|Did you hear that?|Is that normal around here?>>
+? mentions <<light|dog|thunder|door|glass>>
+
+# w-speech | Rambling, half-finished speech | wide
+> || <<So, um, I was wondering, like, do you ever, you know, think about leaving?|Okay this is kind of a weird question but, uh, are you happy here?|I mean, I guess what I'm asking is, what's the best part of your day?>>
+> || <<Sorry, that came out wrong.|Never mind, forget I asked.|No, really, I want to know.>>
+
+# w-lean | A small physical action while talking | wide
+> <<I lean on the counter.|I rub my hands together to warm them.|I take off my hat.|I stretch my back.|I fold my arms.>> || <<Long day?|Quiet tonight, huh?|What's the story with this place?>>
+> || <<Really?|No kidding.|Huh, I didn't know that.>>
+
+# w-wrong-thing | Asking for something the place doesn't have | wide
+> || <<Do you have a telephone I could use?|Can I pay with a card?|Is there a television around here?|Got any of those new radios?>>
+> || <<Never mind then.|That's all right.>>
+
+# w-outside-with | Going outside with someone and coming back | wide
+> I turn to {other}. || <<Want to step outside for some air with me?|Come out with me for a minute?>>
+> {other} and I go out to {outside}. ||
+? moved
+? here {other}
+> We come back inside together. ||
+? back
+? here {other}
+
+# w-sit-near | Sitting down next to someone | wide
+> I walk over and sit down next to {host}. || <<Mind if I sit?|Is this seat taken?|Room for one more?>>
+? near {host}
+? seated
+
+# w-time-question | Asking the time and the date | wide
+> || <<What time is it?|How late is it getting?|Is it morning yet?>>
+> || <<What day is it today?|What's the date?|What year did you say it was?>>
+
+# w-wait-short | Different short waits | wide
+> <<I finish my drink slowly.|I wait for the noise to die down.|I watch the rain for a few minutes.|I take a moment to read the sign on the wall.>> ||
+? clock 0 20
+
+# w-wait-long | Different long waits | wide
+> <<We talk well into the night, a good two hours.|Two hours pass before I notice.|I nap for about three hours.>> ||
+? long-turn
+? clock 90 240
+
+# w-name-both | Learning both names | wide
+> I turn to {host}. || <<I'm Sam, by the way. And you are?|We haven't been introduced. I'm Sam.>>
+? player-named Sam
+? known {host}
+> I turn to {other}. || <<And what's your name?|I didn't catch your name.>>
+? known {other}
+
+# w-pick-describe | Picking something up and asking about it | wide
+> I pick up {thing} and turn it over in my hands. ||
+? holding {thing}
+> || <<Where did this come from?|How old is this?|Is this yours?>>
+> I put {thing} down where I found it. ||
+? not-holding {thing}
+
+# w-leave-alone | Leaving alone and finding things changed | wide
+> I head out to {outside} on my own. ||
+? moved
+> I wait out there <<a few minutes|a little while|until I'm cold>>. ||
+> I go back inside. ||
+? back
+> || <<Did I miss anything?|What happened while I was gone?>>
+"""#
+
     struct Line {
         var did: String
         var said: String
@@ -174,9 +280,16 @@ enum TestScenarios {
         var id: String
         var title: String
         var lines: [Line]
+        /// "core" (the fixed set, compared run to run) or "wide" (the broader set).
+        var set = "core"
     }
 
-    static let all: [Scenario] = parse(bank)
+    static let all: [Scenario] = parse(bank) + parse(wide)
+
+    /// Which set a scenario belongs to, by id ("improvised" for the simulated player's turns).
+    static func set(of id: String) -> String {
+        all.first { $0.id == id }?.set ?? (id == "improvised" ? "improvised" : "other")
+    }
 
     static func parse(_ text: String) -> [Scenario] {
         var out: [Scenario] = []
@@ -185,7 +298,8 @@ enum TestScenarios {
             if line.hasPrefix("# ") {
                 let parts = line.dropFirst(2).components(separatedBy: "|")
                 out.append(Scenario(id: parts[0].trimmingCharacters(in: .whitespaces),
-                                    title: parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : "", lines: []))
+                                    title: parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : "", lines: [],
+                                    set: parts.count > 2 ? parts[2].trimmingCharacters(in: .whitespaces) : "core"))
             } else if line.hasPrefix("> "), !out.isEmpty {
                 let parts = line.dropFirst(2).components(separatedBy: "||")
                 out[out.count - 1].lines.append(Line(did: parts[0].trimmingCharacters(in: .whitespaces),

@@ -40,6 +40,29 @@ enum TestReport {
         if turns > 0 { out.append(String(format: "About %.0f seconds a turn.", Date().timeIntervalSince(began) / Double(turns))) }
         out.append("")
 
+        // The checks that should always pass (the reply is there, no metres, you're on the map...)
+        // are counted apart, so they don't make the pass rate look better than the play was.
+        let scenarioResults = results.filter { !alwaysPass.contains($0.check) && !$0.check.hasPrefix("build-") }
+        let coreResults = results.filter { alwaysPass.contains($0.check) || $0.check.hasPrefix("build-") }
+        out.append("**Scenario checks: \(pct(scenarioResults.filter(\.pass).count, scenarioResults.count)) passed** (\(scenarioResults.filter(\.pass).count) of \(scenarioResults.count)). These are the ones that matter.")
+        out.append("")
+        var bySet: [String: [Int]] = [:]
+        for r in scenarioResults {
+            var c = bySet[TestScenarios.set(of: r.scenario), default: [0, 0]]
+            if r.pass { c[0] += 1 }
+            c[1] += 1
+            bySet[TestScenarios.set(of: r.scenario)] = c
+        }
+        out.append("By set: " + bySet.sorted { $0.key < $1.key }.map { "\($0.key) \(pct($0.value[0], $0.value[1])) of \($0.value[1])" }.joined(separator: ", "))
+        let coreFails = coreResults.filter { !$0.pass }.count
+        out.append("Always-pass checks: \(coreResults.count - coreFails) of \(coreResults.count)" + (coreFails == 0 ? ", all passed." : ", \(coreFails) failed (listed below)."))
+        let inputs = results.compactMap(\.input).filter { !$0.isEmpty }
+        var seenTurns = Set<String>()
+        var turnsPlayed = 0
+        for r in results where r.check == "replied" { turnsPlayed += 1; if let i = r.input { seenTurns.insert(i) } }
+        if !inputs.isEmpty { out.append("Variety: \(seenTurns.count) different turns out of \(turnsPlayed) played.") }
+        out.append("")
+
         // What broke, by cause.
         var groups: [String: [TestRunner.Result]] = [:]
         for f in fails { groups[f.check + "|" + f.step, default: []].append(f) }
@@ -124,6 +147,10 @@ enum TestReport {
         }
         return nil
     }
+
+    /// Checks that should pass every time: counted apart from the scenario checks.
+    static let alwaysPass: Set<String> = ["replied", "no-metres", "no-prompt-echo", "player-on-map", "map-people-have-cards",
+                                          "clock-forward", "clock-sane", "full-sentence"]
 
     static func rate(_ c: [Int]) -> Double { c[1] == 0 ? 0 : Double(c[0]) / Double(c[1]) }
     static func pct(_ a: Int, _ b: Int) -> String { b == 0 ? "–" : String(format: "%.0f%%", Double(a) / Double(b) * 100) }
