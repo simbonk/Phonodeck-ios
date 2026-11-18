@@ -49,6 +49,10 @@ final class StoryEngine {
 
     /// Names learned this turn, for the world check.
     private var namesThisTurn: [String] = []
+    /// Set while a new story is built, once the model has read the opening hour off the player's
+    /// own words: that hour is the one source of truth for the clock, so the opening reply's
+    /// painting ("the desert night") does not move it.
+    @ObservationIgnored private var clockFromPremise = false
     /// Every small question put to the model, in order, for the export: "[turn 2 · rebuild] Where are you now? → {...} (1.3s)".
     @ObservationIgnored private var questionLog: [String] = []
     @ObservationIgnored private var questionLogFor: UUID?
@@ -653,6 +657,35 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
+            // The clock first, from one source of truth: the player's own words. One small
+            // question reads the opening hour off them ("two in the morning" is 2:00, "a stormy
+            // night" is its likeliest hour), before anything else is made, so every later question
+            // (looks, lives, the check) and the opening are grounded on the same time, and the
+            // check can catch a fact that names another.
+            clockFromPremise = false
+            if source == nil {
+                let own = [e.describe, e.place].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n")
+                if !own.isEmpty {
+                    stage = "What time is it?"
+                    let q = "THE STORY AS THE PLAYER WROTE IT:\n" + clip(own, 700)
+                        + "\nQUESTION: At what time of day does this story open? Go by the player's own words above: a time they name ('half past nine', 'two in the morning') is exactly that time; a part of the day ('a stormy night', 'a Saturday morning') is its likeliest hour for what happens there. On a 24-hour clock: the hour from 0 to 23 (midnight is 0, 9 in the morning is 9, 9 in the evening is 21) and the minute from 0 to 59.\nOutput ONLY one JSON object:\n{\"hour\":\"a number\",\"minute\":\"a number\"}\nThe form:"
+                    let q0 = Date()
+                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 30, temperature: 0.1, repetitionPenalty: 1.0,
+                                                                                         grammar: JSONGrammar.twoNumbers("hour", "minute")))) ?? ""
+                    noteQ("cards", "What time does the story open?", raw, since: q0)
+                    guard !Task.isCancelled else { return }
+                    let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
+                    if let h = Int((m["hour"] as? String) ?? ""), h >= 0, h <= 23 {
+                        let mm = min(59, max(0, Int((m["minute"] as? String) ?? "") ?? 0))
+                        a.clock = h * 60 + mm
+                        a.storyTime = Continuity.storyTime(clock: h * 60 + mm, old: a.storyTime)
+                        clockFromPremise = true
+                    }
+                    stage = ""
+                    adventure = a
+                    library.save(a)
+                }
+            }
             // The people here know each other somehow: one small question per pair (at most
             // three), so the bartender and the regular stay consistent about each other. Neither
             // tells the player unless asked.
@@ -682,16 +715,65 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
+            // Who each person is, made in one order so nothing is written before what it has to
+            // fit: first their age and years here (two numbers: the anchor), then how they come
+            // across (grounded on that age), then three things from their life (grounded on
+            // both). A look written before the age was decided is how "a man in his late fifties"
+            // came out 38 years old.
+            // The settled numbers about one person, as code wrote them: every later question
+            // about them is handed these, and the check holds the rest up against them.
+            @MainActor func settled(_ c: LoreEntry) -> [String] {
+                a.facts.filter { f in Cards.mentions(c, in: f) && f.hasPrefix(c.name) && (f.hasSuffix(" years old.") || f.contains(" has lived and worked here for ")) }
+            }
+            if source == nil {
+                let here = a.cast.filter { c in !c.isPlayer && !c.byPlayer && Cards.first(c.name).lowercased() != me1
+                    && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
+                let storyYear = Int(Fovea.year(a))
+                for c in here.prefix(3) {
+                    stage = "How old is " + Cards.first(c.name) + "?"
+                    // Their age and their years here, as two whole numbers: the model picks them,
+                    // code keeps them possible (nobody started work as a small child) and works
+                    // out the year they began. The model never writes a calendar year itself.
+                    let others = a.facts.filter { f in f.contains(" years old") }.suffix(4)
+                    let aq = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN: " + Fovea.whenWhere(a)
+                        + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
+                        + (c.ties.isEmpty ? "" : "\nHOW THEY KNOW THE OTHERS: " + clip(c.ties, 240))
+                        + (others.isEmpty ? "" : "\nALREADY DECIDED:\n" + others.map { "- " + $0 }.joined(separator: "\n"))
+                        + "\nQUESTION: How old is " + c.name + ", and for how many years have they lived or worked in this place? Keep to THE STORY (old, grown, young), to how they know the others, and to ALREADY DECIDED: a parent is at least 18 years older than their child; someone who hired or trained another has usually been there longer. Two whole numbers.\nOutput ONLY one JSON object:\n{\"age\":\"a number\",\"years_here\":\"a number\"}\nThe form:"
+                    let a0 = Date()
+                    let araw = (try? await llm.complete(system: nil, prompt: aq, options: .init(maxTokens: 30, temperature: 0.3, repetitionPenalty: 1.0,
+                                                                                          grammar: JSONGrammar.twoNumbers("age", "years_here")))) ?? ""
+                    noteQ("cards", "How old is " + Cards.first(c.name) + ", and how long here?", araw, since: a0)
+                    guard !Task.isCancelled else { return }
+                    let am = JSONExtract.object(araw) ?? Self.salvageJSON(araw)
+                    if let age = Int((am["age"] as? String) ?? ""), age >= 16, age <= 100 {
+                        let years = max(0, min(Int((am["years_here"] as? String) ?? "") ?? 0, age - 16))
+                        // What the setup guessed about their age or years gives way to these numbers.
+                        a.facts.removeAll { f in Cards.mentions(c, in: f) && !f.contains(" uses ") && f.range(of: #"(?i)\byears?\b"#, options: .regularExpression) != nil }
+                        a.facts.append(c.name + " is \(age) years old.")
+                        if years > 0 {
+                            a.facts.append(c.name + " has lived and worked here for \(years) year\(years == 1 ? "" : "s")" + (storyYear.map { ", since \($0 - years)" } ?? "") + ".")
+                        }
+                    }
+                }
+                stage = ""
+                adventure = a
+                library.save(a)
+            }
             // Each person here, once: how they come across in a room (their look, what they wear,
-            // their voice, one habit). It goes on their card and comes along whenever they are in
-            // a scene, so they read as real people from the first line.
+            // their voice, one habit), written to fit the age just settled. It goes on their card
+            // and comes along whenever they are in a scene, so they read as real people from the
+            // first line.
             if source == nil {
                 let here = a.cast.filter { c in !c.isPlayer && Cards.first(c.name).lowercased() != me1 && c.looks.isEmpty
                     && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
                 for c in here.prefix(3) {
                     stage = "Getting to know " + Cards.first(c.name)
-                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
-                        + "\nQUESTION: How does " + Cards.first(c.name) + " come across to someone who walks in? Keep to what THE STORY and WHO THEY ARE say about them (old, grown, young, their work). Their look (face, build, age, one striking detail), what they wear, how they sound when they talk (cadence, tone, accent, a phrase they lean on; never what they will or won't talk about, and no 'only' or 'never'), and one small habit of theirs. True to their time, place and work; specific and a little imperfect, like a real person. Each a complete phrase of at most 14 words.\nOutput ONLY one JSON object:\n{\"looks\":\"a short line\",\"wears\":\"a short line\",\"voice\":\"a short line\",\"habit\":\"a short line\"}\nThe form:"
+                    let fixed = settled(c)
+                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN: " + Fovea.whenWhere(a)
+                        + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
+                        + (fixed.isEmpty ? "" : "\nSETTLED (true; their look must fit it):\n" + fixed.map { "- " + $0 }.joined(separator: "\n"))
+                        + "\nQUESTION: How does " + Cards.first(c.name) + " come across to someone who walks in? Keep to what THE STORY, WHO THEY ARE and SETTLED say about them (their age, their work). Their look (face, build, one striking detail; they look exactly the age SETTLED gives, so name no other age), what they wear, how they sound when they talk (cadence, tone, accent, a phrase they lean on; never what they will or won't talk about, and no 'only' or 'never'), and one small habit of theirs. True to their time, place and work; specific and a little imperfect, like a real person. Each a complete phrase of at most 14 words.\nOutput ONLY one JSON object:\n{\"looks\":\"a short line\",\"wears\":\"a short line\",\"voice\":\"a short line\",\"habit\":\"a short line\"}\nThe form:"
                     let q0 = Date()
                     let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 240, temperature: 0.7, repetitionPenalty: 1.1,
                                                                                          grammar: JSONGrammar.quad([("looks", 110), ("wears", 110), ("voice", 110), ("habit", 110)])))) ?? ""
@@ -709,47 +791,26 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
-            // Each person here, once: three true things from their life (how long at their work,
-            // where they were before, something they are proud of), saved as facts. Small talk
-            // ("how long have you kept this light?") then has something on file to answer from,
-            // and the answer is the same every time.
+            // Each person here, once: three true things from their life (where they were before,
+            // a memory from here, something they are fond of), saved as facts. Small talk ("how
+            // long have you kept this light?") then has something on file to answer from, and the
+            // answer is the same every time. The examples come from this place, never from
+            // another story: a list that says "a ship sighted" puts a ship in the desert.
             if source == nil {
                 let here = a.cast.filter { c in !c.isPlayer && !c.byPlayer && Cards.first(c.name).lowercased() != me1
                     && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
-                let storyYear = Int(Fovea.year(a))
                 for c in here.prefix(3) {
                     stage = "The life of " + Cards.first(c.name)
-                    // Their age and their years here, as two whole numbers: the model picks them,
-                    // code keeps them possible (nobody started work as a small child) and works
-                    // out the year they began. The model never writes a calendar year itself.
-                    let others = a.facts.filter { f in f.contains(" years old") }.suffix(4)
-                    let aq = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN: " + Fovea.whenWhere(a)
+                    let fixed = settled(c)
+                    let known = a.facts.filter { f in a.cast.contains { Cards.mentions($0, in: f) } && !f.contains(" uses ") && !fixed.contains(f) }.suffix(10)
+                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN AND WHERE: " + Fovea.whenWhere(a)
+                        + (a.setup.place.isEmpty ? "" : " " + clip(a.setup.place, 100))
                         + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
-                        + (c.ties.isEmpty ? "" : "\nHOW THEY KNOW THE OTHERS: " + clip(c.ties, 240))
-                        + (others.isEmpty ? "" : "\nALREADY DECIDED:\n" + others.map { "- " + $0 }.joined(separator: "\n"))
-                        + "\nQUESTION: How old is " + c.name + ", and for how many years have they lived or worked in this place? Keep to THE STORY (old, grown, young) and to ALREADY DECIDED: a parent is at least 18 years older than their child. Two whole numbers.\nOutput ONLY one JSON object:\n{\"age\":\"a number\",\"years_here\":\"a number\"}\nThe form:"
-                    let a0 = Date()
-                    let araw = (try? await llm.complete(system: nil, prompt: aq, options: .init(maxTokens: 30, temperature: 0.3, repetitionPenalty: 1.0,
-                                                                                          grammar: JSONGrammar.twoNumbers("age", "years_here")))) ?? ""
-                    noteQ("cards", "How old is " + Cards.first(c.name) + ", and how long here?", araw, since: a0)
-                    guard !Task.isCancelled else { return }
-                    let am = JSONExtract.object(araw) ?? Self.salvageJSON(araw)
-                    if let age = Int((am["age"] as? String) ?? ""), age >= 16, age <= 100 {
-                        let years = max(0, min(Int((am["years_here"] as? String) ?? "") ?? 0, age - 16))
-                        // What the setup guessed about their age or years gives way to these numbers.
-                        a.facts.removeAll { f in Cards.mentions(c, in: f) && !f.contains(" uses ") && f.range(of: #"(?i)\byears?\b"#, options: .regularExpression) != nil }
-                        a.facts.append(c.name + " is \(age) years old.")
-                        if years > 0 {
-                            a.facts.append(c.name + " has lived and worked here for \(years) year\(years == 1 ? "" : "s")" + (storyYear.map { ", since \($0 - years)" } ?? "") + ".")
-                        }
-                    }
-                    let known = a.facts.filter { f in a.cast.contains { Cards.mentions($0, in: f) } && !f.contains(" uses ") }.suffix(10)
-                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN: " + Fovea.whenWhere(a)
-                        + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
+                        + (fixed.isEmpty ? "" : "\nSETTLED (true; every line must fit it):\n" + fixed.map { "- " + $0 }.joined(separator: "\n"))
                         + (c.ties.isEmpty ? "" : "\nHOW THEY KNOW THE OTHERS: " + clip(c.ties, 240))
                         + (c.privateLife.isEmpty ? "" : "\nPRIVATE: " + clip(c.privateLife, 200))
                         + (known.isEmpty ? "" : "\nALREADY ON FILE (keep to it; never repeat someone else's memory):\n" + known.map { "- " + clip($0, 160) }.joined(separator: "\n"))
-                        + "\nQUESTION: Give three true things from " + c.name + "'s own life that they could tell a visitor: what they did or where they lived before, one memory from their time here, and one thing here they are proud of or fond of. Mundane, realistic and human-scale for the time and place (a particular storm, a ship sighted, an old trade, a family memory): no tall tales, heroic rescues or large animals. Theirs alone, different from anyone else's on file. No calendar years and no ages: those are ON FILE already. Each a full sentence starting with their name, at most 20 words.\nOutput ONLY one JSON object:\n{\"life\":[\"three sentences\"]}\nThe form:"
+                        + "\nQUESTION: Give three true things from " + c.name + "'s own life that they could tell a visitor: what they did or where they lived before, one memory from their time here, and one thing here they are proud of or fond of. Mundane, realistic and human-scale, made of what WHEN AND WHERE really has (its land and weather, its roads, its work, the people who pass through): nothing that could only happen in another kind of place, no tall tales, heroic rescues or large animals. Each fits SETTLED: nothing from before they could have been there, nothing older than they are. Theirs alone, different from anyone else's on file. No calendar years and no ages. Each a full sentence starting with their name, at most 20 words.\nOutput ONLY one JSON object:\n{\"life\":[\"three sentences\"]}\nThe form:"
                     let q0 = Date()
                     let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 160, temperature: 0.6, repetitionPenalty: 1.1,
                                                                                          grammar: JSONGrammar.strings("life", max: 3, chars: 130)))) ?? ""
@@ -764,47 +825,91 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
-            // Before the opening, the model reads back what was just made (the facts and how each
-            // person looks) against the story as the player wrote it, once: a line that clashes
-            // ("a teenager" for a grown daughter, "forty years old" after four decades at the light)
-            // is dropped rather than told.
+            // Before the opening, the model reads back what was just made against the story as
+            // the player wrote it, the clock and each person's settled numbers. The settled lines
+            // are shown but can't be picked: they are the yardstick, not suspects. A line that
+            // clashes ("a man in his late fifties" at 38, a boat in the desert, "early morning" at
+            // 2 AM) is not simply dropped: the model writes it again with the reason in front of
+            // it, a second short question confirms the new line fits, and only a line that still
+            // fails is dropped.
             if source == nil {
-                // One small check per person (everything on file about them side by side: their
+                // One small check per person (everything written about them side by side: their
                 // facts, their look, how they know the others, what they keep private), then one for
                 // the rest. A short list is one a small model can actually hold up against itself.
                 enum Line { case fact(Int), looks(Int), ties(Int), privateLife(Int) }
-                var groups: [(who: String, lines: [(String, Line)])] = []
+                var groups: [(who: String, fixed: [String], lines: [(String, Line)])] = []
                 var claimed: Set<Int> = []
                 let pronoun = { (f: String) in f.hasSuffix(" uses he/him.") || f.hasSuffix(" uses she/her.") || f.hasSuffix(" uses they/them.") }
                 for (k, c) in a.lore.enumerated() where c.kind == .person && !c.isPlayer && !c.byPlayer {
+                    let fixed = settled(c)
                     var l: [(String, Line)] = []
-                    for (i, f) in a.facts.enumerated() where !pronoun(f) && Cards.mentions(c, in: f) { l.append((f, .fact(i))); claimed.insert(i) }
+                    for (i, f) in a.facts.enumerated() where !pronoun(f) && Cards.mentions(c, in: f) {
+                        claimed.insert(i)
+                        if !fixed.contains(f) { l.append((f, .fact(i))) }
+                    }
                     if !c.looks.isEmpty { l.append((c.name + " looks: " + c.looks, .looks(k))) }
                     if !c.ties.isEmpty { l.append((c.name + ", how they know the others: " + c.ties, .ties(k))) }
                     if !c.privateLife.isEmpty { l.append((c.name + ", private: " + c.privateLife, .privateLife(k))) }
-                    if l.count > 1 { groups.append((c.name + (c.role.isEmpty ? "" : " (" + c.role + ")"), l)) }
+                    if !l.isEmpty { groups.append((c.name + (c.role.isEmpty ? "" : " (" + c.role + ")"), fixed, l)) }
                 }
+                // Even one line is checked: a lone "It is early morning" is exactly the kind that
+                // disagrees with the clock.
                 let rest: [(String, Line)] = a.facts.enumerated().filter { !claimed.contains($0.offset) && !pronoun($0.element) }.map { ($0.element, .fact($0.offset)) }
-                if rest.count > 1 { groups.append(("", rest)) }
+                if !rest.isEmpty { groups.append(("", [], rest)) }
                 var dropFacts: Set<Int> = []
                 for g in groups {
                     stage = "Checking the story holds together"
                     let numbered = g.lines.enumerated().map { "\($0.offset + 1). " + clip($0.element.0, 180) }.joined(separator: "\n")
-                    let about = g.who.isEmpty ? "" : "\nABOUT: " + g.who
-                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN: " + Fovea.whenWhere(a) + about + "\nLINES:\n" + numbered
-                        + "\nQUESTION: Read the LINES together, as one life. Which LINES can't be true alongside THE STORY, WHO THEY ARE or the other lines? Check the numbers against each other: an age against years at their work or against 'old' or 'grown'; a look that gives a different age; how two people are related (a daughter they raised is not one they had); a different time of day. Usually none.\nOutput ONLY one JSON object:\n{\"wrong\":[\"line numbers\"]}\nThe form:"
+                    let ground = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN AND WHERE: " + Fovea.whenWhere(a)
+                        + (a.setup.place.isEmpty ? "" : " " + clip(a.setup.place, 100))
+                        + (g.who.isEmpty ? "" : "\nABOUT: " + g.who)
+                        + (g.fixed.isEmpty ? "" : "\nSETTLED (true):\n" + g.fixed.map { "- " + $0 }.joined(separator: "\n"))
+                    let q = ground + "\nLINES:\n" + numbered
+                        + "\nQUESTION: Read the LINES together, as one life. Which LINES can't be true alongside THE STORY, WHEN AND WHERE, SETTLED or the other lines? Check: an age or a look that gives a different age than SETTLED; years at their work that don't fit; how two people are related; a time of day other than WHEN; something that could not be in this place or time (water, boats or snow where there are none, a thing not yet invented). Usually none.\nOutput ONLY one JSON object:\n{\"wrong\":[\"line numbers\"]}\nThe form:"
                     let q0 = Date()
                     let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 40, temperature: 0.1, repetitionPenalty: 1.1,
                                                                                          grammar: JSONGrammar.strings("wrong", max: 3, chars: 3)))) ?? ""
                     noteQ("cards", "Does anything clash" + (g.who.isEmpty ? "" : " about " + Cards.first(g.who)) + "?", raw, since: q0)
                     guard !Task.isCancelled else { return }
                     let picked = (((JSONExtract.object(raw) ?? Self.salvageJSON(raw))["wrong"] as? [Any]) ?? []).compactMap { Int("\($0)".trimmingCharacters(in: .whitespaces)) }
-                    for n in picked where n >= 1 && n <= g.lines.count {
-                        switch g.lines[n - 1].1 {
-                        case .fact(let i): dropFacts.insert(i)
-                        case .looks(let k): a.lore[k].looks = ""
-                        case .ties(let k): a.lore[k].ties = ""
-                        case .privateLife(let k): a.lore[k].privateLife = ""
+                    for n in Set(picked).sorted() where n >= 1 && n <= g.lines.count {
+                        let line = g.lines[n - 1]
+                        // What the line is, so the rewrite keeps its shape.
+                        let (was, shape): (String, String) = {
+                            switch line.1 {
+                            case .fact(let i): return (a.facts[i], "one plain sentence that starts with the person's name, at most 20 words")
+                            case .looks(let k): return (a.lore[k].looks, "how they look: face, build, one striking detail, at most 14 words")
+                            case .ties(let k): return (a.lore[k].ties, "how they know the others: one short sentence")
+                            case .privateLife(let k): return (a.lore[k].privateLife, "one concrete thing they keep to themselves, one sentence")
+                            }
+                        }()
+                        stage = "Mending a line that didn't fit"
+                        let rq = ground + "\nTHE LINE: " + clip(line.0, 200)
+                            + "\nQUESTION: THE LINE was found not to fit: something in it can't be true alongside THE STORY, WHEN AND WHERE or SETTLED (an age, a time of day, a place, how people are related, something that doesn't belong here). Write it again so it fits all of them, keeping what it is about wherever that can be true. As " + shape + ".\nOutput ONLY one JSON object:\n{\"line\":\"the new line\"}\nThe form:"
+                        let r0 = Date()
+                        let rraw = (try? await llm.complete(system: nil, prompt: rq, options: .init(maxTokens: 80, temperature: 0.4, repetitionPenalty: 1.1,
+                                                                                              grammar: JSONGrammar.text("line", chars: 180)))) ?? ""
+                        noteQ("cards", "Write again: " + clip(was, 60), rraw, since: r0)
+                        guard !Task.isCancelled else { return }
+                        var fixedLine = (((JSONExtract.object(rraw) ?? Self.salvageJSON(rraw))["line"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        if case .looks(let k) = line.1, fixedLine.hasPrefix(a.lore[k].name + " looks: ") { fixedLine = String(fixedLine.dropFirst((a.lore[k].name + " looks: ").count)) }
+                        var holds = false
+                        if fixedLine.count > 8, !Self.echoesPrompt(fixedLine), !Self.similar(fixedLine, was) {
+                            // The mended line is checked once on its own: a yes keeps it.
+                            let vq = ground + "\nTHE LINE: " + clip(fixedLine, 200)
+                                + "\nQUESTION: Can THE LINE be true alongside THE STORY, WHEN AND WHERE and SETTLED: the same age, the same time of day, something that really could be in this place and time?\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
+                            let v0 = Date()
+                            let vraw = (try? await llm.complete(system: nil, prompt: vq, options: .init(maxTokens: 12, temperature: 0.0, repetitionPenalty: 1.0,
+                                                                                                  grammar: JSONGrammar.one("answer", from: ["yes", "no"])))) ?? ""
+                            noteQ("cards", "Does the new line fit?", vraw, since: v0)
+                            guard !Task.isCancelled else { return }
+                            holds = (((JSONExtract.object(vraw) ?? Self.salvageJSON(vraw))["answer"] as? String) ?? "").lowercased() == "yes"
+                        }
+                        switch line.1 {
+                        case .fact(let i): if holds { a.facts[i] = fixedLine } else { dropFacts.insert(i) }
+                        case .looks(let k): a.lore[k].looks = holds ? fixedLine : ""
+                        case .ties(let k): a.lore[k].ties = holds ? fixedLine : ""
+                        case .privateLife(let k): a.lore[k].privateLife = holds ? fixedLine : ""
                         }
                     }
                 }
@@ -1330,7 +1435,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-17z98"
+    static let build = "build 2026-11-17z99"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -5139,7 +5244,11 @@ final class StoryEngine {
         if a.clock == nil, let m = Continuity.minutes(in: a.storyTime) { a.clock = m }
         // A time of day the premise gives ("a stormy night") stands over what the opening painted.
         var seededClock = false
-        if opening {
+        if opening, clockFromPremise, a.clock != nil {
+            // The model already read the opening hour off the player's own words: it stands.
+            clockFromPremise = false
+            seededClock = true
+        } else if opening {
             let told = Self.premiseDayParts(a)
             if let lo = told.min(), let hi = told.max(), hi - lo <= 1 {
                 if a.clock == nil || !told.contains(Continuity.part(of: a.clock!)) { a.clock = Continuity.partStarts[hi] }
