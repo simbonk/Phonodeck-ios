@@ -106,11 +106,16 @@ enum Prompts {
     /// Before the read: the player's message split into what they do and what they say, with no
     /// story around it, so the words alone are taken as speech.
     static let splitTurn = """
-    Here is one message from a player in an interactive story, often spoken aloud into a microphone, so it may run things together. Split it into what the player DOES and what the player SAYS out loud.
-    - doing: their physical action, in first person ("I walk to the bar and sit down."). Empty if they only speak.
-    - saying: only the exact words they speak aloud to someone, without quote marks. Keep their own words; fix only obvious dictation slips. If they describe saying something without the words ("I ask her name"), write the plain words they mean ("What's your name?"). Empty if they only act.
+    Here is one message from a player in an interactive story. It is often spoken into a microphone, so it may run together. Sort it into three parts:
+    - happens: something the player narrates happening in the story that is NOT their own action, such as someone arriving or an event ("Just then, a grumpy police inspector walks in, looking for a thief."). Write it as a plain sentence. Empty if there is none.
+    - doing: the player's own physical action, in first person ("I walk to the bar and sit down."). Empty if there is none.
+    - saying: only words the player themselves speaks aloud to someone in the story, without quote marks. Keep their own words; fix only obvious dictation slips. If they describe saying something without the words ("I ask her name"), write the plain words they mean ("What's your name?"). Empty if they say nothing aloud. Words that tell the story ("just at that moment", "suddenly", "in walks") are never something the player says.
+    Examples:
+    "just at that very moment in walks a police inspector looking grumpy and looking for a thief" → {"happens":"Just at that very moment, a grumpy police inspector walks in, looking for a thief.","doing":"","saying":""}
+    "I sit at the bar hi there can I get a whiskey" → {"happens":"","doing":"I sit at the bar.","saying":"Hi there, can I get a whiskey?"}
+    "where are you from" → {"happens":"","doing":"","saying":"Where are you from?"}
     Nothing may be added that the message does not say, and nothing left out.
-    Output ONLY one JSON object: {"doing":"...","saying":"..."}
+    Output ONLY one JSON object: {"happens":"...","doing":"...","saying":"..."}
     """
 
     /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
