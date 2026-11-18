@@ -1452,7 +1452,7 @@ final class StoryEngine {
         var l: [String] = []
         if !a.setup.who.isEmpty { l.append("The player character: " + a.setup.who + (a.setup.traits.isEmpty ? "" : ". " + a.setup.traits)) }
         if !a.setup.avoid.isEmpty { l.append("The player asked: " + a.setup.avoid) }
-        if a.setup.simulator { l.append("This is an experience with no threat, danger, villain or mystery: nobody draws a weapon, chases, threatens or arrests the player.") }
+        if a.setup.simulator { l.append("This is an experience with no threat, danger, villain or mystery.") }
         return l.map { "- " + $0 }.joined(separator: "\n")
     }
 
@@ -2301,9 +2301,6 @@ final class StoryEngine {
                 let others: String = a.cast.filter { $0.name != came }.map(\.name).joined(separator: " or ")
                 extra.append("A NEW PERSON COMES IN: " + came + ". They are their own person" + (others.isEmpty ? "" : ", not " + others)
                              + ": show them arriving, and let them speak for themselves.")
-                if a.setup.simulator {
-                    extra.append("In this story nobody is a threat: " + came + " is an ordinary, harmless person here. They never draw or hold a weapon, never chase, block, threaten or arrest the player; whatever brought them in, a few polite words and they let the player be.")
-                }
                 lastRead += "; new person: " + came
                 step("Is someone new coming in? → " + came)
             } else {
@@ -2877,7 +2874,7 @@ final class StoryEngine {
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
         var limits: [String] = []
         if !a.setup.avoid.isEmpty { limits.append("The player asked: " + a.setup.avoid) }
-        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery: nobody draws a weapon, chases, threatens or arrests the player.") }
+        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery.") }
         if !limits.isEmpty { s += "\n\n## SET-UP LIMITS (never break them)\n" + limits.map { "- " + $0 }.joined(separator: "\n") }
         s += "\n\n" + Prompts.hardLimits
         let premise = Cards.premise(a)

@@ -361,8 +361,7 @@ enum Fovea {
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
         var limits: [String] = []
         if !a.setup.avoid.isEmpty { limits.append("The player asked: " + a.setup.avoid) }
-        // Even when the player brings trouble in ("a constable walks in looking for a thief"), it stays harmless.
-        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery: nobody draws a weapon, chases, threatens or arrests the player, whoever comes in.") }
+        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery.") }
         if !limits.isEmpty { s += "\n\nLIMITS (never break them):\n" + limits.map { "- " + $0 }.joined(separator: "\n") }
         return s
     }
