@@ -348,7 +348,7 @@ struct StoryView: View {
                 .padding(12)
                 .overlay(alignment: .topLeading) {
                     if twoStepTyping, input.isEmpty {
-                        WobblyPrompt(text: engine.saying ? "What do you say?" : "What do you do?")
+                        WobblyPrompt(text: engine.saying ? "What do you say?" : "What do you do, or what happens?")
                             .padding(12)
                             .allowsHitTesting(false)
                     }

@@ -1455,7 +1455,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z107"
+    static let build = "build 2026-11-18z108"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -3193,7 +3193,12 @@ final class StoryEngine {
         options.append("somewhere new")
         // Asked as a change from where the player was: a short line that never names the place
         // ("I am sitting on the stool") keeps them there, it doesn't move them somewhere new.
-        let wasIn = start.location.isEmpty ? "" : "The player was in " + start.location + ". Did this reply show them leave it and arrive somewhere else, or are they still in " + start.location + "? Unless the reply shows them going, they are still there.\n"
+        // On the way out, the room the player is still standing in on the map is where they are
+        // unless the reply shows them arriving somewhere else.
+        let lastIn = start.location.isEmpty ? (start.room?.name ?? "") : start.location
+        let wasIn = lastIn.isEmpty ? "" : (start.location.isEmpty
+            ? "The player set out to leave " + lastIn + ". Did this reply show them arrive somewhere else, or are they still in " + lastIn + "? Unless the reply shows them arriving somewhere, they are still there.\n"
+            : "The player was in " + lastIn + ". Did this reply show them leave it and arrive somewhere else, or are they still in " + lastIn + "? Unless the reply shows them going, they are still there.\n")
         let pm = await ask("Where are you now?", wasIn + Prompts.rebuildPlace + "\nTHE LIST: " + options.joined(separator: "; "),
                            JSONGrammar.pickOne("where", from: options, free: "name", chars: 40), 40)
         guard pm != nil else { return }
@@ -3213,7 +3218,9 @@ final class StoryEngine {
             // On the way somewhere unnamed, a place already on the map counts only when the
             // exchange names it; otherwise the small model is reaching for the last name it knows.
             let knownLoc = (now.lore.filter { $0.kind == .place }.map(\.name) + now.places).contains { $0.caseInsensitiveCompare(loc) == .orderedSame }
-            if now.location.isEmpty, !missed, knownLoc, !now.transcript.isEmpty,
+            // The room still on the map is no reach: the player never got out of it.
+            let stillIn = loc.caseInsensitiveCompare(now.room?.name ?? "") == .orderedSame
+            if now.location.isEmpty, !missed, knownLoc, !stillIn, !now.transcript.isEmpty,
                !Continuity.names(place: loc, in: playerSaid + " " + reply), !Self.goesTo(loc, in: playerSaid) {
                 refused.append(loc + " (the moment never goes there)")
                 return
@@ -4307,11 +4314,12 @@ final class StoryEngine {
         e.updatedTurn = a.playerTurns
         _ = addLore(&a, e)
         if !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            a.whereabouts.append(Whereabout(name: name, at: a.location.isEmpty ? "here" : a.location, here: true, engaged: engaged))
+            a.whereabouts.append(Whereabout(name: name, at: a.location.isEmpty ? (a.room?.name ?? "here") : a.location, here: true, engaged: engaged))
         }
         // On the map too: they have just come in, so they stand by the door, facing the player.
         // (Without this, someone new had a card but never a place in the room.)
-        if var r = a.room, r.name.caseInsensitiveCompare(a.location) == .orderedSame, r.named(name) == nil {
+        // Between places (the place not settled yet), the room the player still stands in counts.
+        if var r = a.room, a.location.isEmpty || r.name.caseInsensitiveCompare(a.location) == .orderedSame, r.named(name) == nil {
             let p = Thing(kind: .person, name: name)
             let note = Placer.placePerson(&r, p, zone: r.doors.isEmpty ? .anywhere : .doorCorner)
             Placer.turn(&r, p.id, toward: "you")
@@ -5683,7 +5691,9 @@ extension StoryEngine {
             ("worn", "worn or carried by someone"),
             ("small", "small, set on a surface"),
         ]
-        let q = "A " + head + ": which is it?\nnot solid = a smell, smoke or steam, a sound, a light, a feeling, or stuff like wood, water, dust or mahogany\nbody = part of a person or how they look: hands, eyes, a smile, a frame, a shiver, hair\nbuilding = part of the building or the sky: a wall, a window, a door, a beam, a skylight\nfurniture = big and heavy, standing on the floor, too big to lift with one hand: a table, a stool, a piano, a bar, a gramophone\nworn = worn on someone's body: a dress, a smock, glasses, a hat, a ring, a coat\nsmall = picked up with one hand and set on a table, bar or shelf: a glass, a drink, a napkin, a key, a cloth, a book, a record, fabric, a needle"
+        // The whole name goes with it, so "paper" in "the scent of paper" is read as a smell.
+        let asIn = head.caseInsensitiveCompare(bare) == .orderedSame ? "" : " (as in \"" + name + "\")"
+        let q = "A " + head + asIn + ": which is it?\nnot solid = a smell, smoke or steam, a sound, a light, a feeling, or stuff like wood, water, dust or mahogany\nbody = part of a person or how they look: hands, eyes, a smile, a frame, a shiver, hair\nbuilding = part of the building or the sky: a wall, a window, a door, a beam, a skylight\nfurniture = big and heavy, standing on the floor, too big to lift with one hand: a table, a stool, a piano, a bar, a gramophone\nworn = worn on someone's body: a dress, a smock, glasses, a hat, a ring, a coat\nsmall = picked up with one hand and set on a table, bar or shelf: a glass, a drink, a napkin, a key, a cloth, a book, a record, fabric, a needle"
         let sorted = Self.sortKey(await choose(q, Self.sortLabels.map(\.1)))
         // Anything else said counts as small: it can't take a square of floor by mistake.
         what = sorts.first(where: { sorted.hasPrefix($0.0) })?.1 ?? "small, set on a surface"
