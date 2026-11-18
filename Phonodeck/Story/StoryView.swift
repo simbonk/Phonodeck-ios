@@ -6,6 +6,8 @@ import UIKit
 struct StoryView: View {
     @Environment(AppModel.self) private var app
     @State private var input = ""
+    /// Settings > Hands-free > Do, then say: typed turns come in two steps too.
+    @AppStorage("doThenSay") private var doThenSay = true
     /// The story (the Phonodeck mark), the world (globe) and the live log, as three icons along the top.
     enum Tab: String, CaseIterable { case story, world, log }
     @State private var tab: Tab = .story
@@ -327,12 +329,38 @@ struct StoryView: View {
         VStack(spacing: 8) {
             if engine.handsFree { handsFreeStatus }
             if let e = dictation.error { Text(e).font(.footnote).foregroundStyle(Theme.warn) }
-            TextField(engine.handsFree ? "Say \"\(Dictation.sendPhrase)\" to send" : "What do you do?", text: $input, axis: .vertical)
+            // Typing in two steps: what you did, held while you give your words.
+            if twoStepTyping, engine.saying {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(engine.heldDo.isEmpty ? "You do nothing." : engine.heldDo)
+                        .italic().foregroundStyle(Theme.dim).lineLimit(2)
+                    Spacer(minLength: 4)
+                    Button("Edit") { input = engine.editDo(); typing = true }
+                        .font(.footnote)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 4)
+            }
+            TextField(twoStepTyping ? "" : (engine.handsFree ? "Say \"\(Dictation.sendPhrase)\" to send" : "What do you do?"), text: $input, axis: .vertical)
                 .lineLimit(1...5)
                 .focused($typing)
+                .submitLabel(engine.saying ? .send : .next)
                 .padding(12)
+                .overlay(alignment: .topLeading) {
+                    if twoStepTyping, input.isEmpty {
+                        WobblyPrompt(text: engine.saying ? "What do you say?" : "What do you do?")
+                            .padding(12)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
+                // Return moves on: from what you do to what you say, then sends.
+                .onChange(of: input) { _, v in
+                    guard twoStepTyping, v.contains("\n") else { return }
+                    input = v.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+                    submitStep()
+                }
             HStack(spacing: 8) {
                 Button { engine.undo() } label: {
                     Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 40)
@@ -348,16 +376,19 @@ struct StoryView: View {
                     .buttonStyle(.bordered)
                 } else {
                     Button {
+                        if twoStepTyping { submitStep(); return }
                         typing = false
                         if dictation.listening { dictation.stop(send: true) } else { ComputerSounds.shared.play(.sent); engine.send(input) }
                         input = ""
                     } label: {
-                        Text("Send").bold().frame(minWidth: 70, minHeight: 40)
+                        Text(twoStepTyping && !engine.saying ? "Next" : "Send").bold().frame(minWidth: 70, minHeight: 40)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.accent)
                     .foregroundStyle(Theme.onAccent)
-                    .disabled(input.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(twoStepTyping
+                              ? engine.saying && engine.heldDo.isEmpty && input.trimmingCharacters(in: .whitespaces).isEmpty
+                              : input.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
@@ -365,6 +396,18 @@ struct StoryView: View {
         .frame(maxWidth: 820)
         .frame(maxWidth: .infinity)
         .background(Theme.bg.overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) })
+    }
+
+    /// Typing with Do, then say (hands-free has its own two chirps instead).
+    private var twoStepTyping: Bool { doThenSay && !engine.handsFree }
+
+    /// Return or Next/Send while typing in two steps: hold what you do, or send the turn.
+    private func submitStep() {
+        let last = engine.saying
+        if last && engine.heldDo.isEmpty && input.trimmingCharacters(in: .whitespaces).isEmpty { return }
+        if last { ComputerSounds.shared.play(.sent); typing = false }
+        engine.part(input)
+        input = ""
     }
 
     private var handsFreeButton: some View {
@@ -447,5 +490,35 @@ private struct SupportCard: View {
             .navigationTitle("A quick check-in")
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+}
+
+
+/// The typing prompt for a two-step turn ("What do you do?", then "What do you say?"): its
+/// letters shimmer and bob gently so it is clear which step you are on. Gone once you type.
+struct WobblyPrompt: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var still
+
+    var body: some View {
+        Group {
+            if still {
+                Text(text).foregroundStyle(Theme.accent)
+            } else {
+                TimelineView(.animation) { ctx in
+                    let t = ctx.date.timeIntervalSinceReferenceDate
+                    HStack(spacing: 0) {
+                        ForEach(Array(text.enumerated()), id: \.offset) { i, ch in
+                            Text(String(ch))
+                                .offset(y: sin(t * 5 + Double(i) * 0.6) * 1.6)
+                                .opacity(0.6 + 0.4 * (0.5 + 0.5 * sin(t * 3 + Double(i) * 0.45)))
+                        }
+                    }
+                    .foregroundStyle(Theme.accent)
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
     }
 }

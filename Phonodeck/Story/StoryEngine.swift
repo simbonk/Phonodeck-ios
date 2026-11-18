@@ -346,8 +346,26 @@ final class StoryEngine {
     /// microphone opens again (a different chirp) for the words; then both go as one turn, the
     /// action plainly and the words in quotes, so it is clear which is which.
     func heard(_ text: String) {
+        guard handsFree, Self.doThenSay else { send(text.trimmingCharacters(in: .whitespacesAndNewlines)); return }
+        part(text)
+    }
+
+    /// What the player has said they do, held while they give their words.
+    var heldDo: String { didPart }
+
+    /// Back to the first step, with what was held handed back to be edited.
+    func editDo() -> String {
+        let held = didPart
+        saying = false
+        didPart = ""
+        return held
+    }
+
+    /// One step of a two-step turn, typed or spoken: first what the player does, then what they
+    /// say. An empty step (or "nothing") leaves that part out.
+    func part(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard handsFree, Self.doThenSay else { send(t); return }
+        guard !busy, adventure?.ended == false else { return }
         // Saying just "nothing" or "skip" leaves that part out.
         let part = ["nothing", "skip", "pass", "none"].contains(t.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : t
         if !saying {
@@ -355,9 +373,11 @@ final class StoryEngine {
             saying = true
             dictation.clear()
             // After the acknowledging chirp has played, so the two-note "say" chirp is heard on its own.
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(700))
-                self.listenIfReady()
+            if handsFree {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(700))
+                    self.listenIfReady()
+                }
             }
             return
         }
@@ -368,7 +388,7 @@ final class StoryEngine {
         var turn = act
         if !turn.isEmpty, let last = turn.last, !".!?".contains(last) { turn += "." }
         if !words.isEmpty { turn += (turn.isEmpty ? "I say: \"" : " Then I say: \"") + words + "\"" }
-        if turn.isEmpty { dictation.clear(); listenIfReady(); return }
+        if turn.isEmpty { dictation.clear(); if handsFree { listenIfReady() }; return }
         pendingParts = (act, words)
         send(turn)
     }
@@ -1435,7 +1455,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z101"
+    static let build = "build 2026-11-18z107"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
