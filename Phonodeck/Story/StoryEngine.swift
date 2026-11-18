@@ -186,6 +186,8 @@ final class StoryEngine {
     private var putDownThisTurn: [String] = []
     /// The look heard the player move within the room this turn ("I walk over to Dolores").
     private var walkedThisTurn = false
+    /// The model said the player stays, though the words looked like going somewhere new.
+    @ObservationIgnored private var newPlaceRefused = false
     /// This turn's plan, by person: true when they stay where they are, false when the plan moved them.
     /// The rebuild leaves a planned person where the plan put them.
     private var plannedThisTurn: [String: Bool] = [:]
@@ -1732,7 +1734,7 @@ final class StoryEngine {
         }
         // "I go out to the street", "we walk to the corner": somewhere new, named by its plain word,
         // even when the reading said the player stays.
-        if read.going.isEmpty || (read.going == "somewhere new" && read.newPlace.isEmpty), !a.location.isEmpty,
+        if !newPlaceRefused, read.going.isEmpty || (read.going == "somewhere new" && read.newPlace.isEmpty), !a.location.isEmpty,
            let noun = Self.newPlaceWord(input, in: a) {
             read.going = "somewhere new"
             read.newPlace = "The " + noun
@@ -2186,6 +2188,23 @@ final class StoryEngine {
         var looked: [Looks.Answer] = []
         if !hidden, !playerNarrates {
             let wasWith: [String] = a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
+            // The words alone suggest a new place ("I walk over to the costume sewer" read as a
+            // place called The costume) while the look heard the player stay: the model is asked
+            // plainly whether they leave this place before anything is built.
+            newPlaceRefused = false
+            if let r = read, r.going.isEmpty, r.newPlace.isEmpty, !a.location.isEmpty, let noun = Self.newPlaceWord(input, in: a) {
+                let q = "THE PLAYER IS IN: " + a.location + "\nTHE PLAYER SAYS: " + clip(input, 300)
+                    + "\nQUESTION: Does the player leave " + a.location + " now for another place (\"the " + noun + "\")? Walking over to someone or something here, or turning to them, is no.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
+                let q0 = Date()
+                let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 24, temperature: 0.1, repetitionPenalty: 1.0,
+                                                                                         grammar: JSONGrammar.one("answer", from: ["yes", "no"])))) ?? ""
+                noteQ("turn", "Do you leave for another place?", raw, since: q0)
+                guard !Task.isCancelled else { adventure = snapshot; return }
+                if ((JSONExtract.object(raw)?["answer"] as? String) ?? "").lowercased().hasPrefix("n") {
+                    newPlaceRefused = true
+                    step("Do you leave for another place? → no: \"the " + noun + "\" is here")
+                }
+            }
             settle(&a, read: read ?? PlayerRead(), input: input)
             if read == nil { lastRead = "no usable reading; " + lastRead }
             // Turning away from the person you're talking to is something people announce ("hey
@@ -2447,6 +2466,29 @@ final class StoryEngine {
             if let to = read?.to, !to.isEmpty, spotSaid.range(of: #"(?i)\b(her|him|them)\b"#, options: .regularExpression) != nil {
                 spotSaid = spotSaid.replacingOccurrences(of: #"(?i)\b(her|him|them)\b"#, with: Cards.first(to), options: .regularExpression)
             }
+            // The look often misses a walk across the room ("I walk over to the bartender" read as
+            // sitting at the bar). When it heard none, the person the player turns to is out of
+            // reach and the words move, the model is asked that one thing plainly.
+            var walkConfirmed = false
+            let movingWords = #"(?i)\b(walk|walks|go|goes|step|steps|move|moves|head|heads|cross|crosses|come|comes|wander|wanders|join|joins|approach|approaches|stroll|strolls|over to|up to)\b"#
+            if spotSaid.isEmpty, !arrivedNow, (read?.newPlace ?? "").isEmpty, let to = read?.to, !to.isEmpty,
+               let r = a.room, let me = r.player, let them = r.named(to), them.isPerson, RoomGrid.distance(me, them) > 1.6,
+               input.range(of: movingWords, options: .regularExpression) != nil {
+                let role = a.cast.first { $0.name.caseInsensitiveCompare(to) == .orderedSame }?.role ?? ""
+                let who = to + (role.isEmpty ? "" : " (" + role + ")")
+                let q = "THE PLAYER SAID: " + clip(input, 300) + "\nQUESTION: Does the player walk over to " + who
+                    + " now, so they end up beside them? Talking or calling across the room without moving is no.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
+                let q0 = Date()
+                let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 24, temperature: 0.1, repetitionPenalty: 1.0,
+                                                                                         grammar: JSONGrammar.one("answer", from: ["yes", "no"])))) ?? ""
+                noteQ("turn", "Did you walk over to them?", raw, since: q0)
+                guard !Task.isCancelled else { adventure = snapshot; return }
+                if ((JSONExtract.object(raw)?["answer"] as? String) ?? "").lowercased().hasPrefix("y") {
+                    spotSaid = "beside " + Cards.first(to)
+                    walkConfirmed = true
+                    walkedThisTurn = true
+                }
+            }
             var moves = !spotSaid.isEmpty
             var whereTo = ""
             if moves, let r = a.room, let me = r.player, let z = Adventure.zone(from: spotSaid, in: r) {
@@ -2457,7 +2499,7 @@ final class StoryEngine {
             let going = read?.going ?? ""
             // The map would walk you across the room ("in her chair beside you" read as somewhere
             // 3 m away): the model says whether you really got up and went, from your own words.
-            if moves, !arrivedNow, (read?.newPlace ?? "").isEmpty {
+            if moves, !walkConfirmed, !arrivedNow, (read?.newPlace ?? "").isEmpty {
                 let q0 = Date()
                 let mq = "THE LAST REPLY: " + Fovea.clip(lastGMBefore, 500) + "\nTHE PLAYER SAID: " + input
                     + "\nQUESTION: Did the player get up or walk somewhere else in the room just now" + (whereTo.isEmpty ? "" : " (to " + whereTo + ")")
@@ -4303,12 +4345,20 @@ final class StoryEngine {
         guard name.count > 2, name.count <= 40, !Self.echoesPrompt(name), a.cast.count < 10 else { return nil }
         let titles: Set<String> = ["mr", "mrs", "ms", "miss", "dr", "the", "sir", "madam"]
         let words = Continuity.wordSet(name).filter { !titles.contains($0) && $0.count > 2 }
-        guard !words.isEmpty, words.allSatisfy({ Continuity.wordSet(text).contains($0) }) else { return nil }
-        // Not the player, and not someone who already has a card (by name or by role).
+        // Every word of the name is in the text ("a girl selling newspapers" grounds "the newspaper
+        // seller": a shared stem of four letters is enough).
+        let textWords = Continuity.wordSet(text)
+        func grounded(_ w: String) -> Bool {
+            textWords.contains(w) || textWords.contains { t in t.count >= 4 && w.count >= 4 && t.prefix(4) == w.prefix(4) }
+        }
+        guard !words.isEmpty, words.allSatisfy(grounded) else { return nil }
+        // Not the player, and not someone who already has a card (by name or by role). Sharing one
+        // word is not the same person: "the old man" is not "the old barber", "the young man" is
+        // not "the young apprentice". Only a name wholly inside theirs is.
         if !words.isDisjoint(with: Continuity.wordSet(a.playerName)) { return nil }
         for c in a.cast {
             let theirs = Continuity.wordSet(c.name + " " + c.role).filter { !titles.contains($0) && $0.count > 2 }
-            if !words.isDisjoint(with: theirs) { return nil }
+            if words.isSubset(of: theirs) { return nil }
         }
         let line: String = PresenceFilter.sentences(text).first(where: { s in words.contains { s.lowercased().contains($0) } }) ?? ""
         var e = LoreEntry(name: name, kind: .person, desc: clip(line.trimmingCharacters(in: .whitespacesAndNewlines), 200), role: clip(role, 60), known: true)

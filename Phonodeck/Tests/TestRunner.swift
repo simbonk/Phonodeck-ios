@@ -271,10 +271,14 @@ final class TestRunner {
         let onMap = room?.player != nil
         out.append(("player-on-map", "Where are you now?", "you are on the map", onMap ? "yes, in " + (room?.name ?? "") : "not on the map", onMap))
 
-        var seen: [String: Int] = [:]
-        for r in after.rooms { for p in r.people where p.kind == .person { seen[p.name.lowercased(), default: 0] += 1 } }
-        let twice = seen.filter { $0.value > 1 }.map(\.key)
-        out.append(("no-duplicates", "Everyone now?", "each person on the map once", twice.isEmpty ? "yes" : "twice: " + twice.joined(separator: ", "), twice.isEmpty))
+        // Only a copy that appears this turn counts, so one slip isn't counted again every turn after.
+        func doubled(_ a: Adventure) -> Set<String> {
+            var seen: [String: Int] = [:]
+            for r in a.rooms { for p in r.people where p.kind == .person { seen[p.name.lowercased(), default: 0] += 1 } }
+            return Set(seen.filter { $0.value > 1 }.map(\.key))
+        }
+        let twice = doubled(after).subtracting(doubled(before)).sorted()
+        out.append(("new-duplicate", "Where are you now?", "nobody copied onto a second map this turn", twice.isEmpty ? "none" : "twice: " + twice.joined(separator: ", "), twice.isEmpty))
 
         if let room {
             let cards = after.cast.map { $0.name.lowercased() }
@@ -386,9 +390,14 @@ final class TestRunner {
             return ("reply-mentions", "The reply", "mentions " + words.joined(separator: "/"), ok ? "yes" : "no", ok)
         case "mentions-present":
             let low = reply.lowercased()
+            // The person answering needn't name themselves ("He and I"), and anyone may go by
+            // a word of their role or looks ("the boy with the violin").
+            let speaking = Set(after.whereabouts.filter { $0.engaged == true }.map { $0.name.lowercased() })
             let missing = people.filter { p in
+                if speaking.contains(p.name.lowercased()) { return false }
                 let card = after.cast.first { $0.name.lowercased() == p.name.lowercased() }
-                let words = card.map { ctx.refWords($0) } ?? [Cards.first(p.name).lowercased()]
+                var words = card.map { ctx.refWords($0) } ?? [Cards.first(p.name).lowercased()]
+                if let c = card { words += Cards.keywords(c.role + " " + c.desc).map { $0.lowercased() } }
                 return !words.contains { low.contains($0) }
             }.map(\.name)
             return ("names-who-is-here", "The reply", "mentions everyone with you (" + peopleList + ")", missing.isEmpty ? "yes" : "left out " + missing.joined(separator: ", "), missing.isEmpty)
@@ -401,7 +410,11 @@ final class TestRunner {
     private func evidence(_ step: String, in asked: [String]) -> String {
         guard !step.isEmpty, step != "The reply" else { return "" }
         let key = step.lowercased().prefix(18)
-        guard let line = asked.last(where: { $0.lowercased().contains(key) }) else { return "(not asked this turn)" }
+        guard let line = asked.last(where: { $0.lowercased().contains(key) }) else {
+            // Not asked: the look decided it wasn't needed, so its reading is the evidence.
+            guard let look = asked.first(where: { $0.contains("(the look)") }), let r = look.range(of: " → ") else { return "(not asked this turn)" }
+            return "not asked; the look said " + String(look[r.upperBound...].prefix(220))
+        }
         guard let r = line.range(of: " → ") else { return String(line.prefix(200)) }
         return String(line[r.upperBound...].prefix(200))
     }
@@ -499,7 +512,8 @@ extension TestRunner {
             let objects = a.room?.objects ?? []
             if let seat = objects.first(where: { Rules.seats.contains($0.icon) }) { fills["{seat}"] = Self.the(seat.name) }
             let small = ["glass", "cup", "mug", "book", "newspaper", "bottle", "comb", "pencil", "towel", "lamp", "candle", "plate", "jar", "magazine", "letter", "ledger", "brush", "spoon", "napkin", "menu"]
-            if let t = objects.first(where: { o in small.contains { o.name.lowercased().contains($0) || o.icon == $0 } }) { fills["{thing}"] = Self.the(t.name) }
+            if let t = objects.first(where: { o in Rules.rule(o.icon).small && small.contains { o.name.lowercased().contains($0) } })
+                ?? objects.first(where: { Rules.rule($0.icon).small && $0.name.count <= 24 }) { fills["{thing}"] = Self.the(t.name) }
             let door = a.room?.doors.first { !$0.leadsTo.isEmpty }?.leadsTo
             fills["{outside}"] = Self.the(door ?? "outside")
         }
