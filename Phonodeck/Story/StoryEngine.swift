@@ -335,26 +335,72 @@ final class StoryEngine {
     /// what the earlier ones took out, so it only looks at what is left. Nil when nothing was found
     /// (the message is then used as it was).
     private func splitTurn(_ input: String) async -> (happens: String, did: String, said: String)? {
-        let head = Prompts.splitIntro + "\n\nTHE MESSAGE: " + clip(input, 800)
-        func pass(_ question: String, _ label: String, taken: [(String, String)]) async -> String {
+        let message = clip(input, 800)
+        func ask(_ question: String, _ label: String, about text: String, taken: [(String, String)], grammar: String) async -> [String: Any]? {
             let took = taken.filter { !$0.1.isEmpty }.map { "\n" + $0.0 + ": " + $0.1 }.joined()
-            let prompt = head + (took.isEmpty ? "" : "\n\nALREADY TAKEN:" + took) + "\n\n" + question + "\nThe form:"
+            let prompt = Prompts.splitIntro + "\n\n" + text + (took.isEmpty ? "" : "\n\nALREADY TAKEN:" + took) + "\n\n" + question + "\nThe form:"
             let q0 = Date()
             let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                                 options: .init(maxTokens: 260, temperature: 0, repetitionPenalty: 1.05, grammar: JSONGrammar.splitPass))) ?? ""
+                                                 options: .init(maxTokens: 300, temperature: 0, repetitionPenalty: 1.05, grammar: grammar))) ?? ""
             noteQ("turn", label, reply, since: q0)
-            let m = JSONExtract.object(reply)
-            guard (m?["answer"] as? String)?.lowercased() == "yes" else { return "" }
-            let v = ((m?["found"] as? String) ?? "")
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ").union(.whitespacesAndNewlines))
-            return ["none", "nothing", "n/a", "-", "no"].contains(v.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : v
+            guard let m = JSONExtract.object(reply), (m["answer"] as? String)?.lowercased() == "yes" else { return nil }
+            return m
         }
-        let happens = await pass(Prompts.splitHappens, "Does the player bring something into the scene?", taken: [])
+        func clean(_ v: Any?) -> String {
+            let t = (v as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ").union(.whitespacesAndNewlines))
+            return ["none", "nothing", "n/a", "-", "no"].contains(t.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : t
+        }
+        let whole = "THE MESSAGE: " + message
+        let happens = clean(await ask(Prompts.splitHappens, "Does the player bring something into the scene?", about: whole, taken: [], grammar: JSONGrammar.splitPass)?["found"])
         guard !Task.isCancelled else { return nil }
-        let said = await pass(Prompts.splitSaying, "What does the player say aloud?", taken: [("Happens in the scene", happens)])
+        // The words: copied from the message between the first and last words the model points at.
+        var said = "", rest = ""
+        if let m = await ask(Prompts.splitSaying, "What does the player say aloud?", about: whole, taken: [("Happens in the scene", happens)], grammar: JSONGrammar.splitSpeech) {
+            if let span = Self.span(in: message, from: clean(m["starts"]), to: clean(m["ends"])) {
+                said = String(message[span]).trimmingCharacters(in: CharacterSet(charactersIn: "\"“”,;: ").union(.whitespacesAndNewlines))
+                said = said.prefix(1).uppercased() + said.dropFirst()
+                rest = (String(message[..<span.lowerBound]) + " " + String(message[span.upperBound...])).trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                said = clean(m["words"])
+            }
+        }
         guard !Task.isCancelled else { return nil }
-        let did = await pass(Prompts.splitDoing, "What does the player do?", taken: [("Happens in the scene", happens), ("Said aloud", said.isEmpty ? "" : "\"" + said + "\"")])
+        // The action: from what is left once the words are cut out, when they were found in place.
+        let doingText = rest.isEmpty ? whole : "THE MESSAGE, WITH THE SPOKEN WORDS TAKEN OUT: " + rest
+        let doingTaken: [(String, String)] = rest.isEmpty ? [("Happens in the scene", happens), ("Said aloud", said.isEmpty ? "" : "\"" + said + "\"")] : [("Happens in the scene", happens)]
+        let did = clean(await ask(Prompts.splitDoing, "What does the player do?", about: doingText, taken: doingTaken, grammar: JSONGrammar.splitPass)?["found"])
         return happens.isEmpty && did.isEmpty && said.isEmpty ? nil : (happens, did, said)
+    }
+
+    /// Where in `text` a run of words starts (its first words `from`) and ends (its last words
+    /// `to`), matched word by word, ignoring case and punctuation. Nil when either can't be found.
+    static func span(in text: String, from: String, to: String) -> Range<String.Index>? {
+        func words(_ s: String) -> [(w: String, r: Range<String.Index>)] {
+            var out: [(w: String, r: Range<String.Index>)] = []
+            var i = s.startIndex
+            while let r = s.range(of: #"[\p{L}\p{N}'’]+"#, options: .regularExpression, range: i..<s.endIndex) {
+                out.append((s[r].lowercased().replacingOccurrences(of: "’", with: "").replacingOccurrences(of: "'", with: ""), r))
+                i = r.upperBound
+            }
+            return out
+        }
+        let all = words(text)
+        let a = words(from).map(\.w), b = words(to).map(\.w)
+        guard !a.isEmpty, !b.isEmpty, all.count >= a.count else { return nil }
+        func find(_ seq: [String], after start: Int) -> Int? {
+            guard all.count - seq.count >= start else { return nil }
+            return (start...(all.count - seq.count)).first { i in (0..<seq.count).allSatisfy { all[i + $0].w == seq[$0] } }
+        }
+        guard let s0 = find(a, after: 0) else { return nil }
+        // The last place the closing words occur, at or after the start.
+        var e0: Int?
+        var k = s0
+        while let hit = find(b, after: k) { e0 = hit; k = hit + 1 }
+        guard let e = e0 else { return nil }
+        var end = all[e + b.count - 1].r.upperBound
+        // Keep the closing mark of the last sentence.
+        while end < text.endIndex, "?!.…".contains(text[end]) { end = text.index(after: end) }
+        return all[s0].r.lowerBound..<end
     }
 
     /// The message as the story shows it: what happens and what the player does first, their
@@ -1440,7 +1486,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z105"
+    static let build = "build 2026-11-18z106"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
