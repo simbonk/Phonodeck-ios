@@ -3,7 +3,7 @@ import Foundation
 /// Curated experiences offered in the set-up. Each is an `Experience`, the same format people
 /// can export and share.
 enum CuratedExperiences {
-    static let all: [Experience] = [speakeasy, foggyLight, allNightDiner, barbershop]
+    static let all: [Experience] = [speakeasy, foggyLight, allNightDiner, barbershop, leftBankBookshop, skiLodge]
 
     static var speakeasy: Experience {
         var e = Experience()
@@ -58,6 +58,44 @@ enum CuratedExperiences {
         e.place = "A narrow barbershop: two old leather barber chairs facing a long mirror, a radio on the shelf playing the ballgame, a striped pole turning outside the window, jars of combs in blue liquid, and a wall covered in signed photographs"
         e.goal = "Get a haircut, settle into the neighbourhood, and hear the barber and his apprentice talk about their lives and plans"
         e.allies = "Earl Hollis, the barber: unhurried, wise and teasing, has cut hair in this shop since before the war, keeps a signed photograph of a famous boxer whose hair he cut by the mirror and won't let anyone else touch it, and is quietly deciding whether to hand the shop over; Marcus Hollis, his nephew and apprentice: quick and funny, sweeps up between customers, practises being a radio disc jockey in his head between haircuts, and hasn't yet told his uncle he has an audition at a station on the North Side next week"
+        e.play = "Lots of dialogue, forgiving"
+        return e
+    }
+
+    static var leftBankBookshop: Experience {
+        var e = Experience()
+        e.id = UUID(uuidString: "6B1F0A52-0D52-4B3B-9E47-1A0000000010")!
+        e.title = "Closing Time on the Left Bank"
+        e.simulator = true
+        e.minutes = 20
+        e.feeling = "Bookish, romantic, quietly hopeful"
+        e.describe = "It is a rainy evening in Paris in 1926. I have ducked into a little English-language bookshop near the Seine just before closing, and the owner lets me stay on while she tidies up and a young poet who practically lives there reads by the stove."
+        e.world = "Paris, 1926, on the Left Bank"
+        e.vibe = "Cozy, literary, a little bohemian, wholesome"
+        e.who = "An American new to Paris, a few weeks in, still finding their feet and their French"
+        e.traits = "Curious and warm, a bit of a dreamer, happy to talk about books"
+        e.place = "A cramped bookshop: shelves to the ceiling, books stacked on the floor, a little iron stove, a lending-library ledger on the counter, a sagging armchair in the corner, and rain on the shop window with the lamps of the quay beyond"
+        e.goal = "Stay past closing, talk books and life with the owner and the poet, and maybe leave with something to read"
+        e.allies = "Margot Fairley, the owner: brisk, kind and endlessly patient with penniless writers, lends books on trust and keeps an IOU tin under the counter she never actually collects on, and has a letter from her mother in Ohio begging her to come home that she hasn't answered; Théo Lambert, the young poet: shabby, funny and full of opinions, sleeps on a cot in the back room in exchange for sweeping, carries a notebook of poems he has never shown anyone, and is secretly translating one of Margot's favourite novels as a gift for her"
+        e.play = "Lots of dialogue, forgiving"
+        return e
+    }
+
+    static var skiLodge: Experience {
+        var e = Experience()
+        e.id = UUID(uuidString: "6B1F0A52-0D52-4B3B-9E47-1A0000000011")!
+        e.title = "Snowed In at the Lodge"
+        e.simulator = true
+        e.minutes = 20
+        e.feeling = "Snug, firelit, easy company"
+        e.describe = "It is a winter night in 1972 in the Colorado Rockies. A blizzard has closed the pass, and I am stuck at a small ski lodge, sitting by the big stone fireplace with the woman who runs it and a ski patroller who came in off the mountain."
+        e.world = "The Colorado Rockies, 1972"
+        e.vibe = "Cozy, relaxed, a little wild outside, wholesome"
+        e.who = "A traveller driving through the mountains who couldn't get over the pass before the road closed"
+        e.traits = "Laid-back and friendly, a good storyteller, glad of a warm fire"
+        e.place = "The great room of a small log ski lodge: a big stone fireplace with a crackling fire, worn leather couches, wooden skis and snowshoes on the walls, a bar cart with a pot of cocoa, and tall windows where the snow blows sideways in the dark"
+        e.goal = "Wait out the blizzard by the fire, share a drink, and get to know the lodge owner and the patroller"
+        e.allies = "June Halvorsen, the lodge owner: tough, wry and generous, runs the place alone since her husband passed, knows every guest's name, and is weighing an offer from a big resort company to buy the lodge; Danny Reyes, the ski patroller: young, cheerful and fearless on the slopes, came in half-frozen from closing the upper runs, keeps a dog-eared photo of the avalanche dog he is training in his jacket, and dreams of patrolling in the Alps one day"
         e.play = "Lots of dialogue, forgiving"
         return e
     }
