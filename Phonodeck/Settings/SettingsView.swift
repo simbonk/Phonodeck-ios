@@ -88,6 +88,12 @@ struct SettingsView: View {
                     Text("Sound cues: a chirp when the microphone opens, another when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.\n\nDo, then say: in a story, each turn is two parts, typed or spoken. Typing, write what you do and press return, then what you say and press return; an empty step is skipped. Hands-free, after the first chirp, say what you do (\"I walk over to the bar\"), then \"\(Dictation.sendPhrase)\". After the two-note chirp, say your words (\"What's your name?\"), then \"\(Dictation.sendPhrase)\". Say \"nothing\" to skip either part.")
                 }
 
+                Section {
+                    NavigationLink("Overnight tests") { TestRunView() }
+                } footer: {
+                    Text("Lets Phonodeck play its sample stories by itself for hours and report what went wrong.")
+                }
+
     }
 
     // MARK: Privacy: the lock, and where to find help

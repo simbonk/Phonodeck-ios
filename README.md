@@ -58,6 +58,17 @@ iOS lets each app use only part of the phone's memory. The app asks iOS how much
 
 ---
 
+## Overnight tests
+
+**Settings > Gameplay > Overnight tests** lets Phonodeck play its six sample stories by itself on the Thinking model while you sleep, and write a report for the morning. Nothing goes to the cloud.
+
+- It builds each sample story's opening once (its baseline room). Then it plays blocks: a fresh copy of one baseline, 25 turns, then the next story's baseline, round and round until the stop time.
+- The turns come from a bank of short scenarios in `Phonodeck/Tests/TestScenarios.swift` (someone walks in, leaving and coming back, asking a name, picking things up, an hour going by, doing and saying at once...), with some turns improvised by a simulated player.
+- After every turn, code checks the world: is the newcomer on the map and on a card, did the clock move the right amount and never backwards, are you where you went, holding what you took, sitting where you sat, are there no metres in the prose and are the pronouns right. Each check is one line: what it wanted, what happened, and the model question it blames with that question's answer.
+- The report (`report.md`, shared from the same screen) groups the failures by cause with counts, a few one-line examples and one or two full traces each, and compares every check's pass rate with the last run, so a big change can be checked by running the tests before and after.
+
+**To run it on a Mac** (an Apple silicon Mac is faster than a phone): in Xcode, choose **My Mac (Designed for iPad)** as the run destination, press Run, download the Thinking model in the Models tab of the Mac copy, then open Settings > Overnight tests, set the stop time and tap **Start the tests**. On an iPhone, run it the same way, plugged in, with Phonodeck left open.
+
 ## Put it on your iPhone: step by step
 
 You need a Mac, an iPhone or iPad on iOS 26 or later, and a USB cable. You've never built an app before? That's fine; these steps are all of it. The first build takes 10 to 20 minutes because Xcode downloads and compiles the AI libraries.

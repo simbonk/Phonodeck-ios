@@ -16,8 +16,10 @@ struct PhonodeckApp: App {
         .onChange(of: scenePhase) { _, phase in
             // Stop GPU work as soon as the app starts to leave the foreground (inactive comes
             // before background), so iOS never sees it submit GPU work from the background.
-            AppActivity.shared.set(foreground: phase == .active)
-            if phase == .background { app.lock() }
+            // While the overnight tests run on a Mac, the window may lose focus: they keep going.
+            let testing = TestRunner.running && ProcessInfo.processInfo.isiOSAppOnMac
+            AppActivity.shared.set(foreground: phase == .active || testing)
+            if phase == .background && !TestRunner.running { app.lock() }
             // The phone never sleeps while the Phonodeck is open: a story is meant to be heard with
             // the phone on your chest and your eyes closed, whatever it costs the battery.
             if phase == .active { UIApplication.shared.isIdleTimerDisabled = true }
