@@ -259,6 +259,7 @@ enum JSONGrammar {
     static func roomShell(types: [String]) -> String {
         [
             "root ::= \"{\" ws " + [
+                key("where") + " io",
                 key("type") + " ty",
                 key("width") + " num",
                 key("depth") + " num",
@@ -267,6 +268,7 @@ enum JSONGrammar {
                 key("inside") + " s120",
                 key("outside") + " s120",
             ].joined(separator: " \",\" ws ") + " ws \"}\"",
+            choice("io", ["indoors", "in the open air"]),
             choice("ty", types),
             #"num ::= [1-9] [0-9]?"#,
             choice("wall", ["north", "south", "east", "west"]),

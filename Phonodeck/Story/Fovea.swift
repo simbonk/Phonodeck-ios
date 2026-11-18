@@ -153,8 +153,9 @@ enum Fovea {
     /// The room in one line: its name and size, what is happening inside and beyond the windows.
     static func roomLine(_ a: Adventure) -> String {
         guard let r = a.room else { return "" }
-        var s = r.name + ", " + RoomGrid.feel(width: r.width, depth: r.depth)
-        if !r.inside.isEmpty { s += ". Inside: " + clip(r.inside, 120) }
+        let open = RoomBuilder.outdoor.contains(r.type)
+        var s = r.name + ", " + (open ? "in the open air" : RoomGrid.feel(width: r.width, depth: r.depth))
+        if !r.inside.isEmpty { s += (open ? ". Here: " : ". Inside: ") + clip(r.inside, 120) }
         if !r.outside.isEmpty { s += ". Outside" + (r.windows.isEmpty ? "" : " the window") + ": " + clip(r.outside, 120) }
         return s + "."
     }
@@ -360,7 +361,8 @@ enum Fovea {
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
         var limits: [String] = []
         if !a.setup.avoid.isEmpty { limits.append("The player asked: " + a.setup.avoid) }
-        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery.") }
+        // Even when the player brings trouble in ("a constable walks in looking for a thief"), it stays harmless.
+        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery: nobody draws a weapon, chases, threatens or arrests the player, whoever comes in.") }
         if !limits.isEmpty { s += "\n\nLIMITS (never break them):\n" + limits.map { "- " + $0 }.joined(separator: "\n") }
         return s
     }

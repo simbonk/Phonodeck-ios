@@ -1435,7 +1435,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z100"
+    static let build = "build 2026-11-18z101"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1452,7 +1452,7 @@ final class StoryEngine {
         var l: [String] = []
         if !a.setup.who.isEmpty { l.append("The player character: " + a.setup.who + (a.setup.traits.isEmpty ? "" : ". " + a.setup.traits)) }
         if !a.setup.avoid.isEmpty { l.append("The player asked: " + a.setup.avoid) }
-        if a.setup.simulator { l.append("This is an experience with no threat, danger, villain or mystery.") }
+        if a.setup.simulator { l.append("This is an experience with no threat, danger, villain or mystery: nobody draws a weapon, chases, threatens or arrests the player.") }
         return l.map { "- " + $0 }.joined(separator: "\n")
     }
 
@@ -2301,6 +2301,9 @@ final class StoryEngine {
                 let others: String = a.cast.filter { $0.name != came }.map(\.name).joined(separator: " or ")
                 extra.append("A NEW PERSON COMES IN: " + came + ". They are their own person" + (others.isEmpty ? "" : ", not " + others)
                              + ": show them arriving, and let them speak for themselves.")
+                if a.setup.simulator {
+                    extra.append("In this story nobody is a threat: " + came + " is an ordinary, harmless person here. They never draw or hold a weapon, never chase, block, threaten or arrest the player; whatever brought them in, a few polite words and they let the player be.")
+                }
                 lastRead += "; new person: " + came
                 step("Is someone new coming in? → " + came)
             } else {
@@ -2456,6 +2459,9 @@ final class StoryEngine {
                 && (read?.newPlace ?? "").isEmpty && !moves
             talkThisTurn = talk
             if talk { maxOut = 420 }
+            // Arriving somewhere new asks for a lot (the time, the place, the weather, who is there):
+            // 300 tokens cut the river scene off mid-sentence.
+            if arrivedNow { maxOut = max(maxOut, 460) }
             var keep: [Bool] = []
             if !items.isEmpty, !talk {
                 var intent = Fovea.PlayerIntent()
@@ -2727,6 +2733,7 @@ final class StoryEngine {
         stage = ""
         thinkingSince = nil
         reply = Self.tidy(reply)
+        reply = Self.endAtSentence(reply)
         if !nameTold(a), !a.cast.contains(where: \.known) { reply = Self.dropName(a.playerName, from: reply) }
         reply = Self.dropNameFromNarration(a.playerName, from: reply)
         guard !reply.isEmpty, !Task.isCancelled else {
@@ -2870,7 +2877,7 @@ final class StoryEngine {
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
         var limits: [String] = []
         if !a.setup.avoid.isEmpty { limits.append("The player asked: " + a.setup.avoid) }
-        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery.") }
+        if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery: nobody draws a weapon, chases, threatens or arrests the player.") }
         if !limits.isEmpty { s += "\n\n## SET-UP LIMITS (never break them)\n" + limits.map { "- " + $0 }.joined(separator: "\n") }
         s += "\n\n" + Prompts.hardLimits
         let premise = Cards.premise(a)
@@ -4826,6 +4833,16 @@ final class StoryEngine {
     static func tokens(_ s: String) -> Int { Int(Double(s.utf8.count) / LLMService.bytesPerToken) + 1 }
 
     /// Strips things small models sometimes add: headings, "GM:" prefixes, trailing option lists.
+    /// A reply that ran out of room mid-sentence ("And you certainly aren't supposed") ends at its
+    /// last full sentence instead, when that keeps most of it.
+    static func endAtSentence(_ s: String) -> String {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = t.last, !".!?…\"”’)*".contains(last) else { return t }
+        guard let r = t.range(of: #"[.!?…]["”’]?(?=\s)"#, options: [.regularExpression, .backwards]) else { return t }
+        let kept = String(t[..<r.upperBound])
+        return kept.count >= t.count / 2 ? kept : t
+    }
+
     static func tidy(_ s: String) -> String {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         t = t.replacingOccurrences(of: #"(?m)^\s*(#+ .*|\*\*?(Game Master|GM|Narrator)\*?\*?:?\s*)$"#, with: "", options: .regularExpression)
@@ -5881,11 +5898,17 @@ extension StoryEngine {
         base += "\n\n" + story + "\n\n"
 
         // 1. The shell.
-        let q1 = base + "QUESTION: What is this room's type, and how big would a real one like it be, in metres (true to its time and place: a 1920s speakeasy, a ship's cabin, a cathedral)? Width is west to east, depth is north to south. List its doors (which wall, where each leads, whether you reach it by a door or by stairs up or down, and what lies beyond it: what kind of room or place, and two or three things there, true to the story; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on the room's air inside: only its smells and ambience (smoky, damp, warm; no people, no action), and one on the weather and world outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nOutput ONLY one JSON object:\n{\"type\":\"one of TYPES\",\"width\":9,\"depth\":7,\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\",\"by\":\"a door or stairs\",\"beyond\":\"what kind of place it is and two or three things there\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"its smells and ambience, one line\",\"outside\":\"the weather and world outside, one line\"}\nThe form:"
+        let q1 = base + "QUESTION: What is this room's type, and how big would a real one like it be, in metres (true to its time and place: a 1920s speakeasy, a ship's cabin, a cathedral)? Width is west to east, depth is north to south. List its doors (which wall, where each leads, whether you reach it by a door or by stairs up or down, and what lies beyond it: what kind of room or place, and two or three things there, true to the story; one leads back the way the player came) and its windows (windows in the walls only, never skylights; which wall, and what is seen through them; none outdoors). Then one line on the room's air inside: only its smells and ambience (smoky, damp, warm; no people, no action), and one on the weather and world outside.\nTYPES: " + RoomBuilder.types.joined(separator: "; ") + "\nIndoors, or in the open air (a street, a riverbank, a park, a field, a beach)? In the open air there are no walls and no windows: its doors are just the ways you can go from there.\nOutput ONLY one JSON object:\n{\"where\":\"indoors or in the open air\",\"type\":\"one of TYPES\",\"width\":9,\"depth\":7,\"doors\":[{\"wall\":\"north, south, east or west\",\"leads_to\":\"where it goes\",\"by\":\"a door or stairs\",\"beyond\":\"what kind of place it is and two or three things there\"}],\"windows\":[{\"wall\":\"north, south, east or west\",\"view\":\"what is seen\"}],\"inside\":\"its smells and ambience, one line\",\"outside\":\"the weather and world outside, one line\"}\nThe form:"
         let m1 = await ask("How big is this room, in metres?", q1, JSONGrammar.roomShell(types: RoomBuilder.types), 260)
         guard !Task.isCancelled else { return }
         var type = str(m1, "type").lowercased()
         if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: placeName + " " + about) }
+        // The model says it is in the open air: then it is an outdoor place, whatever type it picked
+        // (a riverbank drawn as a shop got walls, a door and windows).
+        if str(m1, "where") == "in the open air", !RoomBuilder.outdoor.contains(type) {
+            let guess = RoomBuilder.type(for: placeName + " " + about)
+            type = RoomBuilder.outdoor.contains(guess) ? guess : "open air"
+        }
         let tp = RoomBuilder.template(type)
         func metres(_ k: String) -> Int? {
             if let n = m1[k] as? Int { return n }

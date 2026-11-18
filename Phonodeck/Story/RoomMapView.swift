@@ -317,7 +317,11 @@ struct RoomMapView: View {
                 }
             }
             let outdoor = RoomBuilder.outdoor.contains(room.type)
-            for wall in Wall.allCases {
+            // In the open air there are no walls: only a faint edge to the map.
+            if outdoor {
+                ctx.stroke(Path(box), with: .color(Theme.line.opacity(0.4)), style: StrokeStyle(lineWidth: 0.5, dash: [2, 6]))
+            }
+            for wall in Wall.allCases where !outdoor {
                 for i in 0..<room.length(of: wall) where !doorCells.contains(room.cell(on: wall, at: i)) {
                     let (p, q) = segment(wall, i)
                     var l = Path(); l.move(to: p); l.addLine(to: q)
@@ -330,8 +334,8 @@ struct RoomMapView: View {
                 var l = Path(); l.move(to: p); l.addLine(to: q)
                 ctx.stroke(l, with: .color(Color(red: 0.45, green: 0.75, blue: 1)), lineWidth: 4)
             } }
-            // Doors: a thin line swung open into the room.
-            for o in room.doors { for i in 0..<max(1, o.width) {
+            // Doors: a thin line swung open into the room (none in the open air).
+            for o in outdoor ? [] : room.doors { for i in 0..<max(1, o.width) {
                 let (p, q) = segment(o.wall, o.at + i)
                 let inward = o.wall.facing.opposite
                 var l = Path(); l.move(to: p)
