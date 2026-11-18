@@ -263,16 +263,6 @@ enum JSONGrammar {
         common,
     ].joined(separator: "\n")
 
-    /// The speech pass (see `Prompts.splitSaying`): where the spoken words start and end in the
-    /// message, or the words meant when the speech is only described.
-    static let splitSpeech = [
-        "root ::= \"{\" ws " + [key("why") + " s200", key("answer") + " yn", key("starts") + " s80", key("ends") + " s80", key("words") + " s500"]
-            .joined(separator: " \",\" ws ") + " ws \"}\"",
-        choice("yn", ["yes", "no"]),
-        capped("s80", 80), capped("s200", 200), capped("s500", 500),
-        common,
-    ].joined(separator: "\n")
-
     /// The room builder, question 1: the shell of a room (its type, size, doors, windows, and what
     /// is happening inside and outside).
     static func roomShell(types: [String]) -> String {

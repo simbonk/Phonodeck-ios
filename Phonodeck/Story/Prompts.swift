@@ -121,28 +121,26 @@ enum Prompts {
     Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the part, or empty"}
     """
 
-    /// Pass 2: words the player speaks aloud. Where they are in the message, the model only
-    /// points at them (their first and last words) and the words are copied from the message
-    /// exactly, so nothing is reworded.
+    /// Pass 2: words the player speaks aloud, direct or described.
     static let splitSaying = """
-    QUESTION: Leaving out anything already taken, does the player speak out loud to someone, or ask or tell someone something?
-    If yes:
-    - starts: the first three words the player speaks, copied exactly from the message (after "I say", "then I say", "and ask").
-    - ends: the last three words the player speaks, copied exactly from the message.
-    - words: only if the message describes the speech without giving the words ("I ask her where she's from"): the plain words they mean ("Where are you from?"). Otherwise empty.
+    QUESTION: Leaving out anything already taken, does the player speak out loud to someone, or ask or tell someone something? If yes, write ONLY the words that come out of the player's mouth, as they would say them, without quote marks. Leave out "I say", "I ask", "I tell her" and every action ("I look at", "I walk over"). Keep their own words; fix only obvious dictation slips. Described speech becomes the plain words they mean.
     Examples:
-    "I look at the old man and say good evening, mind if I sit down" → yes, starts "good evening mind", ends "I sit down", words ""
-    "I ask her where she's from" → yes, starts "", ends "", words "Where are you from?"
+    "I look at the old man and say good evening, mind if I sit" → yes: Good evening, mind if I sit?
+    "I ask her where she's from" → yes: Where are you from?
     "I pick up the glass and drink" → no
-    First write one sentence saying who does what in the message. Then answer yes or no.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","starts":"","ends":"","words":""}
+    "what's your name" → yes: What's your name?
+    First write one sentence saying who does what in the message. Then answer yes or no, then the words.
+    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the words, or empty"}
     """
 
     /// Pass 3: the player's own physical action, from what is left.
     static let splitDoing = """
-    QUESTION: Is there anything here where the player does something with their body: looks at someone, makes eye contact, smiles, moves, sits, picks something up, or tries a move? If yes, write it as one sentence in first person that keeps EVERY action named, in the player's own words and order ("I look at the old man, nod and sit down."). Leave out only the words that introduce speech ("then I say", "and ask"). Speaking is not an action here.
-    First write one sentence listing each action named. Then answer yes or no, then the sentence.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the sentence, or empty"}
+    QUESTION: Take away the parts already taken (and the words "I say", "I ask" that introduced them). Is anything left where the player does something with their body: looks at someone, moves, sits, picks something up, or tries a move? If yes, write it as one short sentence in first person ("I look at the old man."). Speaking is not an action here.
+    Examples:
+    "I look at the old man and say good evening" with "Good evening" taken → yes: I look at the old man.
+    "what's your name" with "What's your name?" taken → no
+    First write one sentence saying what is left once the taken parts are removed. Then answer yes or no, then the action.
+    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the action, or empty"}
     """
 
     /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
