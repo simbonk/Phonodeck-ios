@@ -10,7 +10,7 @@ struct TestRunView: View {
         Form {
             Section {
                 DatePicker("Stop at", selection: $runner.stopAt, displayedComponents: [.date, .hourAndMinute])
-                Stepper(value: $runner.turnsPerBlock, in: 5...60, step: 5) {
+                Stepper(value: $runner.turnsPerBlock, in: 5...50, step: 5) {
                     LabeledContent("Turns per room", value: "\(runner.turnsPerBlock)")
                 }
                 Toggle("Improvised turns", isOn: $runner.improvise)
@@ -24,7 +24,7 @@ struct TestRunView: View {
             } header: {
                 Text("Overnight tests")
             } footer: {
-                Text("Plays the six sample stories by itself on the Thinking model, checks the world after every turn and writes a report. Each room starts fresh from its story's opening and plays \(runner.turnsPerBlock) turns before the next one. Leave Phonodeck open and plugged in; nothing is spoken aloud and the test stories are deleted as it goes. Improvised turns: a simulated player makes up some turns between the scripted ones. Judge: one extra yes/no question per turn on whether the reply answered you.")
+                Text("Plays the six sample stories by itself on the Thinking model, checks the world after every turn and writes a report. Each room starts fresh from its story's opening and plays up to \(runner.turnsPerBlock) turns before the next one; a failed check ends the room early, so one slip doesn't spoil the turns after it. Leave Phonodeck open and plugged in; nothing is spoken aloud and the test stories are deleted as it goes. Improvised turns: a simulated player makes up some turns between the scripted ones. Judge: one extra yes/no question per turn on whether the reply answered you.")
             }
 
             if runner.isRunning || runner.turns > 0 {
