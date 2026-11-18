@@ -6543,3 +6543,18 @@ extension StoryEngine {
     }
 }
 
+
+// MARK: - For the overnight tests
+
+extension StoryEngine {
+    /// Waits for the rebuild after the last reply to finish, so the tests read the world only once
+    /// it has caught up (a person playing slowly would see the same).
+    func settle() async {
+        if let job = memoryJob { await job.value }
+    }
+    /// Every model question asked in this story so far ("[turn 3 · rebuild] Is anyone new here? → {...}").
+    var questionsAsked: [String] { questionLogFor == adventure?.id ? questionLog : [] }
+    /// How many entries the trace (the Live log) holds, and the entries from a point on.
+    var traceCount: Int { traceFor == adventure?.id ? traceLog.count : 0 }
+    func traceEntries(from i: Int) -> [String] { traceFor == adventure?.id ? Array(traceLog.dropFirst(max(0, i))) : [] }
+}
