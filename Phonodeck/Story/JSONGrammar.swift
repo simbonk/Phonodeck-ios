@@ -257,7 +257,8 @@ enum JSONGrammar {
     /// One pass of splitting the player's message (see `Prompts.splitHappens`): a sentence of
     /// reasoning first, then what was found.
     static let splitPass = [
-        "root ::= \"{\" ws " + key("why") + " s200 \",\" ws " + key("found") + " s500 ws \"}\"",
+        "root ::= \"{\" ws " + key("why") + " s200 \",\" ws " + key("answer") + " yn \",\" ws " + key("found") + " s500 ws \"}\"",
+        choice("yn", ["yes", "no"]),
         capped("s200", 200), capped("s500", 500),
         common,
     ].joined(separator: "\n")
