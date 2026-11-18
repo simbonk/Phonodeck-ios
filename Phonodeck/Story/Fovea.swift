@@ -483,6 +483,9 @@ enum Fovea {
                 let c = w.flatMap { Cards.card(for: $0, in: a) }
                 var o = p.name
                 if let role = c?.role, !role.isEmpty { o += " (" + role + ")" }
+                // So a quiet bystander keeps the right "he" or "she" when the reply mentions them.
+                let pr = Cards.pronoun(c?.name ?? p.name, in: a)
+                if !pr.isEmpty { o += " [" + pr + "]" }
                 o += ": " + (gridSpot(a, p.name) ?? "in the room")
                 if let d = w?.doing, !d.isEmpty { o += ", " + clip(d, 50) }
                 if let c, !c.looks.isEmpty { o += " (" + clip(c.looks, 70) + ")" }
