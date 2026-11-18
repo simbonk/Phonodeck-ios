@@ -268,15 +268,32 @@ enum RoomGrid {
         return a <= 60 ? .front : .side
     }
 
-    /// "in front of you, 2 m", "to your left, 3 m", "behind you".
+    /// "in front of you, within reach", "to your left, a few steps away", "behind you, across the
+    /// room". Said the way a person in the room would feel it, never in metres: a small model
+    /// handed "2 m" copies the figure into the prose ("two meters behind you") and loses which
+    /// way it pointed, while "within reach" is something it can paint.
     static func whereFrom(_ from: Thing, to: Thing) -> String {
         let a = angle(from: from, to: to)
-        let m = max(1, Int(distance(from, to).rounded()))
         let side: String
         if abs(a) <= 30 { side = "in front of you" }
         else if abs(a) <= 110 { side = a < 0 ? "to your left" : "to your right" }
         else { side = "behind you" }
-        return side + ", \(m) m"
+        return side + ", " + howFar(distance(from, to))
+    }
+
+    /// A distance in metres as felt in a room.
+    static func howFar(_ metres: Double) -> String {
+        if metres <= 1.5 { return "within reach" }
+        if metres <= 3 { return "a step or two away" }
+        if metres <= 5.5 { return "a few steps away" }
+        return "across the room"
+    }
+
+    /// A room's size as felt on walking in ("a small room", "a long, narrow room"), never in metres.
+    static func feel(width: Int, depth: Int) -> String {
+        let area = width * depth, long = max(width, depth), short = max(1, min(width, depth))
+        let size = area <= 16 ? "small" : area <= 40 ? "snug" : area <= 90 ? "roomy" : "big"
+        return long >= short * 2 ? "a " + size + ", long and narrow room" : "a " + size + " room"
     }
 
     /// Whether `a` is turned toward `b` (within 45 degrees).

@@ -122,7 +122,7 @@ enum Fovea {
     }
 
     /// Where someone or something is, as the player would put it, read from the room grid: "in front
-    /// of you, 1 m, on the bar stool, facing you, a tired half-smile". Nil without a grid.
+    /// of you, within reach, on the bar stool, facing you, a tired half-smile". Nil without a grid.
     static func gridSpot(_ a: Adventure, _ name: String) -> String? {
         guard let r = a.room, let me = r.player, let t = r.named(name), t.id != me.id else { return nil }
         var s = RoomGrid.whereFrom(me, to: t)
@@ -153,7 +153,7 @@ enum Fovea {
     /// The room in one line: its name and size, what is happening inside and beyond the windows.
     static func roomLine(_ a: Adventure) -> String {
         guard let r = a.room else { return "" }
-        var s = r.name + ", \(r.width) m by \(r.depth) m"
+        var s = r.name + ", " + RoomGrid.feel(width: r.width, depth: r.depth)
         if !r.inside.isEmpty { s += ". Inside: " + clip(r.inside, 120) }
         if !r.outside.isEmpty { s += ". Outside" + (r.windows.isEmpty ? "" : " the window") + ": " + clip(r.outside, 120) }
         return s + "."
