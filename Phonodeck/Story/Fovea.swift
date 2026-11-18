@@ -544,7 +544,7 @@ enum Fovea {
             let did = p.did.replacingOccurrences(of: "\"", with: "'")
             let said = p.said.replacingOccurrences(of: "\"", with: "'")
             var t: [String] = []
-            if !did.isEmpty { t.append("PLAYER ACTION (silent physical action, not spoken aloud): " + did) }
+            if !did.isEmpty { t.append("PLAYER ACTION OR WHAT HAPPENS (silent, not spoken aloud; if someone arrives or something happens, show it happening): " + did) }
             if !said.isEmpty { t.append("PLAYER (speaking aloud" + (who.isEmpty ? "" : " to " + who) + "): \"" + said + "\"") }
             let reply: String
             if said.isEmpty {
