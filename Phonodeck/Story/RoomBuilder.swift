@@ -256,6 +256,15 @@ extension Adventure {
             Placer.turn(&r, p.id, toward: name)
         }
 
+        // Each person is only ever in one room too: someone placed here is taken off the map of
+        // every other room (a room drawn on a false move had copied the people of the last one).
+        let hereNow = Set(r.people.filter { $0.kind == .person }.map { $0.name.lowercased() })
+        for i in rooms.indices where rooms[i].id != r.id {
+            let n = rooms[i].things.count
+            rooms[i].things.removeAll { $0.kind == .person && hereNow.contains($0.name.lowercased()) }
+            if rooms[i].things.count != n { rooms[i].log.append("leave: someone went to " + r.name) }
+        }
+
         // Things the story shows are put on the map by the rebuild, which asks the model about each.
         r.log = Array(r.log.suffix(60))
         room = r
