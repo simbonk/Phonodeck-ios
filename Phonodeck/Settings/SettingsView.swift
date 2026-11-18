@@ -7,7 +7,6 @@ struct SettingsView: View {
     @AppStorage("playerInterest") private var playerInterest = ""
     @AppStorage("sendPhrase") private var sendPhrase = ""
     @AppStorage("computerSounds") private var computerSounds = true
-    @AppStorage("doThenSay") private var doThenSay = true
     @AppStorage(Reading.textSizeKey) private var textSize: Double = Reading.defaultTextSize
     @State private var editingCode = false
     @State private var tab = SettingsTab.gameplay
@@ -81,11 +80,10 @@ struct SettingsView: View {
                     }
                     Toggle("Sound cues", isOn: $computerSounds)
                         .onChange(of: computerSounds) { _, on in if !on { ComputerSounds.shared.stopHum() } }
-                    Toggle("Do, then say", isOn: $doThenSay)
                 } header: {
                     Text("Hands-free")
                 } footer: {
-                    Text("Sound cues: a chirp when the microphone opens, another when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.\n\nDo, then say: in a story, each turn is two parts. After the first chirp, say what you do (\"I walk over to the bar\"), then \"\(Dictation.sendPhrase)\". After the two-note chirp, say your words (\"What's your name?\"), then \"\(Dictation.sendPhrase)\". Say \"nothing\" to skip either part.")
+                    Text("Sound cues: a chirp when the microphone opens, another when it hears \"\(Dictation.sendPhrase)\", and a soft hum while the Phonodeck thinks.")
                 }
 
     }

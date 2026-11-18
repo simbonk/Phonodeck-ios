@@ -103,6 +103,16 @@ enum Prompts {
     /// where things stand and the player's new message, then the question.
     static let readIntro = "You help run an interactive audio story. Here is where things stand, then the player's new message, then one question for you."
 
+    /// Before the read: the player's message split into what they do and what they say, with no
+    /// story around it, so the words alone are taken as speech.
+    static let splitTurn = """
+    Here is one message from a player in an interactive story, often spoken aloud into a microphone, so it may run things together. Split it into what the player DOES and what the player SAYS out loud.
+    - doing: their physical action, in first person ("I walk to the bar and sit down."). Empty if they only speak.
+    - saying: only the exact words they speak aloud to someone, without quote marks. Keep their own words; fix only obvious dictation slips. If they describe saying something without the words ("I ask her name"), write the plain words they mean ("What's your name?"). Empty if they only act.
+    Nothing may be added that the message does not say, and nothing left out.
+    Output ONLY one JSON object: {"doing":"...","saying":"..."}
+    """
+
     /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
     static let lookQuestion = """
     QUESTION 1 OF 2. Fill in this form about the player's NEW MESSAGE. Output ONLY one JSON object:
