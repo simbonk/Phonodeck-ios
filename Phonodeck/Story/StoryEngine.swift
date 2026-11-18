@@ -343,7 +343,9 @@ final class StoryEngine {
             let reply = (try? await llm.complete(system: nil, prompt: prompt,
                                                  options: .init(maxTokens: 260, temperature: 0, repetitionPenalty: 1.05, grammar: JSONGrammar.splitPass))) ?? ""
             noteQ("turn", label, reply, since: q0)
-            let v = ((JSONExtract.object(reply)?["found"] as? String) ?? "")
+            let m = JSONExtract.object(reply)
+            guard (m?["answer"] as? String)?.lowercased() == "yes" else { return "" }
+            let v = ((m?["found"] as? String) ?? "")
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ").union(.whitespacesAndNewlines))
             return ["none", "nothing", "n/a", "-", "no"].contains(v.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : v
         }
@@ -1438,7 +1440,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z104"
+    static let build = "build 2026-11-18z105"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
