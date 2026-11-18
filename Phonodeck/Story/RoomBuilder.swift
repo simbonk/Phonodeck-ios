@@ -3,9 +3,10 @@ import Foundation
 /// Templates for every type of room, and building a room from a template or from the model's answers.
 enum RoomBuilder {
     static let types = ["bar", "café", "kitchen", "bedroom", "office", "shop", "hall", "corridor", "ship's deck", "street", "garden",
-                        "clearing", "other"]
+                        "clearing", "riverbank", "open air", "other"]
     static let sizes: [(String, Int, Int)] = [("small", 4, 4), ("medium", 7, 6), ("large", 10, 8), ("huge", 14, 12)]
-    static let outdoor: Set<String> = ["street", "garden", "clearing", "ship's deck"]
+    /// In the open air: no walls, no windows, no doors drawn (the ways on are just directions).
+    static let outdoor: Set<String> = ["street", "garden", "clearing", "ship's deck", "riverbank", "open air"]
 
     /// One object of a template: its name, kind and zone.
     struct Piece { var name: String; var icon: String; var zone: Zone }
@@ -44,6 +45,10 @@ enum RoomBuilder {
             return ("large", [p("a bench", "sofa", .wall(.north)), p("a tree", "plant", .farCorner), p("flower beds", "plant", .doorCorner)])
         case "clearing":
             return ("large", [p("a fallen log", "sofa", .centre), p("a tree", "plant", .farCorner)])
+        case "riverbank":
+            return ("large", [p("a bench", "sofa", .wall(.north)), p("a lamp post", "lamp", .farCorner), p("a mooring post", "pillar", .wall(.south))])
+        case "open air":
+            return ("large", [])
         default:
             return ("medium", [])
         }
@@ -64,6 +69,7 @@ enum RoomBuilder {
             ("ship's deck", ["deck", "ship", "boat", "pier", "dock", "docks", "wharf", "harbour", "harbor"]),
             ("street", ["street", "road", "avenue", "boulevard", "square", "plaza", "platform", "town", "city", "village"]),
             ("garden", ["garden", "park", "courtyard", "yard", "terrace", "rooftop", "balcony", "orchard"]),
+            ("riverbank", ["river", "riverbank", "riverside", "quay", "quayside", "embankment", "canal", "towpath"]),
             ("clearing", ["clearing", "forest", "woods", "beach", "field", "meadow", "camp", "cave", "desert", "shore", "hill", "mountain"]),
         ]
         for (t, keys) in table where !w.isDisjoint(with: keys) { return t }
@@ -82,7 +88,7 @@ enum RoomBuilder {
         if let m = metres, m.0 >= 2, m.1 >= 2 { (w, d) = (min(16, m.0), min(14, m.1)) }
         // A public room is never a cupboard: a bar, café, shop or hall is at least medium, and any room
         // grows until it has about four square metres for each person and piece in it.
-        let roomy: Set<String> = ["bar", "café", "shop", "hall", "kitchen", "street", "garden", "clearing", "ship's deck"]
+        let roomy: Set<String> = ["bar", "café", "shop", "hall", "kitchen", "street", "garden", "clearing", "ship's deck", "riverbank", "open air"]
         // Only when the model gave no size of its own: a 4 m lighthouse kitchen stays 4 m.
         if metres == nil, roomy.contains(type) { w = max(w, 7); d = max(d, 6) }
         for s in sizes where w * d < crowd * 4 && s.1 * s.2 > w * d { (w, d) = (s.1, s.2); if w * d >= crowd * 4 { break } }

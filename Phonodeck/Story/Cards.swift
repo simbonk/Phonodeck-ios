@@ -33,7 +33,14 @@ enum Cards {
     }
 
     static func clip(_ s: String, _ n: Int) -> String { s.count <= n ? s : String(s.prefix(n)) + "…" }
-    static func first(_ name: String) -> String { name.split(separator: " ").first.map(String.init) ?? name }
+    /// The word a person goes by: their first name, or, for someone known only by what they are
+    /// ("The police constable"), the last word ("constable"). Never "The": that matched every
+    /// sentence, so a role-named newcomer counted as shown in any story and followed the player around.
+    static func first(_ name: String) -> String {
+        let words = name.split(separator: " ").map(String.init)
+        if words.count >= 2, ["the", "a", "an"].contains(words[0].lowercased()) { return words.last ?? name }
+        return words.first ?? name
+    }
 
     /// Words worth matching on: four letters or more, and not the small words every sentence has.
     static func keywords(_ s: String) -> Set<String> {

@@ -153,8 +153,9 @@ enum Fovea {
     /// The room in one line: its name and size, what is happening inside and beyond the windows.
     static func roomLine(_ a: Adventure) -> String {
         guard let r = a.room else { return "" }
-        var s = r.name + ", " + RoomGrid.feel(width: r.width, depth: r.depth)
-        if !r.inside.isEmpty { s += ". Inside: " + clip(r.inside, 120) }
+        let open = RoomBuilder.outdoor.contains(r.type)
+        var s = r.name + ", " + (open ? "in the open air" : RoomGrid.feel(width: r.width, depth: r.depth))
+        if !r.inside.isEmpty { s += (open ? ". Here: " : ". Inside: ") + clip(r.inside, 120) }
         if !r.outside.isEmpty { s += ". Outside" + (r.windows.isEmpty ? "" : " the window") + ": " + clip(r.outside, 120) }
         return s + "."
     }
