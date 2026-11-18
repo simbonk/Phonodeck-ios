@@ -17,6 +17,9 @@ final class ComputerSounds {
         case ack
         /// A typed message was sent.
         case sent
+        /// In a story, the second listen: now say your words (two rising notes, after the plain
+        /// `listen` chirp that asked what you do).
+        case say
     }
 
     /// Settings > Hands-free > Sound cues (on unless turned off).
@@ -119,6 +122,7 @@ final class ComputerSounds {
         switch cue {
         case .listen: tones = [(660, 0, 0.35)]
         case .sent: tones = [(440, 0, 0.35)]
+        case .say: tones = [(784, 0, 0.12), (1175, 0.15, 0.22)]
         case .ack: tones = [(1175, 0, 0.07), (1568, 0.085, 0.07), (2093, 0.17, 0.16)]
         }
         let peak: Float = cue == .ack ? 0.09 : 0.12

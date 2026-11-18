@@ -19,6 +19,8 @@ final class Dictation {
     private(set) var text = ""
     /// Counts each message sent from here, so the screens can empty their text box after the send phrase.
     private(set) var sent = 0
+    /// This listen sends even when nothing was said (the story's "do" or "say" step left empty).
+    private var sendsEmpty = false
     var error: String?
     /// Called with the finished text when the player says the send phrase (or taps send).
     var onSend: ((String) -> Void)?
@@ -140,8 +142,11 @@ final class Dictation {
 
     // MARK: Start and stop
 
-    func start() async {
+    /// `cue`: the chirp that says what is being listened for (in a story, one for what you do and
+    /// another for what you say). `allowEmpty`: the send phrase on its own still sends, as nothing.
+    func start(cue: ComputerSounds.Cue = .listen, allowEmpty: Bool = false) async {
         guard !listening else { return }
+        sendsEmpty = allowEmpty
         let model = store.listeningModel
         guard await Self.requestPermission(speech: model == nil) else {
             error = "Phonodeck needs the microphone\(model == nil ? " and speech recognition" : ""). Turn them on in Settings > Phonodeck."
@@ -174,7 +179,7 @@ final class Dictation {
             return
         }
         listening = true
-        ComputerSounds.shared.play(.listen)
+        ComputerSounds.shared.play(cue)
 
         if let model {
             Task { await self.prepareModel(model) }
@@ -219,7 +224,7 @@ final class Dictation {
     private func sendNow() {
         let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
         sent += 1
-        if !message.isEmpty { onSend?(message) }
+        if !message.isEmpty || sendsEmpty { onSend?(message) }
     }
 
     func clear() {

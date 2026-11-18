@@ -303,6 +303,8 @@ final class StoryEngine {
         building = false
         resuming = false
         thinkingSince = nil
+        saying = false
+        didPart = ""
         forge?.abort()
         ComputerSounds.shared.stopHum()
     }
@@ -311,6 +313,8 @@ final class StoryEngine {
     /// whenever the narrator is quiet.
     func setHandsFree(_ on: Bool) {
         handsFree = on
+        saying = false
+        didPart = ""
         if on {
             narrate = true
             listenIfReady()
@@ -321,97 +325,72 @@ final class StoryEngine {
 
     private func listenIfReady() {
         guard handsFree, let a = adventure, !a.ended, !busy, !dictation.listening, !narrator.speaking, !narrator.preparing else { return }
-        Task { await dictation.start() }
+        let two = Self.doThenSay
+        let cue: ComputerSounds.Cue = two && saying ? .say : .listen
+        Task { await dictation.start(cue: cue, allowEmpty: two) }
     }
 
+    /// Settings > Hands-free > Do, then say (on unless turned off): each spoken turn comes in two
+    /// parts, each with its own chirp. First what you do, then what you say.
+    static var doThenSay: Bool { UserDefaults.standard.object(forKey: "doThenSay") as? Bool ?? true }
+    /// Hands-free, between the two parts: what you do has been heard; now what you say.
+    private(set) var saying = false
+    private var didPart = ""
     /// The two parts of the turn just sent, kept apart for the whole turn: what the player did
     /// (a silent action: the only part that can move them, turn them or pick things up) and what
     /// they said aloud (words to the person they face, never an action).
     private var pendingParts: (did: String, said: String)?
     private var partsThisTurn: (did: String, said: String)?
 
-    /// Three small questions in a row with no story around them: what the player narrates
-    /// happening in the world, then the words they say aloud, then their own action. Each is shown
-    /// what the earlier ones took out, so it only looks at what is left. Nil when nothing was found
-    /// (the message is then used as it was).
-    private func splitTurn(_ input: String) async -> (happens: String, did: String, said: String)? {
-        let message = clip(input, 800)
-        func ask(_ question: String, _ label: String, about text: String, taken: [(String, String)], grammar: String) async -> [String: Any]? {
-            let took = taken.filter { !$0.1.isEmpty }.map { "\n" + $0.0 + ": " + $0.1 }.joined()
-            let prompt = Prompts.splitIntro + "\n\n" + text + (took.isEmpty ? "" : "\n\nALREADY TAKEN:" + took) + "\n\n" + question + "\nThe form:"
-            let q0 = Date()
-            let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                                 options: .init(maxTokens: 300, temperature: 0, repetitionPenalty: 1.05, grammar: grammar))) ?? ""
-            noteQ("turn", label, reply, since: q0)
-            guard let m = JSONExtract.object(reply), (m["answer"] as? String)?.lowercased() == "yes" else { return nil }
-            return m
-        }
-        func clean(_ v: Any?) -> String {
-            let t = (v as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ").union(.whitespacesAndNewlines))
-            return ["none", "nothing", "n/a", "-", "no"].contains(t.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : t
-        }
-        let whole = "THE MESSAGE: " + message
-        let happens = clean(await ask(Prompts.splitHappens, "Does the player bring something into the scene?", about: whole, taken: [], grammar: JSONGrammar.splitPass)?["found"])
-        guard !Task.isCancelled else { return nil }
-        // The words: copied from the message between the first and last words the model points at.
-        var said = "", rest = ""
-        if let m = await ask(Prompts.splitSaying, "What does the player say aloud?", about: whole, taken: [("Happens in the scene", happens)], grammar: JSONGrammar.splitSpeech) {
-            if let span = Self.span(in: message, from: clean(m["starts"]), to: clean(m["ends"])) {
-                said = String(message[span]).trimmingCharacters(in: CharacterSet(charactersIn: "\"“”,;: ").union(.whitespacesAndNewlines))
-                said = said.prefix(1).uppercased() + said.dropFirst()
-                rest = (String(message[..<span.lowerBound]) + " " + String(message[span.upperBound...])).trimmingCharacters(in: .whitespacesAndNewlines)
-            } else {
-                said = clean(m["words"])
-            }
-        }
-        guard !Task.isCancelled else { return nil }
-        // The action: from what is left once the words are cut out, when they were found in place.
-        let doingText = rest.isEmpty ? whole : "THE MESSAGE, WITH THE SPOKEN WORDS TAKEN OUT: " + rest
-        let doingTaken: [(String, String)] = rest.isEmpty ? [("Happens in the scene", happens), ("Said aloud", said.isEmpty ? "" : "\"" + said + "\"")] : [("Happens in the scene", happens)]
-        let did = clean(await ask(Prompts.splitDoing, "What does the player do?", about: doingText, taken: doingTaken, grammar: JSONGrammar.splitPass)?["found"])
-        return happens.isEmpty && did.isEmpty && said.isEmpty ? nil : (happens, did, said)
+    /// What the microphone heard, hands-free. With Do, then say, the first part is held and the
+    /// microphone opens again (a different chirp) for the words; then both go as one turn, the
+    /// action plainly and the words in quotes, so it is clear which is which.
+    func heard(_ text: String) {
+        guard handsFree, Self.doThenSay else { send(text.trimmingCharacters(in: .whitespacesAndNewlines)); return }
+        part(text)
     }
 
-    /// Where in `text` a run of words starts (its first words `from`) and ends (its last words
-    /// `to`), matched word by word, ignoring case and punctuation. Nil when either can't be found.
-    static func span(in text: String, from: String, to: String) -> Range<String.Index>? {
-        func words(_ s: String) -> [(w: String, r: Range<String.Index>)] {
-            var out: [(w: String, r: Range<String.Index>)] = []
-            var i = s.startIndex
-            while let r = s.range(of: #"[\p{L}\p{N}'’]+"#, options: .regularExpression, range: i..<s.endIndex) {
-                out.append((s[r].lowercased().replacingOccurrences(of: "’", with: "").replacingOccurrences(of: "'", with: ""), r))
-                i = r.upperBound
-            }
-            return out
-        }
-        let all = words(text)
-        let a = words(from).map(\.w), b = words(to).map(\.w)
-        guard !a.isEmpty, !b.isEmpty, all.count >= a.count else { return nil }
-        func find(_ seq: [String], after start: Int) -> Int? {
-            guard all.count - seq.count >= start else { return nil }
-            return (start...(all.count - seq.count)).first { i in (0..<seq.count).allSatisfy { all[i + $0].w == seq[$0] } }
-        }
-        guard let s0 = find(a, after: 0) else { return nil }
-        // The last place the closing words occur, at or after the start.
-        var e0: Int?
-        var k = s0
-        while let hit = find(b, after: k) { e0 = hit; k = hit + 1 }
-        guard let e = e0 else { return nil }
-        var end = all[e + b.count - 1].r.upperBound
-        // Keep the closing mark of the last sentence.
-        while end < text.endIndex, "?!.…".contains(text[end]) { end = text.index(after: end) }
-        return all[s0].r.lowerBound..<end
+    /// What the player has said they do, held while they give their words.
+    var heldDo: String { didPart }
+
+    /// Back to the first step, with what was held handed back to be edited.
+    func editDo() -> String {
+        let held = didPart
+        saying = false
+        didPart = ""
+        return held
     }
 
-    /// The message as the story shows it: what happens and what the player does first, their
-    /// words in quotes on the last line.
-    static func showParts(_ p: (happens: String, did: String, said: String)) -> String {
-        func sentence(_ t: String) -> String {
-            guard let last = t.last, !".!?…".contains(last) else { return t }
-            return t + "."
+    /// One step of a two-step turn, typed or spoken: first what the player does, then what they
+    /// say. An empty step (or "nothing") leaves that part out.
+    func part(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !busy, adventure?.ended == false else { return }
+        // Saying just "nothing" or "skip" leaves that part out.
+        let part = ["nothing", "skip", "pass", "none"].contains(t.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : t
+        if !saying {
+            didPart = part
+            saying = true
+            dictation.clear()
+            // After the acknowledging chirp has played, so the two-note "say" chirp is heard on its own.
+            if handsFree {
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(700))
+                    self.listenIfReady()
+                }
+            }
+            return
         }
-        let said = p.said.isEmpty ? "" : "\"" + p.said + "\""
-        return [sentence(p.happens), sentence(p.did), said].filter { !$0.isEmpty }.joined(separator: "\n")
+        saying = false
+        let act = didPart
+        didPart = ""
+        let words = part.trimmingCharacters(in: CharacterSet(charactersIn: "\"“” "))
+        var turn = act
+        if !turn.isEmpty, let last = turn.last, !".!?".contains(last) { turn += "." }
+        if !words.isEmpty { turn += (turn.isEmpty ? "I say: \"" : " Then I say: \"") + words + "\"" }
+        if turn.isEmpty { dictation.clear(); if handsFree { listenIfReady() }; return }
+        pendingParts = (act, words)
+        send(turn)
     }
 
     func narrationFinished() {
@@ -1419,17 +1398,7 @@ final class StoryEngine {
         pendingInput = input   // shown at once, while the Game Master finishes its review
         currentTask = Task {
             defer { busy = false; pendingInput = nil }
-            // Split into what the player does and what they say, shown that way from here on.
-            var turn = input
-            if let p = await splitTurn(input) {
-                guard !Task.isCancelled else { return }
-                // Something the player narrates happening is not their own action or words, so
-                // the turn reads the whole message as it stands.
-                pendingParts = p.happens.isEmpty ? (p.did, p.said) : nil
-                turn = Self.showParts(p)
-                pendingInput = turn
-            }
-            await runTurn(input: turn, hidden: false)
+            await runTurn(input: input, hidden: false)
         }
     }
 
@@ -1486,7 +1455,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z106"
+    static let build = "build 2026-11-18z107"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).

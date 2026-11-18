@@ -103,48 +103,6 @@ enum Prompts {
     /// where things stand and the player's new message, then the question.
     static let readIntro = "You help run an interactive audio story. Here is where things stand, then the player's new message, then one question for you."
 
-    /// Before the read, three small questions in a row, with no story around them, each about one
-    /// thing in the player's message. Each later question is shown what the earlier ones took out,
-    /// so it only looks at what is left.
-    static let splitIntro = "Here is one message from a player in an interactive story. It is often spoken into a microphone, so it may run together."
-
-    /// Pass 1: something the player narrates happening, not their own action. Most messages
-    /// have none, so the examples lean to no.
-    static let splitHappens = """
-    QUESTION: Does the player step outside their character, like a storyteller, to make something happen that is not their own doing: a new person arriving, an event, a change to the place? Most messages do not. A player who looks at, walks to, talks to or does something with a person already there is only playing their own part: that is no.
-    Examples:
-    "I look at the bartender and ask for a beer" → no
-    "I sit down next to her and say hi" → no
-    "suddenly the lights go out" → yes: Suddenly, the lights go out.
-    "at that moment a man in a wet coat bursts through the door and I jump" → yes: At that moment, a man in a wet coat bursts through the door.
-    First write one sentence saying who does what in the message. Then answer yes or no. If yes, write ONLY that part, as a plain sentence; never something the message does not say.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the part, or empty"}
-    """
-
-    /// Pass 2: words the player speaks aloud. Where they are in the message, the model only
-    /// points at them (their first and last words) and the words are copied from the message
-    /// exactly, so nothing is reworded.
-    static let splitSaying = """
-    QUESTION: Leaving out anything already taken, does the player speak out loud to someone, or ask or tell someone something?
-    If yes:
-    - starts: the first three words the player speaks, copied exactly from the message (after "I say", "then I say", "and ask").
-    - ends: the last three words the player speaks, copied exactly from the message.
-    - words: only if the message describes the speech without giving the words ("I ask her where she's from"): the plain words they mean ("Where are you from?"). Otherwise empty.
-    Examples:
-    "I look at the old man and say good evening, mind if I sit down" → yes, starts "good evening mind", ends "I sit down", words ""
-    "I ask her where she's from" → yes, starts "", ends "", words "Where are you from?"
-    "I pick up the glass and drink" → no
-    First write one sentence saying who does what in the message. Then answer yes or no.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","starts":"","ends":"","words":""}
-    """
-
-    /// Pass 3: the player's own physical action, from what is left.
-    static let splitDoing = """
-    QUESTION: Is there anything here where the player does something with their body: looks at someone, makes eye contact, smiles, moves, sits, picks something up, or tries a move? If yes, write it as one sentence in first person that keeps EVERY action named, in the player's own words and order ("I look at the old man, nod and sit down."). Leave out only the words that introduce speech ("then I say", "and ask"). Speaking is not an action here.
-    First write one sentence listing each action named. Then answer yes or no, then the sentence.
-    Output ONLY one JSON object: {"why":"one sentence","answer":"yes or no","found":"the sentence, or empty"}
-    """
-
     /// Read, question 1: who, where, and what to look up. The lookups come from a fixed list (see `Looks`).
     static let lookQuestion = """
     QUESTION 1 OF 2. Fill in this form about the player's NEW MESSAGE. Output ONLY one JSON object:
