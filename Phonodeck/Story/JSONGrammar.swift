@@ -254,13 +254,6 @@ enum JSONGrammar {
         ].joined(separator: "\n")
     }
 
-    /// The player's message split in two (see `Prompts.splitTurn`).
-    static let splitTurn = [
-        "root ::= \"{\" ws " + key("doing") + " s400 \",\" ws " + key("saying") + " s600 ws \"}\"",
-        capped("s400", 400), capped("s600", 600),
-        common,
-    ].joined(separator: "\n")
-
     /// The room builder, question 1: the shell of a room (its type, size, doors, windows, and what
     /// is happening inside and outside).
     static func roomShell(types: [String]) -> String {

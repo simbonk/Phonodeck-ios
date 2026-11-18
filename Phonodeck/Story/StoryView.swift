@@ -388,9 +388,13 @@ struct StoryView: View {
                     Text("Hands-free ON: hearing you…")
                 } else {
                     HStack(spacing: 4) {
-                        Text("Hands-free ON: listening. Say")
+                        if StoryEngine.doThenSay {
+                            Text(engine.saying ? "Now what you say. Then" : "What you do. Then")
+                        } else {
+                            Text("Hands-free ON: listening. Say")
+                        }
                         MagicPhrase(phrase: Dictation.sendPhrase)
-                        Text("to send.")
+                        Text(StoryEngine.doThenSay ? "(or \"nothing\")." : "to send.")
                     }
                 }
             } else {

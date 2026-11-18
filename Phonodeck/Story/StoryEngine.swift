@@ -303,6 +303,8 @@ final class StoryEngine {
         building = false
         resuming = false
         thinkingSince = nil
+        saying = false
+        didPart = ""
         forge?.abort()
         ComputerSounds.shared.stopHum()
     }
@@ -311,6 +313,8 @@ final class StoryEngine {
     /// whenever the narrator is quiet.
     func setHandsFree(_ on: Bool) {
         handsFree = on
+        saying = false
+        didPart = ""
         if on {
             narrate = true
             listenIfReady()
@@ -321,40 +325,52 @@ final class StoryEngine {
 
     private func listenIfReady() {
         guard handsFree, let a = adventure, !a.ended, !busy, !dictation.listening, !narrator.speaking, !narrator.preparing else { return }
-        Task { await dictation.start() }
+        let two = Self.doThenSay
+        let cue: ComputerSounds.Cue = two && saying ? .say : .listen
+        Task { await dictation.start(cue: cue, allowEmpty: two) }
     }
 
+    /// Settings > Hands-free > Do, then say (on unless turned off): each spoken turn comes in two
+    /// parts, each with its own chirp. First what you do, then what you say.
+    static var doThenSay: Bool { UserDefaults.standard.object(forKey: "doThenSay") as? Bool ?? true }
+    /// Hands-free, between the two parts: what you do has been heard; now what you say.
+    private(set) var saying = false
+    private var didPart = ""
     /// The two parts of the turn just sent, kept apart for the whole turn: what the player did
     /// (a silent action: the only part that can move them, turn them or pick things up) and what
     /// they said aloud (words to the person they face, never an action).
     private var pendingParts: (did: String, said: String)?
     private var partsThisTurn: (did: String, said: String)?
 
-    /// One small question with no story around it: which part of the message is something the
-    /// player does and which part is words they say aloud. Nil when it can't tell (the message is
-    /// then used as it was).
-    private func splitTurn(_ input: String) async -> (did: String, said: String)? {
-        let prompt = Prompts.splitTurn + "\n\nTHE MESSAGE: " + clip(input, 800) + "\nThe form:"
-        let q0 = Date()
-        let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 300, temperature: 0, repetitionPenalty: 1.05, grammar: JSONGrammar.splitTurn))) ?? ""
-        noteQ("turn", "What do they do, and what do they say?", reply, since: q0)
-        guard let m = JSONExtract.object(reply) else { return nil }
-        func s(_ k: String) -> String {
-            let v = (m[k] as? String ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ").union(.whitespacesAndNewlines))
-            return ["nothing", "none", "n/a", "-"].contains(v.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : v
+    /// What the microphone heard, hands-free. With Do, then say, the first part is held and the
+    /// microphone opens again (a different chirp) for the words; then both go as one turn, the
+    /// action plainly and the words in quotes, so it is clear which is which.
+    func heard(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard handsFree, Self.doThenSay else { send(t); return }
+        // Saying just "nothing" or "skip" leaves that part out.
+        let part = ["nothing", "skip", "pass", "none"].contains(t.lowercased().trimmingCharacters(in: .punctuationCharacters)) ? "" : t
+        if !saying {
+            didPart = part
+            saying = true
+            dictation.clear()
+            // After the acknowledging chirp has played, so the two-note "say" chirp is heard on its own.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(700))
+                self.listenIfReady()
+            }
+            return
         }
-        let did = s("doing"), said = s("saying")
-        return did.isEmpty && said.isEmpty ? nil : (did, said)
-    }
-
-    /// The message as the story shows it: what the player does on the first line, their words in
-    /// quotes on the second.
-    static func showParts(_ p: (did: String, said: String)) -> String {
-        var did = p.did
-        if let last = did.last, !".!?…".contains(last) { did += "." }
-        let said = p.said.isEmpty ? "" : "\"" + p.said + "\""
-        return [did, said].filter { !$0.isEmpty }.joined(separator: "\n")
+        saying = false
+        let act = didPart
+        didPart = ""
+        let words = part.trimmingCharacters(in: CharacterSet(charactersIn: "\"“” "))
+        var turn = act
+        if !turn.isEmpty, let last = turn.last, !".!?".contains(last) { turn += "." }
+        if !words.isEmpty { turn += (turn.isEmpty ? "I say: \"" : " Then I say: \"") + words + "\"" }
+        if turn.isEmpty { dictation.clear(); listenIfReady(); return }
+        pendingParts = (act, words)
+        send(turn)
     }
 
     func narrationFinished() {
@@ -1362,15 +1378,7 @@ final class StoryEngine {
         pendingInput = input   // shown at once, while the Game Master finishes its review
         currentTask = Task {
             defer { busy = false; pendingInput = nil }
-            // Split into what the player does and what they say, shown that way from here on.
-            var turn = input
-            if let p = await splitTurn(input) {
-                guard !Task.isCancelled else { return }
-                pendingParts = p
-                turn = Self.showParts(p)
-                pendingInput = turn
-            }
-            await runTurn(input: turn, hidden: false)
+            await runTurn(input: input, hidden: false)
         }
     }
 
@@ -1427,7 +1435,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z102"
+    static let build = "build 2026-11-18z101"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
