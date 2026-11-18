@@ -1455,7 +1455,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-18z108"
+    static let build = "build 2026-11-18z109"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -1539,7 +1539,7 @@ final class StoryEngine {
         }
         if let p = partsThisTurn {
             prompt += "\n\nTHE PLAYER'S NEW MESSAGE, in two parts:"
-            prompt += "\nACTION (silent, what they physically do; the only part that can move them, turn them to someone or pick something up): " + (p.did.isEmpty ? "(none: they stay as they are, facing who they face)" : clip(p.did, 400))
+            prompt += "\nACTION OR WHAT HAPPENS (silent: what they physically do, or something they say happens, like someone arriving; the only part that can move them, turn them to someone or pick something up): " + (p.did.isEmpty ? "(none: they stay as they are, facing who they face)" : clip(p.did, 400))
             prompt += "\nSAID ALOUD (spoken words to who they face, never an action): " + (p.said.isEmpty ? "(nothing)" : "\"" + clip(p.said, 400) + "\"")
         } else {
             prompt += "\n\nTHE PLAYER'S NEW MESSAGE: " + clip(input, 800)
@@ -2284,10 +2284,10 @@ final class StoryEngine {
             }
             if !looks.isEmpty { lap("lookups") }
         }
-        // Is the player bringing someone new in? Asked only when the message reads like an arrival
-        // or a meeting; the newcomer gets a card before the reply, so nobody else is swapped in.
-        let arrival = #"(?i)\b(in walks?|walks? in|comes? (in|over|up|through)|enters?|arrives?|shows? up|appears?|meet (him|her|them|your|his|the)|introduces? (me|us)|joins? us)\b"#
-        if !hidden, !playerNarrates, input.range(of: arrival, options: .regularExpression) != nil {
+        // Is the player bringing someone new in? Asked every turn (a word list missed "Into the
+        // shop walks a police inspector"); the newcomer gets a card before the reply, so nobody
+        // else is swapped in.
+        if !hidden, !playerNarrates {
             stage = "Is someone new coming in?"
             lapFrom = Date()
             let q0 = Date()
@@ -2305,11 +2305,8 @@ final class StoryEngine {
                 came = addNewcomer(&a, name: (m["name"] as? String) ?? "", role: role, about: input + " " + recent, engaged: true)
                 // A name the message never gave ("Inspector Valmont" for "a police inspector") is
                 // refused: they come in under what they are, "The police inspector".
-                if came == nil {
-                    let stop: Set<String> = ["looking", "who", "with", "from", "for", "that", "in", "at", "to", "and", "of", "searching", "asking"]
-                    let head = role.lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
-                        .split(separator: " ").map(String.init).prefix { !stop.contains($0) }.prefix(3)
-                    if !head.isEmpty { came = addNewcomer(&a, name: "The " + head.joined(separator: " "), role: role, about: input + " " + recent, engaged: true) }
+                if came == nil, let byRole = Self.roleName(role) {
+                    came = addNewcomer(&a, name: byRole, role: role, about: input + " " + recent, engaged: true)
                 }
             }
             // The player said plainly that someone came in: they get a card even when the
@@ -3344,41 +3341,36 @@ final class StoryEngine {
             }
         }
 
-        // Anyone new? Someone the story shows or names who has no card yet gets one.
-        var knownWords: Set<String> = Continuity.wordSet(start.playerName + " " + start.lore.map(\.name).joined(separator: " "))
-        knownWords.formUnion(["mr", "mrs", "miss", "the", "los", "angeles", "god", "broadway", "hollywood", "paris", "london", "new", "york"])
-        var strangerHint = reply.range(of: #"\b(Mr|Mrs|Ms|Miss|Dr)\.? [A-Z]"#, options: .regularExpression) != nil
-            || reply.range(of: Self.someoneNew, options: .regularExpression) != nil
-            || playerSaid.range(of: Self.someoneNew, options: .regularExpression) != nil
-        if !strangerHint {
-            for sentence in PresenceFilter.sentences(reply) {
-                let words = sentence.split(whereSeparator: { !$0.isLetter && $0 != "'" && $0 != "’" }).map(String.init)
-                for w in words.dropFirst() where w.count > 2 && w.first?.isUppercase == true && !knownWords.contains(w.lowercased()) {
-                    strangerHint = true
-                }
-            }
-        }
-        if strangerHint {
-            let nm = await ask("Is anyone new here?", Prompts.rebuildNewPerson, JSONGrammar.yesNo("new", then: "name", 30, and: "role", 60), 70)
-            guard nm != nil else { return }
-            let isNew = ((nm?["new"] as? String) ?? "") == "yes"
-            let nameSaid: String = (nm?["name"] as? String) ?? ""
-            let roleSaid: String = (nm?["role"] as? String) ?? ""
-            asked.append("Is anyone new here? → " + (isNew && nameSaid.count > 2 ? nameSaid : "no"))
-            // A new person has to be there in the telling itself: not only named in someone's
-            // speech, and not a name the player brought up (their own alias, a brother back home).
-            let plainName: String = nameSaid.lowercased().replacingOccurrences(of: #"^(the|a|an) "#, with: "", options: .regularExpression)
-            let telling: String = PresenceFilter.sentences(reply).filter { !$0.contains("\"") && !$0.contains("“") }.joined(separator: " ").lowercased()
-            let playerWords: Set<String> = Continuity.wordSet(start.transcript.filter { $0.role == .player }.map(\.text).joined(separator: " "))
-            let nameWords: [String] = plainName.split(separator: " ").map(String.init).filter { $0.count > 2 }
-            let fromPlayer = !nameWords.isEmpty && nameWords.allSatisfy { playerWords.contains($0) }
-            let present = plainName.count > 2 && telling.contains(plainName) && !fromPlayer
+        // Anyone new? The model lists everyone the moment shows here; anyone not already on file
+        // is put to the model against the cast: one of them, or someone new.
+        let lm = await ask("Who does the moment show?", Prompts.rebuildPeopleShown, JSONGrammar.strings("people", max: 6, chars: 60), 120)
+        guard lm != nil else { return }
+        let shown: [String] = ((lm?["people"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { $0.count > 2 }
+        asked.append("Who does the moment show? → " + (shown.isEmpty ? "nobody" : shown.joined(separator: "; ")))
+        let me1 = Cards.first(start.playerName).lowercased()
+        for who in shown {
+            let l = who.lowercased()
+            if ["you", "the player", "yourself"].contains(l) || (!me1.isEmpty && l.contains(me1)) { continue }
+            // Named as someone on file: nothing to ask.
+            if start.cast.contains(where: { c in l.contains(c.name.lowercased()) || Continuity.wordSet(who).contains(Cards.first(c.name).lowercased()) }) { continue }
+            let castList = start.cast.map { $0.name + roleOf($0) }.joined(separator: "; ")
+            let pm = await ask("Who is " + clip(who, 40) + "?",
+                               "In this moment the story shows \"" + who + "\". Is that one of these people, or someone new?\nPEOPLE: " + castList
+                               + "\nAnswer with their name, or \"someone new\". If someone new, role: what they are, two or three plain words (e.g. 'police inspector'); otherwise empty.",
+                               JSONGrammar.pickOne("who", from: start.cast.map(\.name) + ["someone new"], free: "role", chars: 40), 50)
+            guard pm != nil else { return }
+            guard (pm?["who"] as? String) == "someone new" else { asked.append("Who is " + who + "? → " + ((pm?["who"] as? String) ?? "?")); continue }
+            let roleSaid = ((pm?["role"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            asked.append("Who is " + who + "? → someone new" + (roleSaid.isEmpty ? "" : " (" + roleSaid + ")"))
+            // Their name if the story gives one ("Mr. Elias"), otherwise what they are ("The police inspector").
+            let named = who.first?.isUppercase == true && !["the ", "a ", "an "].contains { who.lowercased().hasPrefix($0) }
+            let name = named ? who : (Self.roleName(roleSaid) ?? Self.roleName(who) ?? "")
             commit { now in
-                guard isNew else { return }
-                if present, let added = addNewcomer(&now, name: nameSaid, role: roleSaid, about: reply, engaged: false) {
+                guard !name.isEmpty else { return }
+                if let added = addNewcomer(&now, name: name, role: roleSaid.isEmpty ? who : roleSaid, about: reply + " " + playerSaid + " " + who, engaged: false) {
                     filed.append("New person card: " + added + (roleSaid.isEmpty ? "" : " (" + roleSaid + ")"))
                 } else {
-                    refused.append(nameSaid + " (not a new person the story shows)")
+                    refused.append(name + " (could not add as someone new)")
                 }
             }
         }
@@ -4259,7 +4251,7 @@ final class StoryEngine {
         // Only talking to one person: nothing about the room, the others or the objects in it is
         // asked again. Just what passed between the two of you.
         if talkThisTurn, !moved, !walkedThisTurn,
-           ["Where are you now?", "Who is with you?", "Is anyone new here?", "What is around?", "What's the background like?",
+           ["Where are you now?", "Who is with you?", "Who does the moment show?", "What is around?", "What's the background like?",
             "Does anything contradict the file?", "Did the weather or the air change?", "What is the room like now?",
             "Where are you in the room?", "How are you, physically?", "Is the goal closer?"].contains(label) {
             return true
@@ -4291,6 +4283,15 @@ final class StoryEngine {
     /// "my hotel room" as a place name: "Your hotel room".
     /// A person the story brings in who has no card yet gets one, and is placed in the scene.
     /// Returns the card's name, or nil when the name is no good or already someone's.
+    /// Someone known only by what they are: "The police inspector" from "police inspector
+    /// looking for a thief". Nil when there is nothing to go on.
+    static func roleName(_ role: String) -> String? {
+        let stop: Set<String> = ["looking", "who", "with", "from", "for", "that", "in", "at", "to", "and", "of", "searching", "asking", "wearing", "holding"]
+        let head = role.lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+            .split(separator: " ").map(String.init).prefix { !stop.contains($0) }.prefix(3)
+        return head.isEmpty ? nil : "The " + head.joined(separator: " ")
+    }
+
     private func addNewcomer(_ a: inout Adventure, name raw: String, role rawRole: String, about text: String, engaged: Bool) -> String? {
         let trim = CharacterSet(charactersIn: " .,\n\"'")
         var name = raw.trimmingCharacters(in: trim)
@@ -4412,11 +4413,6 @@ final class StoryEngine {
         }
         return false
     }
-
-    /// Whether the message goes to a place by name: a going word, then the place's last word
-    /// within a few words ("I returned back into the velvet thorn", "head to the jazz club").
-    /// "A young man with a violin case", "the stranger": someone the story may be bringing in.
-    static let someoneNew = #"(?i)\b(a|an|another|the)\s+(?:[a-z]+\s+){0,2}?(man|woman|stranger|boy|girl|waiter|waitress|guard|clerk|doorman|driver|officer|policeman|musician|singer|pianist|violinist|gentleman|lady|fellow|sailor|couple)\b"#
 
     /// The newcomer a message brings in by description ("a young man with a violin case comes
     /// in"): a name for their card ("The young man") and the rest as their role.

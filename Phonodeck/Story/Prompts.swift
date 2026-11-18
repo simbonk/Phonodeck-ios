@@ -198,8 +198,8 @@ enum Prompts {
     static func rebuildWants(_ who: String) -> String {
         "What does " + who + " want right now, and why (the reason behind what they say and do, true to who they are)? And what did " + who + " learn about the player in this moment, only from what the player said or showed? And did something that matters happen between " + who + " and the player in this moment, because of what the player plainly did or said (a kindness, a slight, a secret shared)? Usually nothing. {\"wants\":\"what they want for themselves, because of what, e.g. 'to show you her sketches, because nobody has asked to see them'\",\"learned\":\"one short line, e.g. 'you are new in town', or empty\",\"between\":\"one short line starting 'You', in the player's own deeds, or empty\"}"
     }
-    static let rebuildNewPerson = """
-    Does the story in this moment show or name a person who is not in PEOPLE IN THE STORY and is not the player? Someone in PEOPLE IN THE STORY called by their role or a description ('the serious bartender', 'the regular') is not new. {"new":"yes or no","name":"their name as the story gives it, or what the story calls them, e.g. 'Mr. Elias' or 'the doorman'; empty if no","role":"who they are in a few words, e.g. 'the boss at the sewing studio'; empty if no"}
+    static let rebuildPeopleShown = """
+    List every person this moment shows here with the player, other than the player: everyone in the scene, including people already known. Use their name if the story gives one, otherwise how the story describes them ('a man in a peaked cap'). Not people only talked about. {"people":["each person, a few words"]}
     """
     /// Asked before the reply, only when the player's message reads like someone arriving or being met.
     static let newcomer = """
@@ -241,7 +241,7 @@ enum Prompts {
     /// Every instruction the grounded engine's short calls see, so an answer that only copies one
     /// back can be thrown out.
     static var groundedInstructions: [String] {
-        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildBody, rebuildNewPerson, newcomer, rebuildGoal, rebuildAnswered, rebuildName, rebuildContradiction, canDo, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
+        [readIntro, lookQuestion, planQuestion, rebuildIntro, rebuildPlace, rebuildTime, rebuildPeople, rebuildSpot, rebuildSound, rebuildPending, rebuildBody, rebuildPeopleShown, newcomer, rebuildGoal, rebuildAnswered, rebuildName, rebuildContradiction, canDo, rebuildCarrying, rebuildThings, rebuildFacts, awayQuestion, buildPlace]
     }
 
     // MARK: Building the world
