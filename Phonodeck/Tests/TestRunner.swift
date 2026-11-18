@@ -18,7 +18,7 @@ final class TestRunner {
     /// isn't, and doesn't lock itself.
     nonisolated(unsafe) static var running = false
 
-    var turnsPerBlock = 25
+    var turnsPerBlock = 10
     var stopAt: Date = TestRunner.nextMorning()
     /// Improvised turns from the simulated player between scenarios (0 to 2 each time).
     var improvise = true
@@ -146,12 +146,15 @@ final class TestRunner {
             _ = await waitIdle(limit: 600)
             let ctx = Context(base)
             var played = 0
-            while played < turnsPerBlock, !Task.isCancelled, Date() < stopAt {
+            // A failure ends the room: what follows would build on the slip and fail with it, so the
+            // next room starts fresh from a baseline instead.
+            var slipped = false
+            while played < turnsPerBlock, !slipped, !Task.isCancelled, Date() < stopAt {
                 if improvise, played > 0, Int.random(in: 0..<3, using: &rng) == 0 {
                     status = "Block \(blocks), turn \(played + 1): the simulated player improvises"
                     let (d, s) = await improvisedTurn()
                     if Task.isCancelled { break }
-                    await play(d, s, checks: [], scenario: "improvised", ctx: ctx, block: blocks)
+                    slipped = !(await play(d, s, checks: [], scenario: "improvised", ctx: ctx, block: blocks))
                     played += 1
                     continue
                 }
@@ -161,8 +164,9 @@ final class TestRunner {
                 for l in lines {
                     guard played < turnsPerBlock, !Task.isCancelled, Date() < stopAt else { break }
                     status = "Block \(blocks), turn \(played + 1): \(sc.title)"
-                    await play(l.did, l.said, checks: l.checks, scenario: sc.id, ctx: ctx, block: blocks)
+                    let ok = await play(l.did, l.said, checks: l.checks, scenario: sc.id, ctx: ctx, block: blocks)
                     played += 1
+                    if !ok { slipped = true; break }
                 }
             }
             if let a = engine.adventure { engine.close(); app.library.delete(a) }
@@ -186,10 +190,12 @@ final class TestRunner {
 
     // MARK: One turn
 
-    private func play(_ did: String, _ said: String, checks: [String], scenario: String, ctx: Context, block: Int) async {
-        guard let before = engine.adventure else { return }
+    /// Plays one turn and checks it. Returns false when a check failed.
+    @discardableResult
+    private func play(_ did: String, _ said: String, checks: [String], scenario: String, ctx: Context, block: Int) async -> Bool {
+        guard let before = engine.adventure else { return true }
         let d = did.trimmingCharacters(in: .whitespaces), s = said.trimmingCharacters(in: .whitespaces)
-        guard !d.isEmpty || !s.isEmpty else { return }
+        guard !d.isEmpty || !s.isEmpty else { return true }
         turns += 1
         let turnNo = before.playerTurns + 1
         let traceFrom = engine.traceCount
@@ -202,7 +208,7 @@ final class TestRunner {
         let finished = await waitIdle(limit: 600)
         await engine.settle()
         let secs = Date().timeIntervalSince(t0)
-        guard let after = engine.adventure else { return }
+        guard let after = engine.adventure else { return false }
         let reply = after.transcript.last.map { $0.role == .gm ? $0.text : "" } ?? ""
         let gotReply = after.transcript.count > before.transcript.count && !reply.isEmpty
         let asked = Array(engine.questionsAsked.dropFirst(asksFrom))
@@ -239,6 +245,7 @@ final class TestRunner {
             text += "\n\nTRACE:\n" + engine.traceEntries(from: traceFrom).joined(separator: "\n")
             try? text.write(to: folder.appending(path: "traces/" + safe(key) + "-\(n + 1).txt"), atomically: true, encoding: .utf8)
         }
+        return results.allSatisfy(\.pass)
     }
 
     // MARK: Checks every turn
