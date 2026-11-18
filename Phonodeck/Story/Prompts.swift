@@ -203,7 +203,7 @@ enum Prompts {
     """
     /// Asked before the reply, only when the player's message reads like someone arriving or being met.
     static let newcomer = """
-    QUESTION: Does the new message bring in, or have the player meet, a person who is not in PEOPLE? {"new":"yes or no","name":"what to call them, from the message, e.g. 'Mr. Elias' or 'her boss'; empty if no","role":"who they are in a few words; empty if no"}
+    QUESTION: Does the new message bring in, or have the player meet, a person who is not in PEOPLE? {"new":"yes or no","name":"their name only if the message gives one, e.g. 'Mr. Elias' or 'her boss'; empty if it gives none (never make one up)","role":"what they are, two or three plain words, e.g. 'police inspector'; empty if no"}
     """
     static let rebuildBody = """
     How is the player, physically, at the end of the moment (wet or dry, warm or cold, tired, hurt, how much they have drunk)? Only what the story shows. {"body":"a few words, e.g. 'soaked and cold, one drink in'"}

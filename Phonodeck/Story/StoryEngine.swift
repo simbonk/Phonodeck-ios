@@ -1435,7 +1435,7 @@ final class StoryEngine {
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
-    static let build = "build 2026-11-17z99"
+    static let build = "build 2026-11-18z100"
 
     /// Waits while a neural voice is still making speech, so background thinking never makes the
     /// narrator stop mid-sentence waiting for the GPU (at most a minute and a half).
@@ -2281,7 +2281,16 @@ final class StoryEngine {
             var came: String? = nil
             let recent: String = a.transcript.suffix(6).map(\.text).joined(separator: " ")
             if (m["new"] as? String) == "yes" {
-                came = addNewcomer(&a, name: (m["name"] as? String) ?? "", role: (m["role"] as? String) ?? "", about: input + " " + recent, engaged: true)
+                let role = (m["role"] as? String) ?? ""
+                came = addNewcomer(&a, name: (m["name"] as? String) ?? "", role: role, about: input + " " + recent, engaged: true)
+                // A name the message never gave ("Inspector Valmont" for "a police inspector") is
+                // refused: they come in under what they are, "The police inspector".
+                if came == nil {
+                    let stop: Set<String> = ["looking", "who", "with", "from", "for", "that", "in", "at", "to", "and", "of", "searching", "asking"]
+                    let head = role.lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+                        .split(separator: " ").map(String.init).prefix { !stop.contains($0) }.prefix(3)
+                    if !head.isEmpty { came = addNewcomer(&a, name: "The " + head.joined(separator: " "), role: role, about: input + " " + recent, engaged: true) }
+                }
             }
             // The player said plainly that someone came in: they get a card even when the
             // question missed it.
@@ -4275,6 +4284,15 @@ final class StoryEngine {
         _ = addLore(&a, e)
         if !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
             a.whereabouts.append(Whereabout(name: name, at: a.location.isEmpty ? "here" : a.location, here: true, engaged: engaged))
+        }
+        // On the map too: they have just come in, so they stand by the door, facing the player.
+        // (Without this, someone new had a card but never a place in the room.)
+        if var r = a.room, r.name.caseInsensitiveCompare(a.location) == .orderedSame, r.named(name) == nil {
+            let p = Thing(kind: .person, name: name)
+            let note = Placer.placePerson(&r, p, zone: r.doors.isEmpty ? .anywhere : .doorCorner)
+            Placer.turn(&r, p.id, toward: "you")
+            r.log.append("enter: " + name + " by the door" + (note.isEmpty ? "" : " (" + note + ")"))
+            a.room = r
         }
         return name
     }
