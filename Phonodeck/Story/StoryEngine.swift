@@ -1128,9 +1128,22 @@ final class StoryEngine {
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
 
-    /// Adds an entry, or updates the one with the same name (the player's own edits always win).
+    /// Everyone the player left behind at the place they are in now is here again (not someone
+    /// who walked out of it). Returns their names.
     @discardableResult
-    /// `lately`: the entry is news from the latest exchange, not a new description of who a person is.
+    static func rejoin(_ a: inout Adventure) -> [String] {
+        var back: [String] = []
+        for i in a.whereabouts.indices where a.whereabouts[i].here == false && a.whereabouts[i].at != "gone out" {
+            guard let at = a.whereabouts[i].leftAt, !at.isEmpty,
+                  at.caseInsensitiveCompare(a.location) == .orderedSame || Continuity.names(place: at, in: a.location) else { continue }
+            a.whereabouts[i].here = true
+            a.whereabouts[i].engaged = false
+            a.whereabouts[i].leftAt = nil
+            back.append(a.whereabouts[i].name)
+        }
+        return back
+    }
+
     /// "walter pruitt" from a model that wrote names in lower case: "Walter Pruitt". A role used
     /// as a name ("the young man") and anything already capitalised stay as they are.
     static func properName(_ n: String) -> String {
@@ -1138,6 +1151,9 @@ final class StoryEngine {
         return n.split(separator: " ").map { w in w.prefix(1).uppercased() + w.dropFirst() }.joined(separator: " ")
     }
 
+    /// Adds an entry, or updates the one with the same name (the player's own edits always win).
+    /// `lately`: the entry is news from the latest exchange, not a new description of who a person is.
+    @discardableResult
     private func addLore(_ a: inout Adventure, _ e: LoreEntry, lately: Bool = false) -> Int {
         var e = e
         if e.kind == .person { e.name = Self.properName(e.name) }
@@ -2186,13 +2202,16 @@ final class StoryEngine {
             // Two people in the look ("to" the one you were with, "also_to" the one you smile at):
             // the model picks which one the player turns to first, and the talk and your face
             // go to them. ("I lean on the counter and smile at the daughter" kept the old keeper.)
-            if let r = read, !r.to.isEmpty, !r.alsoTo.isEmpty, r.to.caseInsensitiveCompare(r.alsoTo) != .orderedSame {
-                func label(_ n: String) -> String {
+            let spellable: (String) -> Bool = { n in n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
+            if let r = read, !r.to.isEmpty, !r.alsoTo.isEmpty, r.to.caseInsensitiveCompare(r.alsoTo) != .orderedSame, spellable(r.to), spellable(r.alsoTo) {
+                func role(_ n: String) -> String {
                     let role = a.cast.first { $0.name.caseInsensitiveCompare(n) == .orderedSame }?.role ?? ""
-                    return n + (role.isEmpty ? "" : " (" + role + ")")
+                    return n + (role.isEmpty ? "" : ", " + role)
                 }
-                let one = label(r.to), two = label(r.alsoTo)
-                let q = "THE PLAYER SAYS: " + clip(input, 300) + "\nQUESTION: Who does the player turn to, look at or speak to first in this message?\nCHOICES: " + one + "; " + two
+                // Choices are the bare names (the grammar drops brackets); who they are goes above.
+                let one = r.to, two = r.alsoTo
+                let q = "THE PLAYER SAYS: " + clip(input, 300) + "\nTHE TWO: " + role(one) + "; " + role(two)
+                    + "\nQUESTION: Who does the player turn to, look at or speak to first in this message?\nCHOICES: " + one + "; " + two
                     + "\nOutput ONLY one JSON object:\n{\"who\":\"one of CHOICES\"}\nThe form:"
                 let q0 = Date()
                 let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 40, temperature: 0.1, repetitionPenalty: 1.0,
@@ -2240,6 +2259,11 @@ final class StoryEngine {
             }
             settle(&a, read: read ?? PlayerRead(), input: input)
             if read == nil { lastRead = "no usable reading; " + lastRead }
+            // Back in a place you left people in ("I go back inside to where I was before"): they
+            // are there again before anything is looked up, or the reply is told "nobody but you".
+            if !a.location.isEmpty, a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame {
+                for n in Self.rejoin(&a) { step("Back with you → " + n) }
+            }
             // Turning away from the person you're talking to is something people announce ("hey
             // Dolores", turning to her). When the reading moved the talk to someone else, the model
             // is asked plainly whether the player did that; if not, the talk stays where it was.
@@ -2527,9 +2551,10 @@ final class StoryEngine {
                 let who = to + (role.isEmpty ? "" : " (" + role + ")")
                 // Two plain pictures to pick from: asked yes or no ("so they end up beside them?"),
                 // the small model said no even to "I walk over to the old barber".
-                let goes = "the player walks over to " + who
-                let stays = "the player stays where they are and talks from there"
-                let q = "THE PLAYER SAID: " + clip(input, 300) + "\nQUESTION: Which is it?\nCHOICES: " + goes + "; " + stays
+                // (Choices stay short and plain: the grammar drops any longer than 60 letters or with brackets.)
+                let goes = "walks over to them"
+                let stays = "stays where they are"
+                let q = "THE PLAYER SAID: " + clip(input, 300) + "\nQUESTION: Does the player walk over to " + who + ", or stay where they are and talk from there?\nCHOICES: " + goes + "; " + stays
                     + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
                 let q0 = Date()
                 let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 48, temperature: 0.1, repetitionPenalty: 1.0,
@@ -3336,7 +3361,7 @@ final class StoryEngine {
                 filed.append("Move the read missed: " + from + " to " + loc)
             }
             // Whoever was left at the place the player has come back to is there again.
-            for i in now.whereabouts.indices where now.whereabouts[i].here == false {
+            for i in now.whereabouts.indices where now.whereabouts[i].here == false && now.whereabouts[i].at != "gone out" {
                 guard let at = now.whereabouts[i].leftAt, !at.isEmpty,
                       at.caseInsensitiveCompare(loc) == .orderedSame || Continuity.names(place: at, in: loc) else { continue }
                 if missed, at.caseInsensitiveCompare(from) == .orderedSame { continue }
@@ -3431,6 +3456,7 @@ final class StoryEngine {
                             now.whereabouts[i].here = false
                             now.whereabouts[i].engaged = false
                             now.whereabouts[i].leftAt = now.location.isEmpty ? nil : now.location
+                            now.whereabouts[i].at = "gone out"
                             filed.append("Out of view: " + c.name)
                         }
                     } else if isListed {
@@ -3577,6 +3603,7 @@ final class StoryEngine {
                         now.whereabouts[i].here = false
                         now.whereabouts[i].engaged = false
                         now.whereabouts[i].at = "gone out"
+                        now.whereabouts[i].leftAt = nil
                         filed.append(c.name + " left")
                         return
                     }
@@ -3726,9 +3753,9 @@ final class StoryEngine {
             if !whereSaid.isEmpty, whereSaid != "stays put", !isSeatMove, let seatID = (adventure ?? start).room?.player?.on,
                let seat = (adventure ?? start).room?.thing(seatID) {
                 // Two pictures, not yes or no: "I get up and step out through the door" got a "no".
-                let up = "the player stands up or walks somewhere"
-                let stay = "the player stays sitting on the " + Fovea.bare(seat.name)
-                let uq = "You were sitting on the " + Fovea.bare(seat.name) + ". From THE PLAYER's words and THE STORY, which is it?\nCHOICES: " + up + "; " + stay
+                let up = "stands up or walks somewhere"
+                let stay = "stays sitting"
+                let uq = "You were sitting on the " + Fovea.bare(seat.name) + ". From THE PLAYER's words and THE STORY, does the player stand up or walk somewhere, or stay sitting on it?\nCHOICES: " + up + "; " + stay
                 let um = await ask("Did you get up?", uq + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: [up, stay]), 40)
                 standsUp = ((um?["answer"] as? String) ?? "") == up
                 asked.append("Did you get up? → " + (standsUp ? "yes" : "no, still on the " + Fovea.bare(seat.name)))
@@ -4179,7 +4206,7 @@ final class StoryEngine {
         // stretching"). The model says whether the player gets up; if so, they stand beside the seat.
         if walk.isEmpty, !body.isEmpty, let meS = r.player, let seatID = meS.on, let seat = r.thing(seatID) {
             let up = "the player stands up"
-            let stay = "the player stays sitting on the " + Fovea.bare(seat.name)
+            let stay = "the player stays sitting"
             let uq = "THE PLAYER JUST SAID: \"" + clip(input, 200) + "\" (their body: " + clip(body, 60) + ")\nThe player is sitting on the " + Fovea.bare(seat.name)
                 + ". QUESTION: Which is it, from the player's words?\nCHOICES: " + up + "; " + stay + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
             let u0 = Date()
@@ -6086,10 +6113,10 @@ extension StoryEngine {
         // "The street outside the barbershop" an indoor bar. One plain question checks it.
         var openAir = str(m1, "where") == "in the open air"
         if !openAir, !RoomBuilder.outdoor.contains(type) {
-            let inside = "indoors, inside a building or vehicle"
-            let outside = "in the open air (a street, a road, a yard, a park, a shore)"
+            let inside = "indoors"
+            let outside = "in the open air"
             let om = await ask("Indoors or outside?", "THE PLACE: " + placeName + (about.isEmpty ? "" : " (" + clip(about, 160) + ")")
-                               + "\nQUESTION: Is THE PLACE indoors or in the open air?\nCHOICES: " + inside + "; " + outside
+                               + "\nQUESTION: Is THE PLACE indoors (inside a building or vehicle) or in the open air (a street, a road, a yard, a park, a shore)?\nCHOICES: " + inside + "; " + outside
                                + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:", JSONGrammar.one("answer", from: [inside, outside]), 40)
             guard !Task.isCancelled else { return }
             if str(om, "answer") == outside { openAir = true }
