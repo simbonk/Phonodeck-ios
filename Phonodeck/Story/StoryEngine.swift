@@ -1128,9 +1128,6 @@ final class StoryEngine {
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
 
-    /// Adds an entry, or updates the one with the same name (the player's own edits always win).
-    @discardableResult
-    /// `lately`: the entry is news from the latest exchange, not a new description of who a person is.
     /// Everyone the player left behind at the place they are in now is here again (not someone
     /// who walked out of it). Returns their names.
     @discardableResult
@@ -1154,6 +1151,9 @@ final class StoryEngine {
         return n.split(separator: " ").map { w in w.prefix(1).uppercased() + w.dropFirst() }.joined(separator: " ")
     }
 
+    /// Adds an entry, or updates the one with the same name (the player's own edits always win).
+    /// `lately`: the entry is news from the latest exchange, not a new description of who a person is.
+    @discardableResult
     private func addLore(_ a: inout Adventure, _ e: LoreEntry, lately: Bool = false) -> Int {
         var e = e
         if e.kind == .person { e.name = Self.properName(e.name) }
