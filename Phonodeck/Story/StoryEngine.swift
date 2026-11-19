@@ -186,6 +186,8 @@ final class StoryEngine {
     private var putDownThisTurn: [String] = []
     /// The look heard the player move within the room this turn ("I walk over to Dolores").
     private var walkedThisTurn = false
+    /// The place someone is in after the story shows them leaving the room ("Everyone now?").
+    static let goneOut = "gone out of the room"
     /// The model said the player stays, though the words looked like going somewhere new.
     @ObservationIgnored private var newPlaceRefused = false
     /// This turn's plan, by person: true when they stay where they are, false when the plan moved them.
@@ -3467,11 +3469,11 @@ final class StoryEngine {
                 let was = mid.whereabouts.first { Cards.card(for: $0, in: mid)?.id == c.id }?.doing ?? ""
                 return "- " + c.name + roleOf(c) + (was.isEmpty ? "" : " (was: " + clip(was, 80) + ")") + (inView.contains { $0.id == c.id } ? "" : " (the story doesn't show them this moment: stays put, same as before)")
             }
-            let q = "THE PLACES: " + (["stays put"] + personZones).joined(separator: "; ") + "\nTHE FACES: " + faceList.joined(separator: "; ")
+            let q = "THE PLACES: " + (["stays put"] + personZones + [Self.goneOut]).joined(separator: "; ") + "\nTHE FACES: " + faceList.joined(separator: "; ")
                 + "\nTHE PEOPLE:\n" + showsList.joined(separator: "\n")
-                + "\n\nAbout each of THE PEOPLE at the end of the moment, only as the story shows it, one object each, in that order. Output ONLY one JSON object:\n{\"people\":[{\"name\":\"one of THE PEOPLE\",\"doing\":\"what they are doing now, a few words: something that goes on (knitting, polishing glasses, watching the fog). A quick action, theirs before (was) or in the story (setting a glass down, nodding), is over once shown: say what they do next, or nothing in particular. Their eyes decide it: eyes on the book is reading; eyes on you means they have paused (the book can still be in their hands, under holding)\",\"expression\":\"their face, one to three words (smiling warmly, tired, attentive): never their voice, hair or hands\",\"holding\":\"same as before unless the story shows them pick something up or put it down; then the thing from the list, or nothing\",\"dressed\":\"yes only if the story shows them putting something on or taking something off; otherwise no\",\"wearing\":\"if dressed is yes, the clothes they wear now (a coat, a hat), never hair, skin or hands; otherwise same\",\"moved\":\"yes only if the story shows them walking somewhere, or someone asked them to come over; otherwise no\",\"where\":\"one of THE PLACES; stays put if they didn't move\",\"facing\":\"one of THE FACES\",\"feels\":\"how they feel about you, one or two words\"}]}\nThe form:"
+                + "\n\nAbout each of THE PEOPLE at the end of the moment, only as the story shows it, one object each, in that order. Output ONLY one JSON object:\n{\"people\":[{\"name\":\"one of THE PEOPLE\",\"doing\":\"what they are doing now, a few words: something that goes on (knitting, polishing glasses, watching the fog). A quick action, theirs before (was) or in the story (setting a glass down, nodding), is over once shown: say what they do next, or nothing in particular. Their eyes decide it: eyes on the book is reading; eyes on you means they have paused (the book can still be in their hands, under holding)\",\"expression\":\"their face, one to three words (smiling warmly, tired, attentive): never their voice, hair or hands\",\"holding\":\"same as before unless the story shows them pick something up or put it down; then the thing from the list, or nothing\",\"dressed\":\"yes only if the story shows them putting something on or taking something off; otherwise no\",\"wearing\":\"if dressed is yes, the clothes they wear now (a coat, a hat), never hair, skin or hands; otherwise same\",\"moved\":\"yes only if the story shows them walking somewhere, or someone asked them to come over; otherwise no\",\"where\":\"one of THE PLACES; stays put if they didn't move; " + Self.goneOut + " only if the story shows them leaving this place\",\"facing\":\"one of THE FACES\",\"feels\":\"how they feel about you, one or two words\"}]}\nThe form:"
             let realHolds: [String] = Array(Set((gridNow?.objects.filter { Rules.rule($0.icon).small }.map { Fovea.bare($0.name) } ?? []) + (gridNow?.people.flatMap(\.holding) ?? []))).sorted()
-            let dm = await ask("Everyone now?", q, JSONGrammar.peopleNow(names: batch.map(\.name), zones: personZones, faces: faceList, holds: realHolds), 60 + 75 * batch.count)
+            let dm = await ask("Everyone now?", q, JSONGrammar.peopleNow(names: batch.map(\.name), zones: personZones + [Self.goneOut], faces: faceList, holds: realHolds), 60 + 75 * batch.count)
             guard let dm else { return }
             var seen: Set<UUID> = []
             for e in ((dm["people"] as? [Any]) ?? []).compactMap({ $0 as? [String: Any] }) {
@@ -3513,6 +3515,14 @@ final class StoryEngine {
                 asked.append(c.name + " now? → " + [doing, face, whereSaid == "stays put" ? "" : whereSaid, facingSaid.isEmpty ? "" : "facing " + facingSaid, wears.isEmpty ? "" : "wearing " + wears]
                     .filter { !$0.isEmpty }.joined(separator: "; "))
                 commit { now in
+                    // Someone the story shows leaving goes off the map (they are no longer here).
+                    if whereSaid == Self.goneOut, let i = now.whereabouts.firstIndex(where: { Cards.card(for: $0, in: now)?.id == c.id }) {
+                        now.whereabouts[i].here = false
+                        now.whereabouts[i].engaged = false
+                        now.whereabouts[i].at = "gone out"
+                        filed.append(c.name + " left")
+                        return
+                    }
                     if doneNow, let i = now.whereabouts.firstIndex(where: { Cards.card(for: $0, in: now)?.id == c.id }), !now.whereabouts[i].doing.isEmpty {
                         filed.append(c.name + " done: " + now.whereabouts[i].doing)
                         now.whereabouts[i].doing = ""
@@ -4101,8 +4111,9 @@ final class StoryEngine {
         // they turned to (or a stool brought over), so they end up seated, never left standing by it.
         if let meNow = r.player, meNow.on == nil, !(walk + " " + body).trimmingCharacters(in: .whitespaces).isEmpty {
             let sq = "THE PLAYER JUST SAID: \"" + clip(input, 200) + "\"" + (body.isEmpty ? "" : " (their body: " + clip(body, 60) + ")") + "\nQUESTION: Does the player sit down this moment?\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
+            let sitAsked = Date()
             let sraw = (try? await llm.complete(system: nil, prompt: sq, options: .init(maxTokens: 24, temperature: 0.1, repetitionPenalty: 1.0, grammar: JSONGrammar.one("answer", from: ["yes", "no"])))) ?? ""
-            noteQ("plan", "Do you sit down?", sraw, since: Date())
+            noteQ("plan", "Do you sit down?", sraw, since: sitAsked)
             if ((JSONExtract.object(sraw)?["answer"] as? String) ?? "").lowercased().hasPrefix("y"), let me1 = r.player {
                 let anchor: Thing? = target.flatMap { r.named($0.name) }
                 let taken = Set(r.people.compactMap(\.on))
