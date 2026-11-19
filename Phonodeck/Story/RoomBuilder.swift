@@ -192,6 +192,19 @@ extension Adventure {
             player.facing = Facing.toward(dx: r.width / 2 - c.x, dy: r.depth / 2 - c.y) ?? .n
             r.things.append(player)
             r.log.append("enter: you come in")
+            // "I come back in and sit on the stool again": the plan was made in the room you were
+            // leaving, so the seat you named is looked for here, and you sit on it.
+            let said = spot.lowercased()
+            if said.hasPrefix("on ") || said.hasPrefix("in ") || said.contains("sit") {
+                let taken = Set(r.people.compactMap(\.on))
+                if let seat = r.objects.first(where: { o in
+                    Rules.seats.contains(o.icon) && !taken.contains(o.id) && said.contains(Fovea.bare(o.name).lowercased())
+                }), let k = r.index(player.id) {
+                    r.things[k].x = seat.x; r.things[k].y = seat.y; r.things[k].on = seat.id
+                    player = r.things[k]
+                    r.log.append("move: you → on " + Fovea.bare(seat.name))
+                }
+            }
         }
         player.name = me
         player.holding = carrying

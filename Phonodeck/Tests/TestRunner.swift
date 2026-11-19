@@ -115,23 +115,31 @@ final class TestRunner {
         // 1. The baseline rooms: each sample story built once.
         var baselines: [Adventure] = []
         for (i, e) in CuratedExperiences.all.enumerated() {
-            guard !Task.isCancelled, Date() < stopAt else { break }
-            status = "Building baseline \(i + 1) of \(CuratedExperiences.all.count): \(e.title)"
-            if let old = engine.adventure { engine.close(); app.library.delete(old) }
-            engine.create(e, player: PlayerDetails(name: "", age: 0, gender: "", interest: ""))
-            let ok = await waitIdle(limit: 1200)
-            await engine.settle()
-            guard ok, let a = engine.adventure, a.transcript.contains(where: { $0.role == .gm }) else {
-                record(Result(block: 0, turn: 0, story: short(e.title), scenario: "build", check: "build-finished", step: "Build the world",
-                              expected: "the opening is told", got: engine.error ?? "it did not finish", evidence: "", pass: false))
-                engine.stopAll()
-                if let a = engine.adventure { app.library.delete(a) }
-                continue
+            // A baseline that fails its own checks (one person instead of two, someone on the map
+            // with no card) would fail every room started from it, so it is built again, up to 3 times.
+            var tries = 0
+            while tries < 3, !Task.isCancelled, Date() < stopAt {
+                tries += 1
+                status = "Building baseline \(i + 1) of \(CuratedExperiences.all.count): \(e.title)" + (tries > 1 ? " (try \(tries))" : "")
+                if let old = engine.adventure { engine.close(); app.library.delete(old) }
+                engine.create(e, player: PlayerDetails(name: "", age: 0, gender: "", interest: ""))
+                let ok = await waitIdle(limit: 1200)
+                await engine.settle()
+                guard ok, let a = engine.adventure, a.transcript.contains(where: { $0.role == .gm }) else {
+                    record(Result(block: 0, turn: 0, story: short(e.title), scenario: "build", check: "build-finished", step: "Build the world",
+                                  expected: "the opening is told", got: engine.error ?? "it did not finish", evidence: "", pass: false))
+                    engine.stopAll()
+                    if let a = engine.adventure { app.library.delete(a) }
+                    continue
+                }
+                let good = buildChecks(a)
+                app.library.delete(a)
+                if good || tries == 3 {
+                    baselines.append(a)
+                    if let d = try? JSONEncoder().encode(a) { try? d.write(to: folder.appending(path: "baseline-\(i + 1).json")) }
+                    break
+                }
             }
-            buildChecks(a)
-            baselines.append(a)
-            app.library.delete(a)
-            if let d = try? JSONEncoder().encode(a) { try? d.write(to: folder.appending(path: "baseline-\(i + 1).json")) }
         }
 
         // 2. Blocks of turns from fresh copies of the baselines, until the stop time.
@@ -307,9 +315,13 @@ final class TestRunner {
     }
 
     /// Checks on a newly built story.
-    private func buildChecks(_ a: Adventure) {
+    /// Checks on a newly built story. Returns false when one failed.
+    @discardableResult
+    private func buildChecks(_ a: Adventure) -> Bool {
         let story = short(a.setup.title)
+        var good = true
         func add(_ check: String, _ step: String, _ want: String, _ got: String, _ pass: Bool) {
+            if !pass { good = false }
             record(Result(block: 0, turn: 0, story: story, scenario: "build", check: check, step: step, expected: want, got: got, evidence: "", pass: pass))
         }
         add("build-player-on-map", "Build the room", "you are on the map", a.room?.player != nil ? "yes" : "no", a.room?.player != nil)
@@ -318,6 +330,10 @@ final class TestRunner {
         add("build-cast-on-map", "Build the room", "everyone with a card is on the map", missing.isEmpty ? "yes" : "missing: " + missing.joined(separator: ", "), missing.isEmpty)
         add("build-has-clock", "What time does the story open?", "an opening time", a.clock.map { "\($0 / 60):" + String(format: "%02d", $0 % 60) } ?? "none", a.clock != nil)
         add("build-two-people", "Build the world (the architect)", "at least two people", "\(a.cast.count)", a.cast.count >= 2)
+        let cards = Set(a.cast.map { $0.name.lowercased() })
+        let loose = a.rooms.flatMap(\.people).filter { $0.kind == .person && !cards.contains($0.name.lowercased()) }.map(\.name)
+        add("build-map-people-have-cards", "Build the room", "everyone on the map has a card", loose.isEmpty ? "yes" : "no card: " + loose.joined(separator: ", "), loose.isEmpty)
+        return good
     }
 
     // MARK: Scenario checks
@@ -359,7 +375,10 @@ final class TestRunner {
             return ("back-in-the-first-room", "Where are you now?", "back in " + (ctx.base.room?.name ?? "the first room"), back ? "back" : "in " + (room?.name ?? "?"), back)
         case "holding", "not-holding":
             let words = ctx.words(arg)
-            let has = have.contains { h in words.contains { h.contains($0) || $0.contains(h) } }
+            // "a pair of tongs" is "the tongs": any word of four letters or more in common counts.
+            let filler: Set<String> = ["pair", "piece", "some", "with", "from", "that", "this"]
+            func key(_ x: String) -> Set<String> { Set(Continuity.wordSet(x).filter { $0.count >= 4 && !filler.contains($0) }) }
+            let has = have.contains { h in words.contains { w in h.contains(w) || w.contains(h) || !key(h).isDisjoint(with: key(w)) } }
             let got = have.isEmpty ? "empty-handed" : "has " + have.joined(separator: ", ")
             return name == "holding"
                 ? ("picked-up", "What do you have?", "you have " + arg, got, has)
