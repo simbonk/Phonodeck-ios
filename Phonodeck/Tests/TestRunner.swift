@@ -270,6 +270,10 @@ final class TestRunner {
         out.append(("full-sentence", "The reply", "ends on a full sentence", ends ? "yes" : "ends \"…" + String(reply.suffix(30)) + "\"", ends))
         let echo = StoryEngine.echoesPrompt(reply)
         out.append(("no-prompt-echo", "The reply", "no prompt text in the reply", echo ? "echoes the prompt" : "none", !echo))
+        // "The player hums": the narration calls you "you", never "the player" (inside quotes is speech).
+        let narration = reply.replacingOccurrences(of: #""[^"]*"|“[^”]*”"#, with: " ", options: .regularExpression)
+        let thirdPerson = narration.range(of: #"(?i)\bthe player\b"#, options: .regularExpression) != nil
+        out.append(("says-you", "The reply", "the narration calls you \"you\"", thirdPerson ? "said \"the player\"" : "yes", !thirdPerson))
         let prev = before.transcript.last { $0.role == .gm }?.text ?? ""
         let same = !prev.isEmpty && StoryEngine.similar(prev, reply)
         out.append(("not-a-repeat", "The reply", "a new reply", same ? "nearly the same as the last one" : "new", !same))

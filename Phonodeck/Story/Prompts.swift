@@ -169,7 +169,7 @@ enum Prompts {
     """
     /// How much story time the moment took, picked from `StoryEngine.timeSteps`.
     static let rebuildTime = """
-    About how much time passed in the story during this moment, from the player's words to the end of the reply? A few words across a bar is a moment; walking to another room or building nearby is a few minutes; a meal or a long talk is half an hour or more; sleeping is overnight. {"passed":"one choice from the list"}
+    About how much time passed in the story during this moment, from the player's words to the end of the reply? A few words across a bar is a moment; walking to another room or building nearby is a few minutes; a meal or a long talk is half an hour or more; sleeping is overnight. Times someone only talks about (\"three hours on the road\") did not pass now. {"passed":"one choice from the list"}
     """
     static let rebuildPeople = """
     Who is with the player at the end of the moment, in the same room or spot? {"here":["names from the list; [] if nobody"]}
@@ -203,7 +203,7 @@ enum Prompts {
     """
     /// Asked before the reply, only when the player's message reads like someone arriving or being met.
     static let newcomer = """
-    QUESTION: Does the new message bring in, or have the player meet, a person who is not in PEOPLE? {"new":"yes or no","name":"their name only if the message gives one, e.g. 'Mr. Elias' or 'her boss'; empty if it gives none (never make one up)","role":"what they are, in the message's own words, two to four words, e.g. 'police inspector' or 'old man with a cane'; empty if no"}
+    QUESTION: Does the new message bring in, or have the player meet, a person who is not in PEOPLE? {"new":"yes or no","name":"their name only if the message gives one, e.g. 'Mr. Elias' or 'her boss'; empty if it gives none (never make one up)","role":"what they are, in the message's own words, two to four words, e.g. 'police inspector' or 'girl selling newspapers'; empty if no"}
     """
     static let rebuildBody = """
     How is the player, physically, at the end of the moment (wet or dry, warm or cold, tired, hurt, how much they have drunk)? Only what the story shows. {"body":"a few words, e.g. 'soaked and cold, one drink in'"}
