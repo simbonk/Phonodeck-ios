@@ -25,10 +25,10 @@ enum Zone: Hashable {
         case .doorCorner: "the corner by the door"
         case .farCorner: "a far corner"
         case .centre: "the centre"
-        case .beside(let n): "beside the \(n)"
-        case .on(let n): "on the \(n)"
-        case .behind(let n): "behind the \(n)"
-        case .at(let n): "at the \(n)"
+        case .beside(let n): "beside " + Zone.the(n)
+        case .on(let n): "on " + Zone.the(n)
+        case .behind(let n): "behind " + Zone.the(n)
+        case .at(let n): "at " + Zone.the(n)
         case .anywhere: "anywhere"
         }
     }
@@ -62,6 +62,11 @@ enum Zone: Hashable {
     }
 
     /// Reads a zone back from the model's words ("by the north wall", "on the bar", "beside Dolores").
+    /// "the stool", but "Earl Hollis" and "The young man" as they are (not "the The young man").
+    static func the(_ n: String) -> String {
+        n.first.map { $0.isUppercase } == true || n.lowercased().hasPrefix("the ") ? n : "the " + n
+    }
+
     static func parse(_ raw: String) -> Zone? {
         let s = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".\"")))
         guard !s.isEmpty else { return nil }
