@@ -2222,7 +2222,7 @@ final class StoryEngine {
                     if Self.similar(read!.takes, held) || Continuity.grounded(held, in: Continuity.wordSet(read!.takes), share: 0.5) { read!.takes = "" }
                 }
             }
-            let spellable: (String) -> Bool ={ n in n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
+            let spellable: (String) -> Bool = { n in n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
             if let r = read, !r.to.isEmpty, !r.alsoTo.isEmpty, r.to.caseInsensitiveCompare(r.alsoTo) != .orderedSame, spellable(r.to), spellable(r.alsoTo) {
                 func role(_ n: String) -> String {
                     let role = a.cast.first { $0.name.caseInsensitiveCompare(n) == .orderedSame }?.role ?? ""
