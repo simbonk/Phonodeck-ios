@@ -64,7 +64,8 @@ enum Zone: Hashable {
     /// Reads a zone back from the model's words ("by the north wall", "on the bar", "beside Dolores").
     /// "the stool", but "Earl Hollis" and "The young man" as they are (not "the The young man").
     static func the(_ n: String) -> String {
-        n.first.map { $0.isUppercase } == true || n.lowercased().hasPrefix("the ") ? n : "the " + n
+        let l = n.lowercased()
+        return n.first.map { $0.isUppercase } == true || l.hasPrefix("the ") || l.hasPrefix("a ") || l.hasPrefix("an ") ? n : "the " + n
     }
 
     static func parse(_ raw: String) -> Zone? {
