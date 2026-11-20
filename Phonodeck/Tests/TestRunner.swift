@@ -398,7 +398,10 @@ final class TestRunner {
             }
             if name == "near" {
                 let dist = RoomGrid.distance(p, o)
-                return ("walked-over", "Did you walk somewhere just now?", "next to " + o.name, String(format: "%.1f squares away", dist), dist <= 1.6)
+                // Across a bar or counter from them (the bartender stays behind it) is as close as you get.
+                let across = dist <= 3.2 && after.room.flatMap { RoomGrid.wayBlocker($0, from: p, to: o) } != nil
+                return ("walked-over", "Did you walk somewhere just now?", "next to " + o.name,
+                        String(format: "%.1f squares away", dist) + (across ? ", across a counter" : ""), dist <= 1.6 || across)
             }
             let ok = RoomGrid.faces(p, o)
             return ("turned-to", "Did you turn to someone else?", "facing " + o.name, ok ? "facing them" : "facing " + p.facing.word, ok)

@@ -580,7 +580,7 @@ struct PresenceFilter {
     private var dropping = false
     /// Inside a quote the reply put in the player's mouth.
     private var voicing = false
-    private var raw = ""
+    private(set) var raw = ""
     /// How many lines were left out for speaking for the player.
     private(set) var spokeForPlayer = 0
     private static let playerVoice = try! NSRegularExpression(
