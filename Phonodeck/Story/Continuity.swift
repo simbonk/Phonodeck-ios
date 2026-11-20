@@ -594,6 +594,8 @@ struct PresenceFilter {
     private(set) var caught: [Absent] = []
     /// How many sentences were left out as copies of earlier replies.
     private(set) var echoes = 0
+    /// Every quoted stretch in the last few replies, as keys.
+    private let spokenBefore: Set<String>
     /// True when so little was left that the reply was let through whole after all.
     private(set) var restored = false
     /// True when so little was left that the reply needs writing again (see `finish(restore:)`).
@@ -634,6 +636,11 @@ struct PresenceFilter {
             if w.count >= 4 { for i in 0...(w.count - 4) { grams.insert(w[i..<(i + 4)].joined(separator: " ")) } }
         }
         runs = grams
+        var quoted = Set<String>()
+        for text in earlier {
+            for q in Self.quotes(text) { let k = Self.key(q); if !k.isEmpty { quoted.insert(k) } }
+        }
+        spokenBefore = quoted
         playerKey = Self.key(player)
     }
 
@@ -759,13 +766,27 @@ struct PresenceFilter {
         // by one scrambled the words, so a copied line read as new speech and went through.)
         let spoken = speech(of: unit, from: quoted)
         let w = Self.words(spoken)
-        guard w.count >= 3 else { return false }
+        // A short answer ("Sam," he says) is still an answer: new when no earlier reply said it.
+        if w.count < 3 {
+            let k = Self.key(spoken)
+            return !k.isEmpty && !spokenBefore.contains(k) && !playerKey.contains(k)
+        }
         // Even a short line ("I'll be right back with—") counts as a copy when a run of four of
         // its words was in an earlier reply.
         if w.count >= 4, (0...(w.count - 4)).contains(where: { runs.contains(w[$0..<($0 + 4)].joined(separator: " ")) }), copied(spoken) >= 0.6 || w.count < 8 {
             return false
         }
         return !said.contains(Self.key(spoken)) && copied(spoken) < 0.6
+    }
+
+    /// Each quoted stretch of a text, on its own.
+    private static func quotes(_ text: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: #""([^"]*)"|“([^”]*)”"#) else { return [] }
+        let ns = text as NSString
+        return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { m in
+            for i in 1...2 where m.range(at: i).location != NSNotFound { return ns.substring(with: m.range(at: i)) }
+            return nil
+        }
     }
 
     /// The part of a sentence inside quotation marks, each quote ending in a space.

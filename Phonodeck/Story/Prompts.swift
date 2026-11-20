@@ -169,7 +169,7 @@ enum Prompts {
     """
     /// How much story time the moment took, picked from `StoryEngine.timeSteps`.
     static let rebuildTime = """
-    About how much time passed in the story during this moment, from the player's words to the end of the reply? A few words across a bar is a moment; walking to another room or building nearby is a few minutes; a meal or a long talk is half an hour or more; sleeping is overnight. Times someone only talks about (\"three hours on the road\") did not pass now. {"passed":"one choice from the list"}
+    About how much time passed in the story during this moment, from the player's words to the end of the reply? A few words across a bar is a moment; walking to another room or building nearby is a few minutes; a meal or a long talk is half an hour or more; sleeping is overnight. When the player's own words say how long it lasts (\"we talk for about an hour\"), that is how long it took. Times someone only talks about (\"three hours on the road\") did not pass now. {"passed":"one choice from the list"}
     """
     static let rebuildPeople = """
     Who is with the player at the end of the moment, in the same room or spot? {"here":["names from the list; [] if nobody"]}
