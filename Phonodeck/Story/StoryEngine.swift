@@ -229,6 +229,8 @@ final class StoryEngine {
     /// A turn the app had to stop because it left the foreground mid-reply; it runs again on return.
     /// Where the player was when the turn began, so the review knows which place people were left in.
     private var placeBeforeTurn = ""
+    /// The look already moved the clock this turn ("a good two hours"): the rebuild does not add more.
+    private var skippedThisTurn = false
     /// Who the player last asked to come along, so "we leave together" brings the right person.
     private var invited = ""
     /// How the grounded engine read the player's last message, for the export.
@@ -1951,6 +1953,7 @@ final class StoryEngine {
         }
         let snapshot = a
         placeBeforeTurn = a.location
+        skippedThisTurn = false
         lastRead = ""
         catchUpNotes = []
         // The opening place is built like any place the player arrives in, when the architect gave
@@ -2052,7 +2055,9 @@ final class StoryEngine {
                   Continuity.wordSet(item).isDisjoint(with: Self.personWords),
                   !a.carrying.contains(where: { Self.similar($0, item) }) else { return false }
             let props = Cards.props(a)
-            let scene: String = ([lastGMBefore, a.bible, Cards.premise(a), Cards.placeCard(a)?.desc ?? ""] + props + a.facts).joined(separator: " ")
+            // The things drawn on the room's map count too ("the ledger (Elias's)" on the table).
+            let mapped: [String] = (a.room?.objects ?? []).map { Zone.short($0.name) }
+            let scene: String = ([lastGMBefore, a.bible, Cards.premise(a), Cards.placeCard(a)?.desc ?? ""] + props + mapped + a.facts).joined(separator: " ")
             guard Continuity.grounded(item, in: Continuity.wordSet(scene)) else { return false }
             a.carrying = Array((a.carrying + [item]).suffix(8))
             pickedNow = item
@@ -2178,6 +2183,7 @@ final class StoryEngine {
                 a.storyTime = Continuity.storyTime(clock: c + hours * 60, old: a.storyTime)
                 adventure?.clock = a.clock
                 adventure?.storyTime = a.storyTime
+                skippedThisTurn = true
                 step("Time skipped → " + Self.span(hours * 60) + ", now " + Continuity.clockText(c + hours * 60))
             }
             if let sky = read?.plan["weather"]?.trimmingCharacters(in: CharacterSet(charactersIn: " .\n")), sky.count > 3, !Self.echoesPrompt(sky),
@@ -2223,25 +2229,47 @@ final class StoryEngine {
                 }
             }
             let spellable: (String) -> Bool = { n in n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
-            if let r = read, !r.to.isEmpty, !r.alsoTo.isEmpty, r.to.caseInsensitiveCompare(r.alsoTo) != .orderedSame, spellable(r.to), spellable(r.alsoTo) {
+            // The message names someone here ("I turn to the old barber") while the look heard
+            // someone else: that one is asked about too, the same way as a second person addressed.
+            func namedHere(_ n: String) -> Bool { a.lore.first { !$0.isPlayer && $0.name.caseInsensitiveCompare(n) == .orderedSame }.map { Cards.mentions($0, in: input) } ?? false }
+            var rival = ""
+            if let r = read, !r.to.isEmpty, r.alsoTo.isEmpty, !namedHere(r.to) {
+                let named = a.whereabouts.filter { $0.here != false && $0.name.caseInsensitiveCompare(r.to) != .orderedSame && namedHere($0.name) }.map(\.name)
+                if named.count == 1 { rival = named[0] }
+            }
+            if let r = read, !r.to.isEmpty, !(r.alsoTo.isEmpty ? rival : r.alsoTo).isEmpty,
+               r.to.caseInsensitiveCompare(r.alsoTo.isEmpty ? rival : r.alsoTo) != .orderedSame, spellable(r.to), spellable(r.alsoTo.isEmpty ? rival : r.alsoTo) {
                 func role(_ n: String) -> String {
                     let role = a.cast.first { $0.name.caseInsensitiveCompare(n) == .orderedSame }?.role ?? ""
                     return n + (role.isEmpty ? "" : ", " + role)
                 }
                 // Choices are the bare names (the grammar drops brackets); who they are goes above.
-                let one = r.to, two = r.alsoTo
-                let q = "THE PLAYER SAYS: " + clip(input, 300) + "\nTHE TWO: " + role(one) + "; " + role(two)
-                    + "\nQUESTION: Who does the player turn to, look at or speak to first in this message?\nCHOICES: " + one + "; " + two
-                    + "\nOutput ONLY one JSON object:\n{\"who\":\"one of CHOICES\"}\nThe form:"
-                let q0 = Date()
-                let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 40, temperature: 0.1, repetitionPenalty: 1.0,
-                                                                                         grammar: JSONGrammar.one("who", from: [one, two])))) ?? ""
-                noteQ("turn", "Who do you turn to first?", raw, since: q0)
+                let one = r.to, two = r.alsoTo.isEmpty ? rival : r.alsoTo
+                // Asked twice, the names in both orders: the small model leans to whichever comes
+                // first ("I walk over to the young apprentice" came back as the barber, listed first).
+                func ask(_ x: String, _ y: String) async -> String {
+                    let q = "THE PLAYER SAYS: " + clip(input, 300) + "\nTHE TWO: " + role(x) + "; " + role(y)
+                        + "\nQUESTION: Who does the player walk to, turn to, look at or speak to first in this message?\nCHOICES: " + x + "; " + y
+                        + "\nOutput ONLY one JSON object:\n{\"who\":\"one of CHOICES\"}\nThe form:"
+                    let q0 = Date()
+                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 40, temperature: 0.1, repetitionPenalty: 1.0,
+                                                                                             grammar: JSONGrammar.one("who", from: [x, y])))) ?? ""
+                    noteQ("turn", "Who do you turn to first?", raw, since: q0)
+                    return (JSONExtract.object(raw)?["who"] as? String) ?? ""
+                }
+                let first = await ask(one, two)
                 guard !Task.isCancelled else { adventure = snapshot; return }
-                if ((JSONExtract.object(raw)?["who"] as? String) ?? "") == two {
-                    read!.alsoTo = r.to
-                    read!.to = r.alsoTo
-                    step("Who do you turn to first? → " + r.alsoTo)
+                let second = await ask(two, one)
+                guard !Task.isCancelled else { adventure = snapshot; return }
+                var chosen = first == second ? first : ""
+                if chosen.isEmpty {
+                    // The two asks disagree: the one the message names by name or role.
+                    if namedHere(two) && !namedHere(one) { chosen = two }
+                }
+                if chosen == two {
+                    if !r.alsoTo.isEmpty { read!.alsoTo = r.to }
+                    read!.to = two
+                    step("Who do you turn to first? → " + two)
                 }
             }
             if let r = read { for l in playerActs(r) { step(l) } }
@@ -3148,6 +3176,15 @@ final class StoryEngine {
             notes.append("THE PLAYER IS MOVING: show them going where they said and what they find when they arrive. Nobody left behind comes along.")
         }
         if playerAsks { notes.append("THE PLAYER ASKED A QUESTION: answer it in the opening lines, plainly and concretely.") }
+        // "What was that?" right after the player told something happening ("A dog barks outside."):
+        // what they told is what happened, so the answer is about that, not a new cause.
+        if playerAsks, input.hasPrefix("I say:"),
+           let prev = a.transcript.last(where: { $0.role != .gm && $0.text != input })?.text {
+            let act = prev.components(separatedBy: "I say:").first?.replacingOccurrences(of: " Then", with: "").trimmingCharacters(in: .whitespaces) ?? ""
+            if act.count >= 8, !act.hasPrefix("I ") {
+                notes.append("WHAT THE PLAYER LAST TOLD HAPPENING (canon; if the question is about it, answer about exactly that): " + clip(act, 120))
+            }
+        }
         if a.left == 0 {
             let feeling = a.setup.feeling.isEmpty ? "the feeling the player came for" : a.setup.feeling
             notes.append("THIS IS THE FINAL REPLY: bring it to a storybook ending that lands \(feeling), right where the player is and with whoever is there, using only what is already in the story. Do not ask what they do next.")
@@ -3481,7 +3518,7 @@ final class StoryEngine {
         guard !Task.isCancelled else { return }
 
         // How long the moment took: the story clock moves by it (unless the player set the time).
-        if start.clock != nil, !playerSaid.isEmpty, Continuity.statedTime(playerSaid, near: start.clock) == nil,
+        if start.clock != nil, !playerSaid.isEmpty, !skippedThisTurn, Continuity.statedTime(playerSaid, near: start.clock) == nil,
            Continuity.laterBy(playerSaid, clock: start.clock) == nil {
             let steps = Self.timeSteps
             let tm = await ask("How long did that take?", Prompts.rebuildTime + "\nTHE LIST: " + steps.map(\.0).joined(separator: "; "),
