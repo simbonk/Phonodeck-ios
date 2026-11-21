@@ -186,6 +186,10 @@ final class StoryEngine {
     private var putDownThisTurn: [String] = []
     /// The look heard the player move within the room this turn ("I walk over to Dolores").
     private var walkedThisTurn = false
+    /// Someone here whom the player's message, told about them and not about the player, shows
+    /// leaving ("The poet says goodnight, puts on a coat and leaves"). The player stays, and after the
+    /// reply that person goes off the map.
+    private var leaverThisTurn = ""
     /// The place someone is in after the story shows them leaving the room ("Everyone now?").
     static let goneOut = "gone out of the room"
     /// The model said the player stays, though the words looked like going somewhere new.
@@ -701,8 +705,8 @@ final class StoryEngine {
                     noteQ("cards", "What time does the story open?", raw, since: q0)
                     guard !Task.isCancelled else { return }
                     let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
-                    if let h = Int((m["hour"] as? String) ?? ""), h >= 0, h <= 23 {
-                        let mm = min(59, max(0, Int((m["minute"] as? String) ?? "") ?? 0))
+                    if let h = Self.number(m, "hour"), h >= 0, h <= 23 {
+                        let mm = min(59, max(0, Self.number(m, "minute") ?? 0))
                         a.clock = h * 60 + mm
                         a.storyTime = Continuity.storyTime(clock: h * 60 + mm, old: a.storyTime)
                         clockFromPremise = true
@@ -772,8 +776,8 @@ final class StoryEngine {
                     noteQ("cards", "How old is " + Cards.first(c.name) + ", and how long here?", araw, since: a0)
                     guard !Task.isCancelled else { return }
                     let am = JSONExtract.object(araw) ?? Self.salvageJSON(araw)
-                    if let age = Int((am["age"] as? String) ?? ""), age >= 16, age <= 100 {
-                        let years = max(0, min(Int((am["years_here"] as? String) ?? "") ?? 0, age - 16))
+                    if let age = Self.number(am, "age"), age >= 16, age <= 100 {
+                        let years = max(0, min(Self.number(am, "years_here") ?? 0, age - 16))
                         // What the setup guessed about their age or years gives way to these numbers.
                         a.facts.removeAll { f in Cards.mentions(c, in: f) && !f.contains(" uses ") && f.range(of: #"(?i)\byears?\b"#, options: .regularExpression) != nil }
                         a.facts.append(c.name + " is \(age) years old.")
@@ -1788,6 +1792,8 @@ final class StoryEngine {
         let named = !read.newPlace.isEmpty && read.newPlace.caseInsensitiveCompare(a.location) != .orderedSame
         let toKnown = read.going != "somewhere new" && knownPlaces.contains { $0.caseInsensitiveCompare(read.going) == .orderedSame }
             && (backInside || Self.goesTo(read.going, in: input))
+        // Someone else leaving, in the player's words: the player stays where they are.
+        if !leaverThisTurn.isEmpty { read.going = ""; read.newPlace = "" }
         let leaving = !read.going.isEmpty && (Continuity.leavesPlace(input) || a.location.isEmpty || named || toKnown)
         // "Let's go", "she takes my arm", "with me": the person the player is with comes along.
         let together = input.range(of: #"(?i)\b(let'?s|we|us|together|with me|join me|come with|and I|and me|takes? (my|your|it|the) (arm|hand)|takes? it|arm in arm|follows? me|lead (her|him|them))\b"#, options: .regularExpression) != nil
@@ -2028,6 +2034,7 @@ final class StoryEngine {
         var foveaTold = ""
         namesThisTurn = []
         putDownThisTurn = []
+        leaverThisTurn = ""
         walkedThisTurn = false
         plannedThisTurn = [:]
         focusThisTurn = ""
@@ -2277,6 +2284,17 @@ final class StoryEngine {
                 read!.to = meant
                 step("Who do you mean? → " + meant + " (the one the story just showed doing that)")
             }
+            // "The poet says goodnight, puts on a coat and leaves": the look read it as the player
+            // going out to the street, so the poet came along and stayed on the map (all four
+            // someone-leaves runs on Nov 21). Told about someone here, with no "I" in it, it is them
+            // leaving: the player stays, and the leaver goes off the map after the reply.
+            if read != nil, let who = Self.someoneLeaves(a, input: input) {
+                leaverThisTurn = who
+                read!.going = ""
+                read!.newPlace = ""
+                read!.spot = ""
+                step("Who is leaving? → " + who + " (not you: you stay)")
+            }
         }
 
         // 2. Settle and look up. Code settles who the player is with and where, then answers each
@@ -2285,6 +2303,7 @@ final class StoryEngine {
         var moment = ""
         var extra: [String] = []
         if let pickedNow { extra.append("THE PLAYER PICKS UP THE " + pickedNow.uppercased() + " and is holding it now: show them doing it in this reply.") }
+        if !leaverThisTurn.isEmpty { extra.append(leaverThisTurn.uppercased() + " LEAVES NOW, as the player wrote: show them going out in this reply. The player stays where they are.") }
         var looked: [Looks.Answer] = []
         if !hidden, !playerNarrates {
             let wasWith: [String] = a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
@@ -2292,7 +2311,8 @@ final class StoryEngine {
             // place called The costume) while the look heard the player stay: the model is asked
             // plainly whether they leave this place before anything is built.
             newPlaceRefused = false
-            if let r = read, r.going.isEmpty, r.newPlace.isEmpty, !a.location.isEmpty, let noun = Self.newPlaceWord(input, in: a) {
+            if !leaverThisTurn.isEmpty { newPlaceRefused = true }
+            if let r = read, leaverThisTurn.isEmpty, r.going.isEmpty, r.newPlace.isEmpty, !a.location.isEmpty, let noun = Self.newPlaceWord(input, in: a) {
                 let q = "THE PLAYER IS IN: " + a.location + "\nTHE PLAYER SAYS: " + clip(input, 300)
                     + "\nQUESTION: Does the player leave " + a.location + " now for another place (\"the " + noun + "\")? Walking over to someone or something here, or turning to them, is no.\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:"
                 let q0 = Date()
@@ -2308,7 +2328,7 @@ final class StoryEngine {
             // Going out through one of this room's doors, and the look missed it ("I step out through
             // the door to outside for some air" read as staying by the door) or gave no place: the
             // model picks from this room's doors, or says the player stays.
-            if var r = read, r.newPlace.isEmpty, r.going.isEmpty || r.going == "somewhere new", !newPlaceRefused, !a.location.isEmpty,
+            if var r = read, leaverThisTurn.isEmpty, r.newPlace.isEmpty, r.going.isEmpty || r.going == "somewhere new", !newPlaceRefused, !a.location.isEmpty,
                let room = a.room, input.range(of: #"(?i)\b(out|outside|leave|leaves|leaving|exit|exits|head|heads|go|goes|step|steps|walk|walks)\b"#, options: .regularExpression) != nil {
                 let ok: (String) -> Bool = { n in n.count > 2 && n.count <= 50 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
                 var doors: [String] = []
@@ -2361,7 +2381,7 @@ final class StoryEngine {
                 guard !Task.isCancelled else { adventure = snapshot; return }
                 let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
                 // Only a clear turn moves the talk: a coin toss (50/50) keeps you with who you were with.
-                let sure = Int((m["sure"] as? String) ?? "") ?? 0
+                let sure = min(100, max(0, Self.number(m, "sure", raw: raw) ?? 0))
                 if sure < 70 {
                     for i in a.whereabouts.indices where a.whereabouts[i].here != false {
                         a.whereabouts[i].engaged = wasWith.contains { $0.caseInsensitiveCompare(a.whereabouts[i].name) == .orderedSame }
@@ -2743,10 +2763,15 @@ final class StoryEngine {
             let needSaid = (read?.plan["needs"] ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .")).lowercased()
             physicalThisTurn = !talk || !(read?.takes ?? "").isEmpty || !(read?.putsDown ?? "").isEmpty || !(read?.spot ?? "").isEmpty
                 || (read?.plan["gets_up"] ?? "") == "yes" || !["", "empty", "none", "nothing", "n/a", "no"].contains(needSaid)
+            // Back in a room you left ("I come back in and sit down on the stool again"): the stored
+            // story's map already moved you in, but this turn's copy still held the room you were
+            // leaving, so the plan looked for the stool outside on the highway and left you standing.
+            if let r = a.room, !a.location.isEmpty, r.name.caseInsensitiveCompare(a.location) != .orderedSame { a.syncGrid() }
             let plan = await planMoment(&a, input: input, walk: spotSaid, to: read?.to ?? "", body: read?.body ?? "", pre: read?.plan ?? [:])
             guard !Task.isCancelled else { adventure = snapshot; return }
             adventure?.room = a.room
             adventure?.spot = a.spot
+            adventure?.whereabouts = a.whereabouts
             if !plan.log.isEmpty { step("Plan → " + plan.log); lastRead += "; plan: " + plan.log }
             lap("plan")
             events.insert(contentsOf: plan.brief, at: 0)
@@ -3778,6 +3803,24 @@ final class StoryEngine {
                 }
             }
         }
+        // Someone the player's own words showed leaving ("The daughter says goodnight, puts on a
+        // coat and leaves") is gone, whatever the question above made of it: the player wrote it.
+        if !leaverThisTurn.isEmpty {
+            let who = leaverThisTurn
+            commit { now in
+                guard let i = now.whereabouts.firstIndex(where: { $0.here != false && (Cards.card(for: $0, in: now)?.name ?? $0.name).caseInsensitiveCompare(who) == .orderedSame }) else { return }
+                now.whereabouts[i].here = false
+                now.whereabouts[i].engaged = false
+                now.whereabouts[i].at = "gone out"
+                now.whereabouts[i].leftAt = nil
+                if var rr = now.room {
+                    rr.things.removeAll { $0.kind == .person && $0.name.caseInsensitiveCompare(who) == .orderedSame }
+                    rr.log.append("leave: " + who)
+                    now.room = rr
+                }
+                filed.append(who + " left (in your words)")
+            }
+        }
         for (c, feels) in feelings {
             asked.append(c.name + " feels? → " + feels)
             commit { now in
@@ -3885,8 +3928,13 @@ final class StoryEngine {
             }
             commit { now in
                 guard var r = now.room, let me = r.player else { return }
-                if whereSaid != "stays put", standsUp, let z = Zone.parse(whereSaid) {
-                    Placer.placePerson(&r, me, zone: z)
+                // Seated, and the answer names another seat ("on the chair" while you sit on the
+                // stool): if that seat is taken or not there, you stay on yours, not stood up beside it.
+                var test = r
+                if whereSaid != "stays put", standsUp, let z = Zone.parse(whereSaid) { Placer.placePerson(&test, me, zone: z) }
+                let keptSeat = isSeatMove && me.on != nil && test.player?.on == nil
+                if whereSaid != "stays put", standsUp, !keptSeat, let z = Zone.parse(whereSaid) {
+                    r = test
                     r.log.append("move: you → " + z.text)
                     let spot: String
                     switch z {
@@ -4293,7 +4341,17 @@ final class StoryEngine {
         guard var r = a.room, let me0 = r.player else { return ([], "") }
         var log: [String] = []
         // 1. You walk over: the look heard a move toward someone who is more than an arm's length away.
-        let faced = Fovea.facing(a)
+        var faced = Fovea.facing(a)
+        // The walk itself names who you go to ("next to the apprentice") while the talk stayed with
+        // someone else: you walk over to them, and it is them you are with now. (Nov 21: "I walk
+        // over to the apprentice" kept the barber and left you 4 m from the apprentice.)
+        if !walk.isEmpty, !to.isEmpty, !faced.contains(where: { $0.name.caseInsensitiveCompare(to) == .orderedSame }),
+           let k = a.whereabouts.firstIndex(where: { $0.here != false && $0.name.caseInsensitiveCompare(to) == .orderedSame }),
+           let c = Cards.card(for: a.whereabouts[k], in: a), Cards.mentions(c, in: walk), r.named(to)?.isPerson == true {
+            for i in a.whereabouts.indices where a.whereabouts[i].here != false { a.whereabouts[i].engaged = i == k }
+            faced = Fovea.facing(a)
+            log.append("you go to " + to)
+        }
         let target = faced.first { $0.name.caseInsensitiveCompare(to) == .orderedSame } ?? faced.first
         // Already there ("at the bar" while on a stool at the bar): no walk, and you stay seated.
         func already(_ z: Zone) -> Bool {
@@ -5200,6 +5258,27 @@ final class StoryEngine {
         return who.isEmpty ? "" : "\nWHO THEY ARE (as the player wrote it): " + String(who.prefix(500))
     }
 
+    /// The person here whom the message shows leaving, when the message is told about them and not
+    /// about the player: no "I", "me", "my" or "we", a leaving word, and someone here named by name
+    /// or role (the first one named, the one the sentence is about). Nil otherwise.
+    static func someoneLeaves(_ a: Adventure, input: String) -> String? {
+        let low = input.lowercased()
+        let mine = #"\b(i|i'm|i've|i'll|i'd|im|me|my|mine|myself|we|we're|let's|lets|us|our)\b"#
+        guard !low.contains("?"), low.range(of: mine, options: .regularExpression) == nil else { return nil }
+        let goes = #"\b(leaves|has left|leaving|exits|departs|goes out|goes home|heads out|heads home|walks out|steps out|is gone)\b"#
+        guard let goesAt = low.range(of: goes, options: .regularExpression) else { return nil }
+        var best: (name: String, at: String.Index)? = nil
+        for w in a.whereabouts where w.here != false {
+            guard let c = Cards.card(for: w, in: a), !c.isPlayer, Cards.mentions(c, in: input) else { continue }
+            var words = [c.name.lowercased(), Cards.first(c.name).lowercased()]
+            let role = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+            if role.count >= 4 { words.append(role) }
+            guard let at = words.filter({ $0.count >= 3 }).compactMap({ low.range(of: $0)?.lowerBound }).min(), at < goesAt.lowerBound else { continue }
+            if best == nil || at < best!.at { best = (c.name, at) }
+        }
+        return best?.name
+    }
+
     static func addressedByDeed(_ a: Adventure, input: String) -> String? {
         let said = Continuity.wordSet(input)
         let namesSomeone = a.cast.contains { c in
@@ -5490,6 +5569,25 @@ final class StoryEngine {
     static func sentences(_ s: String) -> [String] {
         s.replacingOccurrences(of: #"([.!?])\s+(?=[A-Z])"#, with: "$1\n", options: .regularExpression)
             .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count > 3 }
+    }
+
+    /// A number the model gave for a key, however it wrote it: "95" (what the grammar asks for),
+    /// 95 or 95.0 (a bare JSON number), or, with `raw`, a lone number and no object at all ("92").
+    /// The overnight run read {"sure": 95} and a bare 92 as 0, and kept the talk where it was.
+    static func number(_ m: [String: Any], _ key: String, raw: String = "") -> Int? {
+        func whole(_ d: Double) -> Int? { d.isFinite && abs(d) < 1_000_000 ? Int(d.rounded()) : nil }
+        func parse(_ s: String) -> Int? {
+            let t = s.trimmingCharacters(in: CharacterSet(charactersIn: " \n\"'`%"))
+            return Int(t) ?? Double(t).flatMap(whole)
+        }
+        if let n = m[key] as? NSNumber { return whole(n.doubleValue) }
+        if let s = m[key] as? String {
+            if let n = parse(s) { return n }
+            if let r = s.range(of: #"-?\d+"#, options: .regularExpression) { return Int(s[r]) }
+            return nil
+        }
+        if m[key] == nil, !raw.isEmpty { return parse(raw) }
+        return nil
     }
 
     /// Pulls the finished fields out of a JSON object that was cut off (a review that looped or ran
