@@ -258,6 +258,40 @@ enum Continuity {
         return max(1, count)
     }
 
+    /// How long the player says the moment lasts, in minutes ("I talk with him for about an hour",
+    /// "a good two hours", "we pass the next hour or so", "an hour slips by", "I nap for about three
+    /// hours"); nil when they don't say. Only their own telling counts: what they say aloud in
+    /// quotes ("I've been on the road three hours") did not pass now, and nor does anything "ago".
+    static func lastsFor(_ input: String) -> Int? {
+        var told = input.lowercased().replacingOccurrences(of: "’", with: "'")
+        told = told.replacingOccurrences(of: #""[^"]*"|“[^”]*”"#, with: " ", options: .regularExpression)
+        let nums: [String: Int] = ["a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
+                                   "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40,
+                                   "forty-five": 45, "a few": 3, "a couple": 2, "a couple of": 2, "several": 4, "half an": 0]
+        let n = #"(\d{1,3}|a couple of|a couple|a few|several|half an|an|a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty-five|forty)"#
+        let lead = #"(?:for|spend|spends|spent|pass|passes|passed|kill|while away|a good|the next|another|nearly|almost|about|around|roughly|maybe|close to|well over|over)"#
+        let patterns = [
+            // "for about an hour", "a good two hours", "the next hour or so"
+            #"\b"# + lead + #"\s+(?:(?:about|around|nearly|almost|roughly|maybe|a good|the next|another|well over|over|close to)\s+)*"# + n + #"?\s*(hours?|minutes?)\b(?!\s+(ago|away|from now|before|earlier|drive|walk|ride))"#,
+            // "an hour slips by", "two hours go by"
+            #"\b"# + n + #"\s+(hours?|minutes?)\s+(?:or so\s+)?(?:slips?|slid|slide|goes|go|went|drifts?|drifted|passes|pass|passed|roll|rolls|rolled|crawls?|tick|ticks)\b"#,
+        ]
+        for p in patterns {
+            guard let re = try? NSRegularExpression(pattern: p),
+                  let m = re.firstMatch(in: told, range: NSRange(location: 0, length: (told as NSString).length)) else { continue }
+            let ns = told as NSString
+            // "I tell her I've been on the road for three hours": time that passed before, not now.
+            let earlier = ns.substring(to: m.range.location).suffix(40)
+            if earlier.range(of: #"\b(been|was|were|had|tell|tells|told|say|says|said|explain|explains|mention|mentions|the last|the past)\b"#, options: .regularExpression) != nil { continue }
+            let word = m.range(at: 1).location == NSNotFound ? "" : ns.substring(with: m.range(at: 1))
+            let unit = ns.substring(with: m.range(at: 2))
+            let count = word.isEmpty ? 1 : (Int(word) ?? nums[word] ?? 1)
+            if unit.hasPrefix("hour") { return count == 0 ? 30 : min(count, 24) * 60 }
+            return max(1, min(count, 600))
+        }
+        return nil
+    }
+
     /// "9:40 PM".
     static func clockText(_ minutes: Int) -> String {
         let m = ((minutes % 1440) + 1440) % 1440
@@ -561,7 +595,9 @@ enum Continuity {
 ///   player's own message quoted back at them ("Yes I do.").
 struct PresenceFilter {
     /// `also`: what the story calls them while their name is not known ("the bartender").
-    struct Absent { let name: String; let at: String; var also: [String] = [] }
+    /// `background`: in the room, only not the one the player deals with. A line that has them
+    /// act is left out on its own; the rest of the paragraph stays.
+    struct Absent { let name: String; let at: String; var also: [String] = []; var background = false }
 
     let absent: [Absent]
     private let acts: NSRegularExpression?
@@ -594,6 +630,11 @@ struct PresenceFilter {
     private(set) var caught: [Absent] = []
     /// How many sentences were left out as copies of earlier replies.
     private(set) var echoes = 0
+    /// How many lines were left out for having someone in the background act.
+    private(set) var quieted = 0
+    /// Words that make a sentence the answer the player asked for (their own name, when they ask
+    /// if it is remembered): such a sentence is never left out as a copy.
+    private let answerWords: [String]
     /// Every quoted stretch in the last few replies, as keys.
     private let spokenBefore: Set<String>
     /// True when so little was left that the reply was let through whole after all.
@@ -603,7 +644,8 @@ struct PresenceFilter {
 
     /// `absent`: the people known to be somewhere else. `earlier`: the last few replies, whose
     /// sentences must not come back word for word.
-    init(absent: [Absent], earlier: [String] = [], player: String = "") {
+    init(absent: [Absent], earlier: [String] = [], player: String = "", answers: [String] = []) {
+        self.answerWords = answers.map { $0.lowercased() }.filter { $0.count >= 2 }
         var names: [String] = []
         for p in absent {
             names.append(p.name)
@@ -729,7 +771,7 @@ struct PresenceFilter {
         var keep = true
         if dropping {
             keep = false
-        } else if !speaksNew(unit, from: startsInQuote), said.contains(Self.key(unit)) || copied(unit) >= 0.6 || echoesPlayer(unit) {
+        } else if !isAnswer(unit), !speaksNew(unit, from: startsInQuote), said.contains(Self.key(unit)) || copied(unit) >= 0.6 || echoesPlayer(unit) {
             keep = false
             echoes += 1
         } else if voicing && startsInQuote {
@@ -741,9 +783,15 @@ struct PresenceFilter {
             voicing = true
             spokeForPlayer += 1
         } else if caught.count < 3, let who = hit(narrated) {
-            dropping = true
             keep = false
-            if !caught.contains(where: { $0.name == who.name }) { caught.append(who) }
+            if who.background {
+                // Someone here in the background: only their line goes. (Nov 26: "Marcus looks up
+                // from his notebook" took the barber's whole answer with it.)
+                quieted += 1
+            } else {
+                dropping = true
+                if !caught.contains(where: { $0.name == who.name }) { caught.append(who) }
+            }
         }
         if endsParagraph { dropping = false; inQuote = false; voicing = false }
         if keep {
@@ -757,6 +805,14 @@ struct PresenceFilter {
             return "\n\n"
         }
         return ""
+    }
+
+    /// The sentence holds one of the answer words ("Sam," Elias says): it is the answer, even when
+    /// an earlier reply said the same.
+    private func isAnswer(_ unit: String) -> Bool {
+        guard !answerWords.isEmpty else { return false }
+        let w = Set(Self.words(unit))
+        return answerWords.contains { w.contains($0) }
     }
 
     /// The sentence carries new spoken words (an answer in quotes that no earlier reply had):

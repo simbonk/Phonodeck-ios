@@ -229,6 +229,11 @@ final class Narrator: NSObject {
         }
     }
 
+    /// Forgets a sentence still being written (the reply's cut-off last words), so it is never spoken.
+    func dropUnfinished() {
+        buffer = ""
+    }
+
     /// The reply is complete: speak what is left.
     func finish() {
         let rest = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
