@@ -52,6 +52,7 @@ final class AppModel {
     init() {
         #if DEBUG
         PickUpChecks.run()
+        ReadChecks.run()
         #endif
         let store = ModelStore()
         let llm = LLMService(store: store)

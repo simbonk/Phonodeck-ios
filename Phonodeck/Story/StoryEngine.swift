@@ -1096,7 +1096,7 @@ final class StoryEngine {
             let pronouns = str("pronouns", item)
             if kind == .person, !pronouns.isEmpty { a.facts.append("\(name) uses \(pronouns).") }
             let at = addLore(&a, LoreEntry(name: name, kind: kind, desc: str("desc", item), role: str("role", item),
-                                           known: kind != .person || (!a.nameless && (item["known"] as? Bool ?? false)), wants: str("wants", item)))
+                                           known: kind != .person || (!a.nameless && (JSONExtract.flag(item["known"]) ?? false)), wants: str("wants", item)))
             if kind == .person { a.lore[at].privateLife = clip(str("private", item), 240) }
         }
 
@@ -1138,7 +1138,8 @@ final class StoryEngine {
         a.things = Array(props.prefix(6)).map { clip($0, 60) }
         if !a.location.isEmpty, !a.things.isEmpty { a.placeThings[a.location.lowercased()] = a.things }
         checkPronouns(&a, texts: [a.bible, a.scene])
-        a.secrets = (plan["secrets"] as? [String]) ?? []
+        // A list with one odd entry (a number, an object) kept nothing; a lone string was lost too.
+        a.secrets = ((plan["secrets"] as? [Any]) ?? (plan["secrets"].map { [$0] } ?? [])).map { JSONExtract.text($0) }.filter { !$0.isEmpty }
         if !e.beats.isEmpty { a.secrets.append("Story guide: " + e.beats) }
     }
 
@@ -1605,26 +1606,25 @@ final class StoryEngine {
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
                                              options: .init(maxTokens: 400, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
         noteQ("turn", "What did the player do? (the look)", reply, since: q0)
-        guard var m = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !m.isEmpty else { return nil }
-        func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+        guard let got = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !got.isEmpty else { return nil }
+        var m = JSONExtract.plainKeys(got)
+        func s(_ k: String) -> String { JSONExtract.text(m[k]) }
         var read = PlayerRead()
         // Whatever came back is matched to what exists; anything else is "nobody" or "staying".
+        // Names are read loosely: the first or last name, "the" or a title, a comma and a role.
         let to = s("to").lowercased()
-        read.to = cast.first { $0.lowercased() == to } ?? cast.first { n in
-            guard let first = n.lowercased().split(separator: " ").first.map(String.init), first.count >= 3 else { return false }
-            return to.split(whereSeparator: { !$0.isLetter }).map(String.init).contains(first)
-        } ?? ""
+        read.to = Looks.person(to, in: cast)
         // Words alone (no action part): spoken to who the player already faces. Nothing moves,
         // turns, or is picked up or put down; only the ACTION part can do that.
         if let p = partsThisTurn, p.did.isEmpty {
             if let now = Fovea.facing(a).first.flatMap({ w in cast.first { $0.caseInsensitiveCompare(w.name) == .orderedSame } }) { read.to = now }
             for k in ["going", "new_place", "spot", "takes", "puts_down", "body"] { m[k] = "" }
         }
-        let also = s("also_to").lowercased()
-        read.alsoTo = cast.first { $0.lowercased() == also && $0.lowercased() != to && $0 != read.to } ?? ""
-        let going = s("going").lowercased()
-        if going == "somewhere new" { read.going = "somewhere new" }
-        else if let p = places.first(where: { $0.lowercased() == going }) { read.going = p }
+        let also = Looks.person(s("also_to"), in: cast)
+        read.alsoTo = also.caseInsensitiveCompare(read.to) == .orderedSame || also.caseInsensitiveCompare(Looks.person(to, in: cast)) == .orderedSame ? "" : also
+        let going = s("going")
+        if Looks.bare(going) == "somewhere new" { read.going = "somewhere new" }
+        else { read.going = Looks.place(going, in: places) }
         let named = s("new_place")
         if read.going == "somewhere new", named.count > 2, !Self.echoesPrompt(named) { read.newPlace = Self.ownPlace(named) }
         let takes = s("takes")
@@ -1652,15 +1652,7 @@ final class StoryEngine {
         }
         // The grammar asks for "look"; a model that ignores grammars wrote "lookup" (Nov 26: the
         // "who is here" and "where is Dolores" asks were lost that way, and with them the room).
-        let listed: Any? = m["look"] ?? m["lookup"] ?? m["lookups"] ?? m["looks"]
-        let asked: [String] = ((listed as? [Any]) ?? (listed.map { [$0] } ?? [])).compactMap { $0 as? String }
-        for raw in asked {
-            var l = Looks.parse(raw, cards: menu, people: cast)
-            // A bare card name ("Elias Crane") is a look at that card.
-            let bareName = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if l == nil, let c = menu.first(where: { $0.caseInsensitiveCompare(bareName) == .orderedSame }) { l = Looks.Look(kind: .lookAt, target: c) }
-            if let l, !read.looks.contains(l) { read.looks.append(l) }
-        }
+        read.looks = Self.readLooks(m, menu: menu, cast: cast)
         return read
     }
 
@@ -1677,8 +1669,8 @@ final class StoryEngine {
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
                                              options: .init(maxTokens: 200, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.plan(asked: asked)))) ?? ""
         noteQ("turn", "The plan", reply, since: q0)
-        let m = JSONExtract.object(reply) ?? Self.salvageJSON(reply)
-        func s(_ k: String) -> String { (m[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+        let m = JSONExtract.plainKeys(JSONExtract.object(reply) ?? Self.salvageJSON(reply))
+        func s(_ k: String) -> String { JSONExtract.text(m[k]) }
         read.answer = Self.echoesPrompt(s("answer")) || Self.outOfTime(s("answer"), a) ? "" : clip(s("answer"), 260)
         // The plan left a question unanswered (a model that ignores grammars, or an answer too
         // vague to use): one short question asks for the answer alone.
@@ -1689,8 +1681,8 @@ final class StoryEngine {
             let raw = (try? await llm.complete(system: nil, prompt: ask,
                                                options: .init(maxTokens: 80, temperature: 0.2, repetitionPenalty: 1.1, grammar: JSONGrammar.text("answer", chars: 200)))) ?? ""
             noteQ("turn", "What is the answer?", raw, since: q0)
-            let am = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
-            let got: String = ((am["answer"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let am = JSONExtract.plainKeys(JSONExtract.object(raw) ?? Self.salvageJSON(raw))
+            let got: String = JSONExtract.text(am["answer"])
             if got.count >= 6, !Self.echoesPrompt(got), !Self.vagueAnswer(got), !Self.outOfTime(got, a) { read.answer = clip(got, 260) }
         }
         read.beat = Self.echoesPrompt(s("beat")) ? "" : clip(s("beat"), 260)
@@ -5398,8 +5390,15 @@ final class StoryEngine {
     // MARK: What the reply must say
 
     /// "Who is here with us now?", "Who's around tonight?", "So who all is in here with us?".
+    /// Also "Who else is in the room?", "Is anyone else here?", "Who are all these people?".
     static func asksWhoIsHere(_ input: String) -> Bool {
-        input.range(of: #"(?i)\bwho('s|’s)?(\s+(is|are|else|all|exactly|in|right|now|just|still|sitting|staying))*\s+(here|around|with us)\b"#, options: .regularExpression) != nil
+        let patterns = [
+            #"(?i)\bwho('s|’s)?(\s+(is|are|else|all|exactly|in|right|now|just|still|sitting|staying))*\s+(here|around|with us)\b"#,
+            #"(?i)\bwho('s|’s)?(\s+(is|are|else|all|exactly|just|still))*\s+in\s+(the|this)\s+(room|place|bar|shop|house|hall)\b"#,
+            #"(?i)\b(is|are)\s+(there\s+)?(any(one|body)|someone|somebody|other people)\s+else\s+(here|around|in here|in the room)\b"#,
+            #"(?i)\bwho\s+are\s+(all\s+)?(these|those)\s+(people|folks)\b"#,
+        ]
+        return patterns.contains { input.range(of: $0, options: .regularExpression) != nil }
     }
 
     /// Words that mark a sentence as the answer the player asked for, so the copy check keeps it:
@@ -5876,6 +5875,30 @@ final class StoryEngine {
     /// A form value as text, however the model wrote it: "yes" (what the grammar asks for), a JSON
     /// true or false (read as "yes" or "no"), or a bare number. The Nov 26 run wrote
     /// "asks_room": false and "skips_hours": 0, and those fields were dropped as if left empty.
+    /// The lookups the look form asked for, read however the model wrote them: under "look" (what
+    /// the grammar asks for), "lookup", "lookups" or "looks"; a list or one string; "who is here",
+    /// "Who's here?", a bare card name ("Elias Crane"), or a person by first name. Nothing the
+    /// model asked for is dropped for its spelling alone.
+    static func readLooks(_ m: [String: Any], menu: [String], cast: [String]) -> [Looks.Look] {
+        let listed: Any? = m["look"] ?? m["lookup"] ?? m["lookups"] ?? m["looks"]
+        var asked: [String] = ((listed as? [Any]) ?? (listed.map { [$0] } ?? [])).compactMap { $0 as? String }
+        // One string holding several ("who is here, the time") is split at commas and semicolons
+        // when it does not read as one lookup whole.
+        if asked.count == 1, Looks.parse(asked[0], cards: menu, people: cast) == nil {
+            let parts = asked[0].split(whereSeparator: { $0 == "," || $0 == ";" }).map(String.init)
+            if parts.count > 1 { asked = parts }
+        }
+        var out: [Looks.Look] = []
+        for raw in asked {
+            var l = Looks.parse(raw, cards: menu, people: cast)
+            // A bare card name ("Elias Crane", "the lamp") is a look at that card.
+            if l == nil, let c = menu.first(where: { Looks.bare($0) == Looks.bare(raw) }) { l = Looks.Look(kind: .lookAt, target: c) }
+            if l == nil { let p = Looks.person(raw, in: cast); if !p.isEmpty, let c = menu.first(where: { $0.caseInsensitiveCompare(p) == .orderedSame }) { l = Looks.Look(kind: .lookAt, target: c) } }
+            if let l, !out.contains(l) { out.append(l) }
+        }
+        return out
+    }
+
     static func plainValue(_ v: Any?) -> String? {
         if let s = v as? String { return s }
         if let n = v as? NSNumber {
@@ -6130,18 +6153,16 @@ final class StoryEngine {
 
     /// People positions from a model's JSON: [{name, where, doing, heading}].
     static func whereabouts(_ raw: Any?) -> [Whereabout] {
-        ((raw as? [[String: Any]]) ?? []).compactMap { d in
-            func f(_ k: String) -> String { (d[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+        // A single object instead of a list of one is read as that one person.
+        ((raw as? [Any]) ?? (raw.map { [$0] } ?? [])).compactMap { $0 as? [String: Any] }.map { JSONExtract.plainKeys($0) }.compactMap { d in
+            func f(_ k: String) -> String { JSONExtract.text(d[k]) }
             let name = f("name")
             var at = f("where")
             if at.lowercased().hasPrefix("at ") { at = String(at.dropFirst(3)) }
             guard !name.isEmpty, !at.isEmpty else { return nil }
             let heading = f("heading")
             let none = ["", "none", "nowhere", "staying", "n/a", "-"].contains(heading.lowercased())
-            var here = d["with_player"] as? Bool
-            if here == nil, let t = (d["with_player"] as? String)?.lowercased() {
-                here = ["true", "yes"].contains(t) ? true : ["false", "no"].contains(t) ? false : nil
-            }
+            let here = JSONExtract.flag(d["with_player"])
             return Whereabout(name: String(name.prefix(60)), at: String(at.prefix(160)), doing: String(f("doing").prefix(120)),
                               heading: none ? "" : String(heading.prefix(120)), here: here)
         }

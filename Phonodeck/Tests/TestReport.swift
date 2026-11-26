@@ -61,6 +61,13 @@ enum TestReport {
         var turnsPlayed = 0
         for r in results where r.check == "replied" { turnsPlayed += 1; if let i = r.input { seenTurns.insert(i) } }
         if !inputs.isEmpty { out.append("Variety: \(seenTurns.count) different turns out of \(turnsPlayed) played.") }
+        // Code alone, no model: how answers written every which way are read, and what the player
+        // picks up. Run fresh here, so a run on a release build reports them too.
+        PickUpChecks.run()
+        ReadChecks.run()
+        let codeFails = PickUpChecks.failures + ReadChecks.failures
+        out.append("Code checks (no model): " + (codeFails.isEmpty ? "all \(ReadChecks.count) reading checks and the pick-up checks passed." : "**\(codeFails.count) failed.**"))
+        for f in codeFails { out.append("- " + f) }
         out.append("")
 
         // What broke, by cause.

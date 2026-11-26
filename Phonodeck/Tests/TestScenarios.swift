@@ -269,6 +269,18 @@ enum TestScenarios {
 > I go back inside. ||
 ? back
 > || <<Did I miss anything?|What happened while I was gone?>>
+
+# w-who-is-here-loose | Asking who is here in other words | wide
+> I look around the room. || <<Is anyone else here?|Who else is in the room?|Who are all these people?|Is there anybody else around?>>
+? mentions-present
+> I turn to {host}. || <<And who's that over there?|Who's that, then?>>
+? mentions {other}
+
+# w-ask-by-name | Asking after someone by name, then about them | wide
+> I turn to {host}. || <<Where's {other} got to?|What's {other} up to?|Is {other} all right?>>
+? mentions {other}
+> || <<Tell me about {other}.|How long have you known {other}?>>
+? mentions {other}
 """#
 
     struct Line {

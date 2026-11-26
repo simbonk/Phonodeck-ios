@@ -426,4 +426,43 @@ enum JSONExtract {
         guard let obj = object(text), let data = try? JSONSerialization.data(withJSONObject: obj) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
     }
+
+    /// The object's keys in the grammar's one spelling: "Look", "new place" and "new-place" read
+    /// as "look" and "new_place". A model that ignores grammars writes keys any way it likes, and
+    /// a key read strictly loses its answer without a word (Nov 26: "lookup" for "look").
+    static func plainKeys(_ m: [String: Any]) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (k, v) in m {
+            let key = k.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                .replacingOccurrences(of: " ", with: "_").replacingOccurrences(of: "-", with: "_")
+            // The grammar's own spelling wins when both are there.
+            if out[key] == nil || k == key { out[key] = v }
+        }
+        return out
+    }
+
+    /// A text field however the model wrote it: a string, a number, true/false (as "yes"/"no"),
+    /// or a list holding one ("to": ["Dolores"]). Trimmed; empty when there is nothing usable.
+    static func text(_ v: Any?) -> String {
+        func one(_ x: Any?) -> String? {
+            if let s = x as? String { return s }
+            if let n = x as? NSNumber {
+                if CFGetTypeID(n) == CFBooleanGetTypeID() { return n.boolValue ? "yes" : "no" }
+                return n.stringValue
+            }
+            return nil
+        }
+        let s = one(v) ?? (v as? [Any])?.compactMap({ one($0) }).first ?? ""
+        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A yes/no field however the model wrote it: true, "true", "yes", 1. Nil when it is neither.
+    static func flag(_ v: Any?) -> Bool? {
+        if let n = v as? NSNumber { return n.doubleValue != 0 }
+        switch text(v).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".!")) {
+        case "true", "yes", "y", "1": return true
+        case "false", "no", "n", "0": return false
+        default: return nil
+        }
+    }
 }
