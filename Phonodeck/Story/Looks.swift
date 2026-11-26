@@ -67,24 +67,68 @@ enum Looks {
     }
 
     /// The lookup a grammar-locked string stands for, matched to what exists.
+    /// Read loosely, the way a small model writes it: any case, a question mark or quotes around
+    /// it, "who's" for "who is", "look at: the lamp", and a person by first or last name ("where is
+    /// Dolores" for Dolores Reyes). A strict match dropped the lookup without a word, and the reply
+    /// lost what it needed (Nov 26: "who is here" and "where is Dolores").
     static func parse(_ raw: String, cards: [String], people: [String]) -> Look? {
-        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var s = raw.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "?.!:;,\"'`")))
+        s = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        s = s.replacingOccurrences(of: #"(?i)^(who|where|what)(['’]s)\b"#, with: "$1 is", options: .regularExpression)
+        let low = s.lowercased()
+        // "who else is here", "who is around", "who are here": the room, said another way.
+        if low.range(of: #"^who( else)? (is|are)( all| else)? (here|around|in here|in the room|present)$"#, options: .regularExpression) != nil { return Look(kind: .whoIsHere) }
         for k in Kind.allCases where !k.takesTarget {
-            if s.caseInsensitiveCompare(k.rawValue) == .orderedSame { return Look(kind: k) }
+            let r = k.rawValue.lowercased()
+            if low == r || (r.hasPrefix("the ") && low == String(r.dropFirst(4))) { return Look(kind: k) }
         }
         for k in Kind.allCases where k.takesTarget {
-            guard s.lowercased().hasPrefix(k.rawValue + " ") else { continue }
-            let t = String(s.dropFirst(k.rawValue.count + 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let r = k.rawValue.lowercased()
+            guard low.hasPrefix(r + " ") || low.hasPrefix(r + ":") else { continue }
+            let t = String(s.dropFirst(r.count)).trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
             switch k {
             case .lookAt:
-                if let c = cards.first(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) { return Look(kind: k, target: c) }
+                if let c = cards.first(where: { bare($0) == bare(t) }) { return Look(kind: k, target: c) }
+                let p = person(t, in: people)
+                if let c = cards.first(where: { !p.isEmpty && $0.caseInsensitiveCompare(p) == .orderedSame }) { return Look(kind: k, target: c) }
             case _ where k.aboutPerson:
-                if let p = people.first(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) { return Look(kind: k, target: p) }
+                let p = person(t, in: people)
+                if !p.isEmpty { return Look(kind: k, target: p) }
             default:
                 if t.count >= 3 { return Look(kind: k, target: String(t.prefix(40))) }
             }
         }
         return nil
+    }
+
+    /// A name as written for comparing: lowercased, trimmed, without "the" or "a" in front.
+    static func bare(_ s: String) -> String {
+        var l = s.lowercased().trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
+        for a in ["the ", "a ", "an "] where l.hasPrefix(a) { l = String(l.dropFirst(a.count)); break }
+        return l
+    }
+
+    /// Someone in `people` a model's words name: the full name, the first or the last name
+    /// ("Mr. Hale"), with "the", a title or punctuation around it ("Dolores, the bartender").
+    /// Empty when nobody fits, or when the words fit more than one person.
+    static func person(_ raw: String, in people: [String]) -> String {
+        let titles: Set<String> = ["the", "mr", "mrs", "ms", "miss", "dr", "sir", "mister", "madam", "old", "young"]
+        func words(_ s: String) -> [String] { s.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init).filter { !titles.contains($0) } }
+        let said = words(raw)
+        guard !said.isEmpty else { return "" }
+        if let p = people.first(where: { words($0) == said }) { return p }
+        let fits = people.filter { p in
+            let w = words(p).filter { $0.count >= 3 }
+            return !w.isEmpty && said.contains(where: w.contains)
+        }
+        return fits.count == 1 ? fits[0] : ""
+    }
+
+    /// A place in `places` a model's words name, with or without "the" and punctuation.
+    static func place(_ raw: String, in places: [String]) -> String {
+        let b = bare(raw)
+        guard !b.isEmpty else { return "" }
+        return places.first { bare($0) == b } ?? ""
     }
 
     /// Lookups code adds on its own: the person the player turns to, any card the message names,
