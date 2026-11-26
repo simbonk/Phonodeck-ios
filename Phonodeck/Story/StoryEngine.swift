@@ -5393,7 +5393,8 @@ final class StoryEngine {
     /// Also "Who else is in the room?", "Is anyone else here?", "Who are all these people?".
     static func asksWhoIsHere(_ input: String) -> Bool {
         let patterns = [
-            #"(?i)\bwho('s|’s)?(\s+(is|are|else|all|exactly|in|right|now|just|still|sitting|staying))*\s+(here|around|with us)\b"#,
+            // "who's" or a word after "who" is needed: "Who here has a light?" is not asking.
+            #"(?i)\bwho(('s|’s)(\s+(is|are|else|all|exactly|in|right|now|just|still|sitting|staying))*|(\s+(is|are|else|all|exactly|in|right|now|just|still|sitting|staying))+)\s+(here|around|with us)\b"#,
             #"(?i)\bwho('s|’s)?(\s+(is|are|else|all|exactly|just|still))*\s+in\s+(the|this)\s+(room|place|bar|shop|house|hall)\b"#,
             #"(?i)\b(is|are)\s+(there\s+)?(any(one|body)|someone|somebody|other people)\s+else\s+(here|around|in here|in the room)\b"#,
             #"(?i)\bwho\s+are\s+(all\s+)?(these|those)\s+(people|folks)\b"#,

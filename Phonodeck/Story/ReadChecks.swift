@@ -92,7 +92,7 @@ enum ReadChecks {
                   "Is anyone else here?", "Is there anybody else around?", "Who are all these people?"] {
             check(StoryEngine.asksWhoIsHere(q), "asksWhoIsHere(\"\(q)\") should be true")
         }
-        for q in ["Who is she?", "What's your name?", "Where is the door?", "Who was in the war with you?"] {
+        for q in ["Who is she?", "What's your name?", "Where is the door?", "Who was in the war with you?", "Who here has a light?"] {
             check(!StoryEngine.asksWhoIsHere(q), "asksWhoIsHere(\"\(q)\") should be false")
         }
 
