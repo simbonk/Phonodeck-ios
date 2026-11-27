@@ -413,6 +413,22 @@ final class StoryEngine {
         send(turn)
     }
 
+    /// Sends a typed turn with Action (`did`) and Spoken Dialogue (`said`) already cleanly separated
+    /// in a single step — preserving full intent clarity without forcing a two-step modal flow.
+    func send(did: String, said: String) {
+        guard !busy, adventure?.ended == false else { return }
+        let act = did.trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = said.trimmingCharacters(in: CharacterSet(charactersIn: "\"“” \n\t"))
+        var turn = act
+        if !turn.isEmpty, let last = turn.last, !".!?".contains(last) { turn += "." }
+        if !words.isEmpty { turn += (turn.isEmpty ? "I say: \"" : " Then I say: \"") + words + "\"" }
+        guard !turn.isEmpty else { return }
+        saying = false
+        didPart = ""
+        pendingParts = (act, words)
+        send(turn)
+    }
+
     func narrationFinished() {
         ComputerSounds.shared.stopHum()
         listenIfReady()

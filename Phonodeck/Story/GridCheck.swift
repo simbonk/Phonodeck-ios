@@ -12,6 +12,23 @@ import Foundation
 ///   If it passes, the reply flies untouched. Minor spatial slips become a gentle grounding note
 ///   for the next turn rather than mutating or censoring the prose.
 enum GridCheck {
+    /// One visual fixation point in a person's sightline (eyes -> hands/near -> background).
+    /// Computed purely in Swift off `RoomGrid.seen` (< 1 ms, zero extra model calls), giving both
+    /// the storyteller and the room map genuine per-character visual acuity.
+    struct Saccade: Identifiable {
+        enum Kind: String { case eyes, hands, background }
+        let id: Int
+        let kind: Kind
+        /// Concise name for the map UI caption.
+        let shortLabel: String
+        /// Natural phrase for the storyteller prompt.
+        let detail: String
+        /// Coordinate in room metres (for drawing the 1 -> 2 -> 3 gaze bounce path on the map).
+        let x: Double
+        let y: Double
+        let targetID: UUID?
+    }
+
     struct Report {
         /// Reality breaks that genuinely violate the scene (e.g., someone elsewhere acting here,
         /// or narration putting quoted dialogue in the player's mouth).
@@ -27,6 +44,163 @@ enum GridCheck {
             let all = hardIssues + softNotes
             return all.joined(separator: "; ")
         }
+    }
+
+    /// Computes up to three natural eye-fixation bounce points (eyes, hands/near, background)
+    /// strictly from what `viewer` can actually see inside their 120° view cone on the room grid.
+    static func saccades(for viewer: Thing, in room: Room, adventure a: Adventure) -> [Saccade] {
+        var out: [Saccade] = []
+        var usedIDs: Set<UUID> = [viewer.id]
+        if let seat = viewer.on { usedIDs.insert(seat) }
+
+        func isVisible(_ target: Thing) -> Bool {
+            switch RoomGrid.seen(room, from: viewer, to: target) {
+            case .front, .side: return true
+            case .behind, .hidden: return false
+            }
+        }
+
+        func openingPoint(_ o: Opening) -> (Double, Double) {
+            let along = Double(o.at) + Double(max(1, o.width)) / 2.0
+            switch o.wall {
+            case .north: return (along, 0.15)
+            case .south: return (along, Double(room.depth) - 0.15)
+            case .west: return (0.15, along)
+            case .east: return (Double(room.width) - 0.15, along)
+            }
+        }
+
+        func angleToPoint(_ x: Double, _ y: Double) -> Double {
+            let (fx, fy) = viewer.centre
+            let vx = x - fx, vy = y - fy
+            guard vx != 0 || vy != 0 else { return 0 }
+            var ang = atan2(vx, -vy) - viewer.facing.angle
+            while ang > .pi { ang -= 2 * .pi }
+            while ang < -.pi { ang += 2 * .pi }
+            return abs(ang * 180 / .pi)
+        }
+
+        // 1. EYES / FOCUS: primary person in front of `viewer` (preferring the player if viewer is an NPC
+        // facing them), or nearest focal object in view if alone.
+        let visiblePeople = room.people.filter { $0.id != viewer.id && isVisible($0) }
+        let primaryPerson: Thing? = visiblePeople.min { lhs, rhs in
+            let lPlayer = viewer.kind != .player && lhs.kind == .player && RoomGrid.faces(viewer, lhs)
+            let rPlayer = viewer.kind != .player && rhs.kind == .player && RoomGrid.faces(viewer, rhs)
+            if lPlayer != rPlayer { return lPlayer }
+            let lFront = RoomGrid.seen(room, from: viewer, to: lhs) == .front
+            let rFront = RoomGrid.seen(room, from: viewer, to: rhs) == .front
+            if lFront != rFront { return lFront }
+            return RoomGrid.distance(viewer, lhs) < RoomGrid.distance(viewer, rhs)
+        }
+
+        if let p = primaryPerson {
+            usedIDs.insert(p.id)
+            let (px, py) = p.centre
+            if p.kind == .player {
+                let cue = a.body.isEmpty ? "" : " (" + Fovea.clip(a.body, 40) + ")"
+                let spot = p.on != nil ? "seated" : "standing"
+                out.append(Saccade(id: 1, kind: .eyes, shortLabel: "You",
+                                   detail: "you, " + spot + cue, x: px, y: py, targetID: p.id))
+            } else {
+                let w = a.whereabouts.first { $0.name.caseInsensitiveCompare(p.name) == .orderedSame && $0.here != false }
+                let expr = !p.expression.isEmpty ? p.expression : (w?.doing ?? p.doing)
+                let cue = expr.isEmpty ? "" : " (" + Fovea.clip(expr, 42) + ")"
+                out.append(Saccade(id: 1, kind: .eyes, shortLabel: Cards.first(p.name),
+                                   detail: p.name + cue, x: px, y: py, targetID: p.id))
+            }
+        } else if let obj = room.objects
+            .filter({ $0.icon != "rug" && !usedIDs.contains($0.id) && isVisible($0) })
+            .min(by: { RoomGrid.distance(viewer, $0) < RoomGrid.distance(viewer, $1) }) {
+            usedIDs.insert(obj.id)
+            let (ox, oy) = obj.centre
+            let b = Fovea.bare(obj.name)
+            out.append(Saccade(id: 1, kind: .eyes, shortLabel: b, detail: b, x: ox, y: oy, targetID: obj.id))
+        }
+
+        // 2. HANDS / IMMEDIATE: something held or within arm's reach in front of `viewer` or the person they face.
+        let nearSmall = room.objects
+            .filter { $0.icon != "rug" && !usedIDs.contains($0.id) && Rules.rule($0.icon).small && isVisible($0) && RoomGrid.distance(viewer, $0) <= 2.1 }
+            .min { RoomGrid.distance(viewer, $0) < RoomGrid.distance(viewer, $1) }
+        if let item = nearSmall {
+            usedIDs.insert(item.id)
+            let (ix, iy) = item.centre
+            let b = Fovea.bare(item.name)
+            let onThing = item.on.flatMap { room.thing($0) }.map { " on " + Fovea.bare($0.name) } ?? ""
+            out.append(Saccade(id: out.count + 1, kind: .hands, shortLabel: b,
+                               detail: b + onThing, x: ix, y: iy, targetID: item.id))
+        } else if let held = viewer.holding.first, !held.isEmpty {
+            let (vx, vy) = viewer.centre
+            let hx = min(Double(room.width) - 0.25, max(0.25, vx + Double(viewer.facing.dx) * 0.45))
+            let hy = min(Double(room.depth) - 0.25, max(0.25, vy + Double(viewer.facing.dy) * 0.45))
+            let b = Fovea.bare(held)
+            out.append(Saccade(id: out.count + 1, kind: .hands, shortLabel: b,
+                               detail: b + " in hand", x: hx, y: hy, targetID: nil))
+        } else if let p = primaryPerson {
+            let carried = p.kind == .player ? a.carrying.first : p.holding.first
+            if let item = carried, !item.isEmpty {
+                let (px, py) = p.centre
+                let b = Fovea.bare(item)
+                let owner = p.kind == .player ? "your " : Cards.first(p.name) + "'s "
+                out.append(Saccade(id: out.count + 1, kind: .hands, shortLabel: b,
+                                   detail: owner + b, x: px, y: py, targetID: p.id))
+            }
+        }
+
+        // 3. BACKGROUND / PERIPHERAL: another visible person deeper in the cone, a visible window/door,
+        // or a distinct background object across the room.
+        if let other = visiblePeople
+            .filter({ !usedIDs.contains($0.id) })
+            .min(by: { RoomGrid.distance(viewer, $0) < RoomGrid.distance(viewer, $1) }) {
+            usedIDs.insert(other.id)
+            let (ox, oy) = other.centre
+            let w = a.whereabouts.first { $0.name.caseInsensitiveCompare(other.name) == .orderedSame && $0.here != false }
+            let doing = w?.doing ?? other.doing
+            let cue = doing.isEmpty ? "" : " (" + Fovea.clip(doing, 42) + ")"
+            let label = other.kind == .player ? "You" : Cards.first(other.name)
+            let who = other.kind == .player ? "you" : other.name
+            out.append(Saccade(id: out.count + 1, kind: .background, shortLabel: label,
+                               detail: "further in view, " + who + cue, x: ox, y: oy, targetID: other.id))
+        } else {
+            let visibleWindow = room.windows.first { w in
+                let (wx, wy) = openingPoint(w)
+                return angleToPoint(wx, wy) <= 100
+            }
+            let visibleDoor = room.doors.first { d in
+                let (dx, dy) = openingPoint(d)
+                return angleToPoint(dx, dy) <= 100
+            }
+            if let win = visibleWindow {
+                let (wx, wy) = openingPoint(win)
+                let viewText = win.view.isEmpty ? "the window" : "the window (" + Fovea.clip(win.view, 45) + ")"
+                out.append(Saccade(id: out.count + 1, kind: .background, shortLabel: "window",
+                                   detail: viewText, x: wx, y: wy, targetID: nil))
+            } else if let door = visibleDoor {
+                let (dx, dy) = openingPoint(door)
+                let toText = door.leadsTo.isEmpty ? "the door" : "the door to " + Fovea.bare(door.leadsTo)
+                out.append(Saccade(id: out.count + 1, kind: .background, shortLabel: door.leadsTo.isEmpty ? "door" : Fovea.bare(door.leadsTo),
+                                   detail: toText, x: dx, y: dy, targetID: nil))
+            } else if let farObj = room.objects
+                .filter({ $0.icon != "rug" && !usedIDs.contains($0.id) && isVisible($0) && RoomGrid.distance(viewer, $0) >= 1.8 })
+                .max(by: { RoomGrid.distance(viewer, $0) < RoomGrid.distance(viewer, $1) }) {
+                let (fx, fy) = farObj.centre
+                let b = Fovea.bare(farObj.name)
+                out.append(Saccade(id: out.count + 1, kind: .background, shortLabel: b,
+                                   detail: b + " across the room", x: fx, y: fy, targetID: farObj.id))
+            }
+        }
+
+        return out
+    }
+
+    /// Formats a character's 3-point sightline into one compact, optional grounding cue (~35 tokens).
+    static func saccadeLine(for viewer: Thing, in room: Room, adventure a: Adventure) -> String {
+        let pts = saccades(for: viewer, in: room, adventure: a)
+        guard pts.count >= 2 else { return "" }
+        let parts = pts.map { s -> String in
+            let tag = s.kind == .eyes ? "focus" : s.kind == .hands ? "hands/near" : "background"
+            return "(\(s.id)) \(tag): \(s.detail)"
+        }
+        return "From \(viewer.name)'s eyes (what's actually in their sightline; weave a glance in only if it fits): " + parts.joined(separator: "; ") + "."
     }
 
     /// Plain-English spatial grounding read off the room grid.
@@ -54,7 +228,9 @@ enum GridCheck {
             var pos = "You are " + spot
             if me.on != nil { pos += " (already seated)" }
 
+            var partnerThing: Thing? = nil
             if let f = focused.first, let t = r.named(f.name) {
+                partnerThing = t
                 if let g = Fovea.gridSpot(a, f.name) {
                     pos += "; " + f.name + " is " + g
                 }
@@ -80,6 +256,11 @@ enum GridCheck {
                 }
             }
             lines.append(pos + ".")
+
+            if let t = partnerThing {
+                let cue = saccadeLine(for: t, in: r, adventure: a)
+                if !cue.isEmpty { lines.append(cue) }
+            }
 
             if !a.carrying.isEmpty {
                 lines.append("You have with you: " + a.carrying.prefix(6).joined(separator: ", ") + ".")

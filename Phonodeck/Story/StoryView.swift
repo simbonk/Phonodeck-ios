@@ -6,10 +6,13 @@ import UIKit
 struct StoryView: View {
     @Environment(AppModel.self) private var app
     @State private var input = ""
-    /// Settings > Hands-free > Do, then say: typed turns come in two steps too.
+    @State private var actionInput = ""
+    @State private var sayInput = ""
+    /// Settings > Hands-free > Do, then say: keeps action and spoken dialogue cleanly separated.
     @AppStorage("doThenSay") private var doThenSay = true
     /// The story (the Phonodeck mark), the world (globe) and the live log, as three icons along the top.
     enum Tab: String, CaseIterable { case story, world, log }
+    enum ComposerField: Hashable { case single, action, say }
     @State private var tab: Tab = .story
     /// The finished story the next part (Continue) is being set up from.
     @State private var continuing: Adventure?
@@ -18,7 +21,7 @@ struct StoryView: View {
     @State private var nearBottom = true
     /// Story text size in points. Defaults a little under body size so more of a passage fits on an iPhone.
     @AppStorage("storyTextSize") private var textSize: Double = 15
-    @FocusState private var typing: Bool
+    @FocusState private var focused: ComposerField?
 
     private var engine: StoryEngine { app.engine }
     private var dictation: Dictation { app.dictation }
@@ -108,7 +111,7 @@ struct StoryView: View {
             ForEach(Tab.allCases, id: \.self) { t in
                 Button {
                     withAnimation(.snappy(duration: 0.25)) { tab = t }
-                    typing = false
+                    focused = nil
                 } label: {
                     VStack(spacing: 5) {
                         Group {
@@ -323,44 +326,29 @@ struct StoryView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: Composer: the reply box, then Undo, Hands-free and Send
+    // MARK: Composer: unified Action / Say card, Undo, Hands-free and Send
 
     private func composer(_ a: Adventure) -> some View {
         VStack(spacing: 8) {
             if engine.handsFree { handsFreeStatus }
             if let e = dictation.error { Text(e).font(.footnote).foregroundStyle(Theme.warn) }
-            // Typing in two steps: what you did, held while you give your words.
-            if twoStepTyping, engine.saying {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(engine.heldDo.isEmpty ? "You do nothing." : engine.heldDo)
-                        .italic().foregroundStyle(Theme.dim).lineLimit(2)
-                    Spacer(minLength: 4)
-                    Button("Edit") { input = engine.editDo(); typing = true }
-                        .font(.footnote)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 4)
-            }
-            TextField(twoStepTyping ? "" : (engine.handsFree ? "Say \"\(Dictation.sendPhrase)\" to send" : "What do you do?"), text: $input, axis: .vertical)
-                .lineLimit(1...5)
-                .focused($typing)
-                .submitLabel(engine.saying ? .send : .next)
-                .padding(12)
-                .overlay(alignment: .topLeading) {
-                    if twoStepTyping, input.isEmpty {
-                        WobblyPrompt(text: engine.saying ? "What do you say?" : "What do you do, or what happens?")
-                            .padding(12)
-                            .allowsHitTesting(false)
+            if splitTyping {
+                targetStrip(a)
+                unifiedInputCard
+            } else {
+                TextField(engine.handsFree ? "Say \"\(Dictation.sendPhrase)\" to send" : "What do you do or say?", text: $input, axis: .vertical)
+                    .lineLimit(1...5)
+                    .focused($focused, equals: .single)
+                    .submitLabel(.send)
+                    .padding(12)
+                    .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(focused == .single ? Theme.accent.opacity(0.6) : Theme.line))
+                    .onChange(of: input) { _, v in
+                        guard !engine.handsFree, v.contains("\n") else { return }
+                        input = v.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+                        sendSingle()
                     }
-                }
-                .background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.line))
-                // Return moves on: from what you do to what you say, then sends.
-                .onChange(of: input) { _, v in
-                    guard twoStepTyping, v.contains("\n") else { return }
-                    input = v.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-                    submitStep()
-                }
+            }
             HStack(spacing: 8) {
                 Button { engine.undo() } label: {
                     Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 40)
@@ -376,19 +364,18 @@ struct StoryView: View {
                     .buttonStyle(.bordered)
                 } else {
                     Button {
-                        if twoStepTyping { submitStep(); return }
-                        typing = false
-                        if dictation.listening { dictation.stop(send: true) } else { ComputerSounds.shared.play(.sent); engine.send(input) }
-                        input = ""
+                        if splitTyping {
+                            sendSplit()
+                        } else {
+                            sendSingle()
+                        }
                     } label: {
-                        Text(twoStepTyping && !engine.saying ? "Next" : "Send").bold().frame(minWidth: 70, minHeight: 40)
+                        Text("Send").bold().frame(minWidth: 70, minHeight: 40)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.accent)
                     .foregroundStyle(Theme.onAccent)
-                    .disabled(twoStepTyping
-                              ? engine.saying && engine.heldDo.isEmpty && input.trimmingCharacters(in: .whitespaces).isEmpty
-                              : input.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(splitTyping ? !hasSplitText : input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -398,21 +385,151 @@ struct StoryView: View {
         .background(Theme.bg.overlay(alignment: .top) { Rectangle().fill(Theme.line).frame(height: 1) })
     }
 
-    /// Typing with Do, then say (hands-free has its own two chirps instead).
-    private var twoStepTyping: Bool { doThenSay && !engine.handsFree }
+    /// Subtle live strip above the composer showing who you're facing and letting you turn to
+    /// anyone else in the room with a single tap.
+    @ViewBuilder
+    private func targetStrip(_ a: Adventure) -> some View {
+        let here = a.whereabouts.filter { $0.here != false }
+        if !here.isEmpty {
+            let active = here.first { $0.engaged == true }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(here, id: \.name) { w in
+                        let isActive = w.name == active?.name
+                        let label: String = {
+                            let shown = a.nameless ? Continuity.unnamed(w.name, in: a) : w.name
+                            return shown.caseInsensitiveCompare(w.name) == .orderedSame ? Cards.first(w.name) : shown
+                        }()
+                        Button {
+                            if !isActive {
+                                actionInput = "I turn to " + label
+                            }
+                            focused = .say
+                        } label: {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(isActive ? Theme.accent : Theme.dim.opacity(0.4))
+                                    .frame(width: 6, height: 6)
+                                Text(isActive ? "With " + label : "Turn to " + label)
+                                    .font(.caption.weight(isActive ? .semibold : .regular))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .foregroundStyle(isActive ? Theme.fg : Theme.dim)
+                            .background(isActive ? Theme.accent.opacity(0.14) : Theme.panel, in: Capsule())
+                            .overlay(Capsule().stroke(isActive ? Theme.accent.opacity(0.45) : Theme.line, lineWidth: 0.75))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(engine.busy)
+                    }
+                }
+            }
+        }
+    }
 
-    /// Return or Next/Send while typing in two steps: hold what you do, or send the turn.
-    private func submitStep() {
-        let last = engine.saying
-        if last && engine.heldDo.isEmpty && input.trimmingCharacters(in: .whitespaces).isEmpty { return }
-        if last { ComputerSounds.shared.play(.sent); typing = false }
-        engine.part(input)
+    /// Calm, unified single-card composer with an optional Action line above the primary Say line:
+    /// keeps physical action and spoken words cleanly separated for the on-device model while letting
+    /// everyday conversation send in one tap with zero modal steps or distracting animations.
+    private var unifiedInputCard: some View {
+        let activeBorder = focused == .action || focused == .say
+        return VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: "figure.walk")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(focused == .action || !actionInput.isEmpty ? Theme.accent : Theme.dim)
+                    .frame(width: 16)
+                TextField("Action, look, or movement (optional)", text: $actionInput, axis: .vertical)
+                    .font(.subheadline)
+                    .italic(!actionInput.isEmpty)
+                    .lineLimit(1...3)
+                    .focused($focused, equals: .action)
+                    .submitLabel(.next)
+                    .onChange(of: actionInput) { _, v in
+                        guard v.contains("\n") else { return }
+                        actionInput = v.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+                        focused = .say
+                    }
+                if !actionInput.isEmpty {
+                    Button { actionInput = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Theme.dim)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear action")
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Rectangle()
+                .fill(Theme.line.opacity(0.65))
+                .frame(height: 0.5)
+                .padding(.horizontal, 10)
+
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: "quote.bubble")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(focused == .say || !sayInput.isEmpty ? Theme.accent : Theme.dim)
+                    .frame(width: 16)
+                TextField("Say something…", text: $sayInput, axis: .vertical)
+                    .font(.body)
+                    .lineLimit(1...4)
+                    .focused($focused, equals: .say)
+                    .submitLabel(.send)
+                    .onChange(of: sayInput) { _, v in
+                        guard v.contains("\n") else { return }
+                        sayInput = v.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+                        sendSplit()
+                    }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(activeBorder ? Theme.accent.opacity(0.6) : Theme.line, lineWidth: activeBorder ? 1.2 : 1)
+        )
+        .animation(.easeOut(duration: 0.15), value: activeBorder)
+    }
+
+    /// Typed mode with Action + Say cleanly separated in one card (hands-free keeps its own voice chirps).
+    private var splitTyping: Bool { doThenSay && !engine.handsFree }
+
+    private var hasSplitText: Bool {
+        !actionInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !sayInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func sendSplit() {
+        guard hasSplitText, !engine.busy else { return }
+        ComputerSounds.shared.play(.sent)
+        focused = nil
+        let act = actionInput
+        let words = sayInput
+        actionInput = ""
+        sayInput = ""
+        engine.send(did: act, said: words)
+    }
+
+    private func sendSingle() {
+        focused = nil
+        if dictation.listening {
+            dictation.stop(send: true)
+        } else {
+            let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !engine.busy else { return }
+            ComputerSounds.shared.play(.sent)
+            engine.send(trimmed)
+        }
         input = ""
     }
 
     private var handsFreeButton: some View {
         HandsFreeButton(on: engine.handsFree, listening: dictation.listening) {
-            typing = false
+            focused = nil
             engine.setHandsFree(!engine.handsFree)
         }
     }
@@ -490,35 +607,5 @@ private struct SupportCard: View {
             .navigationTitle("A quick check-in")
             .navigationBarTitleDisplayMode(.inline)
         }
-    }
-}
-
-
-/// The typing prompt for a two-step turn ("What do you do?", then "What do you say?"): its
-/// letters shimmer and bob gently so it is clear which step you are on. Gone once you type.
-struct WobblyPrompt: View {
-    let text: String
-    @Environment(\.accessibilityReduceMotion) private var still
-
-    var body: some View {
-        Group {
-            if still {
-                Text(text).foregroundStyle(Theme.accent)
-            } else {
-                TimelineView(.animation) { ctx in
-                    let t = ctx.date.timeIntervalSinceReferenceDate
-                    HStack(spacing: 0) {
-                        ForEach(Array(text.enumerated()), id: \.offset) { i, ch in
-                            Text(String(ch))
-                                .offset(y: sin(t * 5 + Double(i) * 0.6) * 1.6)
-                                .opacity(0.6 + 0.4 * (0.5 + 0.5 * sin(t * 3 + Double(i) * 0.45)))
-                        }
-                    }
-                    .foregroundStyle(Theme.accent)
-                }
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(text)
     }
 }

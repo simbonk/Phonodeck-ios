@@ -9,6 +9,8 @@ struct RoomMapView: View {
     @Environment(AppModel.self) private var app
     /// The room shown (nil: the one you are in).
     @State private var shownID: UUID?
+    /// Whose eyes the map is looking through (nil: your eyes).
+    @State private var povID: UUID?
     @State private var editing: Thing?
     /// The cards kept open under the map, by name ("you" for the player), newest first.
     @AppStorage("pinnedThings") private var pinnedRaw = "you"
@@ -39,14 +41,18 @@ struct RoomMapView: View {
         } else if let a = app.engine.adventure, !a.rooms.isEmpty {
             let here = a.room
             let room = a.rooms.first { $0.id == (shownID ?? here?.id) } ?? here ?? a.rooms[0]
+            let pov = activePOV(in: room)
             VStack(alignment: .leading, spacing: 8) {
                 header(a, room: room, here: here)
                 ticker(a, room)
-                map(room, live: room.id == here?.id)
+                perspectiveBar(a, room: room, pov: pov)
+                map(a, room: room, live: room.id == here?.id, pov: pov)
                     .onAppear { looks = Dictionary(room.things.map { ($0.id, $0.look) }, uniquingKeysWith: { a, _ in a }) }
                     .onChange(of: room.things.map(\.look)) { _, _ in spark(room) }
                     .onAppear { track(a, room, mark: false) }
                     .onChange(of: signature(a, room)) { _, _ in track(a, room, mark: true) }
+                    .onChange(of: room.id) { _, _ in povID = nil }
+                sightlineBar(a, room: room, pov: pov)
                 pinnedCards(a, room)
             }
             .padding(10)
@@ -199,24 +205,131 @@ struct RoomMapView: View {
         }
     }
 
+    // MARK: Perspective (Look through anyone's eyes)
+
+    private func activePOV(in room: Room) -> Thing? {
+        if let id = povID, let found = room.people.first(where: { $0.id == id }) { return found }
+        return room.player ?? room.people.first
+    }
+
+    private func displayName(_ p: Thing, in a: Adventure) -> String {
+        if p.kind == .player { return "You" }
+        let raw = a.nameless ? Continuity.unnamed(p.name, in: a) : p.name
+        return raw.caseInsensitiveCompare(p.name) == .orderedSame ? Cards.first(p.name) : raw
+    }
+
+    private func isDimmed(_ t: Thing, in room: Room, from pov: Thing?) -> Bool {
+        guard let pov, t.id != pov.id, t.id != pov.on, t.icon != "rug" else { return false }
+        switch RoomGrid.seen(room, from: pov, to: t) {
+        case .behind, .hidden: return true
+        case .front, .side: return false
+        }
+    }
+
+    @ViewBuilder
+    private func perspectiveBar(_ a: Adventure, room: Room, pov: Thing?) -> some View {
+        let people = room.people.sorted { ($0.kind == .player ? 0 : 1, $0.name) < ($1.kind == .player ? 0 : 1, $1.name) }
+        if people.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Image(systemName: "eye")
+                        .font(.caption)
+                        .foregroundStyle(Theme.dim)
+                    ForEach(people) { p in
+                        let selected = pov?.id == p.id
+                        let isPlayer = p.kind == .player
+                        let tint = isPlayer ? Theme.accent : Color(red: 0.95, green: 0.72, blue: 0.42)
+                        Button {
+                            withAnimation(.snappy) {
+                                povID = (povID == p.id || isPlayer) ? nil : p.id
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                if selected {
+                                    Image(systemName: "eye.fill").font(.system(size: 10))
+                                }
+                                Text(displayName(p, in: a))
+                                    .font(.caption.weight(selected ? .semibold : .regular))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 4)
+                            .foregroundStyle(selected ? Theme.bg : Theme.fg)
+                            .background(selected ? tint : Theme.bg.opacity(0.65), in: Capsule())
+                            .overlay(Capsule().stroke(selected ? tint : Theme.line, lineWidth: 0.8))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("View from \(displayName(p, in: a))'s eyes")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sightlineBar(_ a: Adventure, room: Room, pov: Thing?) -> some View {
+        if let pov {
+            let pts = GridCheck.saccades(for: pov, in: room, adventure: a)
+            if !pts.isEmpty {
+                let isPlayer = pov.kind == .player
+                let tint = isPlayer ? Theme.accent : Color(red: 0.95, green: 0.72, blue: 0.42)
+                let who = isPlayer ? "Your sightline" : displayName(pov, in: a) + "'s sightline"
+                HStack(spacing: 6) {
+                    Image(systemName: "eye.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(tint)
+                    Text(who + ":")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Theme.fg)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(pts) { pt in
+                                let rawLabel = a.nameless ? Continuity.unnamed(pt.shortLabel, in: a) : pt.shortLabel
+                                HStack(spacing: 3) {
+                                    Text("\(pt.id)")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(Theme.bg)
+                                        .frame(width: 14, height: 14)
+                                        .background(tint, in: Circle())
+                                    Text(rawLabel)
+                                        .font(.caption2)
+                                        .foregroundStyle(Theme.dim)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Theme.bg.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
     // MARK: The map
 
-    private func map(_ room: Room, live: Bool) -> some View {
-        GeometryReader { g in
+    private func map(_ a: Adventure, room: Room, live: Bool, pov: Thing?) -> some View {
+        let saccades: [GridCheck.Saccade] = pov.map { GridCheck.saccades(for: $0, in: room, adventure: a) } ?? []
+        return GeometryReader { g in
             let s = max(12, min(44, (g.size.width - 8) / CGFloat(max(1, room.width))))
             let ox = (g.size.width - s * CGFloat(room.width)) / 2
             let oy: CGFloat = 4
             ZStack(alignment: .topLeading) {
-                floor(room, s: s, ox: ox, oy: oy, live: live)
+                floor(room, s: s, ox: ox, oy: oy, live: live, pov: pov, saccades: saccades)
                 ForEach(room.objects.filter { $0.on == nil }) { t in
-                    objectView(t, s: s).position(x: ox + CGFloat(t.centre.x) * s, y: oy + CGFloat(t.centre.y) * s)
+                    objectView(t, s: s, dimmed: isDimmed(t, in: room, from: pov))
+                        .position(x: ox + CGFloat(t.centre.x) * s, y: oy + CGFloat(t.centre.y) * s)
                 }
                 ForEach(room.objects.filter { $0.on != nil }) { t in
-                    smallView(t, room: room, s: s).position(x: ox + (CGFloat(t.x) + 0.72) * s, y: oy + (CGFloat(t.y) + 0.3) * s)
+                    smallView(t, room: room, s: s, dimmed: isDimmed(t, in: room, from: pov))
+                        .position(x: ox + (CGFloat(t.x) + 0.72) * s, y: oy + (CGFloat(t.y) + 0.3) * s)
                 }
                 ForEach(room.people) { p in
-                    token(p, room: room, s: s).position(x: ox + CGFloat(p.centre.x) * s, y: oy + CGFloat(p.centre.y) * s)
+                    token(p, room: room, s: s, pov: pov, a: a)
+                        .position(x: ox + CGFloat(p.centre.x) * s, y: oy + CGFloat(p.centre.y) * s)
                 }
+                saccadeDots(saccades, pov: pov, s: s, ox: ox, oy: oy)
                 badges(room, s: s, ox: ox, oy: oy)
             }
             .contentShape(Rectangle())
@@ -241,6 +354,7 @@ struct RoomMapView: View {
                 show(stack)
             }
             .animation(.spring(response: 0.5, dampingFraction: 0.8), value: room.things.map(\.look))
+            .animation(.snappy, value: povID)
             // Pinch to zoom and drag to look around, on the map only; double-tap to fit it again.
             .scaleEffect(zoom * pinch)
             .offset(x: pan.width + drag.width, y: pan.height + drag.height)
@@ -272,8 +386,23 @@ struct RoomMapView: View {
         .frame(maxHeight: 44 * CGFloat(room.depth) + 26)
     }
 
-    /// The floor, walls, windows, doors, your view cone and the eye-lines.
-    private func floor(_ room: Room, s: CGFloat, ox: CGFloat, oy: CGFloat, live: Bool) -> some View {
+    /// Numbered 1 -> 2 -> 3 gaze bounce badges for the active POV's three eye fixations.
+    private func saccadeDots(_ saccades: [GridCheck.Saccade], pov: Thing?, s: CGFloat, ox: CGFloat, oy: CGFloat) -> some View {
+        let tint = (pov?.kind == .player) ? Theme.accent : Color(red: 0.95, green: 0.72, blue: 0.42)
+        return ForEach(saccades) { pt in
+            Text("\(pt.id)")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Theme.bg)
+                .frame(width: 13, height: 13)
+                .background(tint, in: Circle())
+                .overlay(Circle().stroke(Theme.bg, lineWidth: 1))
+                .position(x: ox + CGFloat(pt.x) * s + 7, y: oy + CGFloat(pt.y) * s - 7)
+                .allowsHitTesting(false)
+        }
+    }
+
+    /// The floor, walls, windows, doors, the active POV's view cone, 3-point saccade lines and eye-lines.
+    private func floor(_ room: Room, s: CGFloat, ox: CGFloat, oy: CGFloat, live: Bool, pov: Thing?, saccades: [GridCheck.Saccade]) -> some View {
         Canvas { ctx, _ in
             let W = CGFloat(room.width) * s, D = CGFloat(room.depth) * s
             let box = CGRect(x: ox, y: oy, width: W, height: D)
@@ -283,18 +412,29 @@ struct RoomMapView: View {
             for i in 1..<max(2, room.width) { grid.move(to: CGPoint(x: ox + CGFloat(i) * s, y: oy)); grid.addLine(to: CGPoint(x: ox + CGFloat(i) * s, y: oy + D)) }
             for j in 1..<max(2, room.depth) { grid.move(to: CGPoint(x: ox, y: oy + CGFloat(j) * s)); grid.addLine(to: CGPoint(x: ox + W, y: oy + CGFloat(j) * s)) }
             ctx.stroke(grid, with: .color(Theme.line.opacity(0.6)), lineWidth: 0.5)
-            // Your view cone: 120 degrees, out to the walls.
-            if live, let me = room.player {
-                let c = CGPoint(x: ox + CGFloat(me.centre.x) * s, y: oy + CGFloat(me.centre.y) * s)
-                let start = Angle(radians: me.facing.angle - .pi / 2 - .pi / 3)
-                let end = Angle(radians: me.facing.angle - .pi / 2 + .pi / 3)
+            // Active POV's 120-degree view cone, out to the walls.
+            if let viewer = pov, live || povID != nil {
+                let c = CGPoint(x: ox + CGFloat(viewer.centre.x) * s, y: oy + CGFloat(viewer.centre.y) * s)
+                let start = Angle(radians: viewer.facing.angle - .pi / 2 - .pi / 3)
+                let end = Angle(radians: viewer.facing.angle - .pi / 2 + .pi / 3)
+                let coneTint = viewer.kind == .player ? Theme.accent : Color(red: 0.95, green: 0.72, blue: 0.42)
                 var cone = Path()
                 cone.move(to: c)
                 cone.addArc(center: c, radius: max(W, D) * 1.5, startAngle: start, endAngle: end, clockwise: false)
                 cone.closeSubpath()
                 var clipped = ctx
                 clipped.clip(to: Path(box))
-                clipped.fill(cone, with: .color(Theme.accent.opacity(0.10)))
+                clipped.fill(cone, with: .color(coneTint.opacity(0.13)))
+
+                // 3-point saccade bounce path (viewer -> 1 -> 2 -> 3).
+                if !saccades.isEmpty {
+                    var bounce = Path()
+                    bounce.move(to: c)
+                    for pt in saccades {
+                        bounce.addLine(to: CGPoint(x: ox + CGFloat(pt.x) * s, y: oy + CGFloat(pt.y) * s))
+                    }
+                    ctx.stroke(bounce, with: .color(coneTint.opacity(0.55)), style: StrokeStyle(lineWidth: 1.2, dash: [3, 3]))
+                }
             }
             // Eye-lines between people facing each other.
             let people = room.people
@@ -304,7 +444,7 @@ struct RoomMapView: View {
                 var l = Path()
                 l.move(to: CGPoint(x: ox + CGFloat(a.centre.x) * s, y: oy + CGFloat(a.centre.y) * s))
                 l.addLine(to: CGPoint(x: ox + CGFloat(b.centre.x) * s, y: oy + CGFloat(b.centre.y) * s))
-                ctx.stroke(l, with: .color(Theme.accent.opacity(0.55)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                ctx.stroke(l, with: .color(Theme.accent.opacity(0.45)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
             } }
             // Walls, with gaps for doors.
             let doorCells = Set(room.doors.flatMap { room.cells(of: $0) })
@@ -361,7 +501,7 @@ struct RoomMapView: View {
         }
     }
 
-    private func objectView(_ t: Thing, s: CGFloat) -> some View {
+    private func objectView(_ t: Thing, s: CGFloat, dimmed: Bool) -> some View {
         let w = CGFloat(max(1, t.w)) * s, d = CGFloat(max(1, t.d)) * s
         let on = lit.contains(t.id)
         return ZStack {
@@ -376,51 +516,49 @@ struct RoomMapView: View {
                     .frame(maxWidth: w - 4)
             }
         }
+        .opacity(dimmed ? 0.36 : 1)
         .scaleEffect(on ? 1.06 : 1)
         .allowsHitTesting(false)
     }
 
-    private func smallView(_ t: Thing, room: Room, s: CGFloat) -> some View {
+    private func smallView(_ t: Thing, room: Room, s: CGFloat, dimmed: Bool) -> some View {
         let on = lit.contains(t.id)
         return Image(systemName: Rules.symbol(t.icon))
             .font(.system(size: max(7, s * 0.24)))
             .foregroundStyle(on ? Theme.accent : Theme.fg.opacity(0.7))
+            .opacity(dimmed ? 0.32 : 1)
             .scaleEffect(on ? 1.4 : 1)
             .allowsHitTesting(false)
     }
 
     /// A person: a round token with a bright arc on the side they face, their initial, and their name under it.
-    private func token(_ p: Thing, room: Room, s: CGFloat) -> some View {
+    private func token(_ p: Thing, room: Room, s: CGFloat, pov: Thing?, a: Adventure) -> some View {
         let size = max(14, s * 0.72)
         let me = p.kind == .player
         let on = lit.contains(p.id)
+        let isPOV = pov?.id == p.id
         let colour = me ? Theme.accent : Color(red: 0.95, green: 0.72, blue: 0.42)
-        let heard: Bool = {
-            guard !me, let you = room.player else { return false }
-            if case .behind = RoomGrid.seen(room, from: you, to: p) { return true }
-            if case .hidden = RoomGrid.seen(room, from: you, to: p) { return true }
-            return false
-        }()
+        let hidden = isDimmed(p, in: room, from: pov)
         return ZStack {
             Circle().fill(Theme.bg).frame(width: size, height: size)
-            Circle().stroke(colour.opacity(heard ? 0.35 : 0.5), lineWidth: 1.5).frame(width: size, height: size)
+            Circle().stroke(colour.opacity(isPOV ? 0.95 : (hidden ? 0.3 : 0.55)), lineWidth: isPOV ? 2 : 1.5).frame(width: size, height: size)
             // The facing arc, like a compass bezel.
             Circle().trim(from: 0, to: 0.25)
                 .stroke(colour, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .frame(width: size, height: size)
                 .rotationEffect(.radians(p.facing.angle - .pi / 2 - .pi / 4))
-            Text(me ? "You".prefix(1) : p.name.prefix(1)).font(.system(size: size * 0.45, weight: .bold)).foregroundStyle(colour.opacity(heard ? 0.5 : 1))
+            Text(me ? "You".prefix(1) : p.name.prefix(1)).font(.system(size: size * 0.45, weight: .bold)).foregroundStyle(colour.opacity(hidden ? 0.45 : 1))
             if !p.holding.isEmpty {
                 Circle().fill(Theme.fg).frame(width: 4, height: 4)
                     .offset(x: size * 0.5)
                     .rotationEffect(.radians(p.facing.angle - .pi / 2 + .pi / 3))
             }
-            Text(me ? "You" : label(Cards.first(p.name))).lineLimit(1).font(.system(size: 9, weight: me ? .bold : .regular)).foregroundStyle(Theme.fg)
+            Text(me ? "You" : label(displayName(p, in: a))).lineLimit(1).font(.system(size: 9, weight: isPOV ? .bold : .regular)).foregroundStyle(Theme.fg.opacity(hidden ? 0.5 : 1))
                 .lineLimit(1).fixedSize()
                 .offset(y: size * 0.5 + 7)
         }
         .scaleEffect(on ? 1.25 : 1)
-        .shadow(color: on ? colour : .clear, radius: on ? 6 : 0)
+        .shadow(color: on ? colour : (isPOV ? colour.opacity(0.35) : .clear), radius: on ? 6 : 4)
         .allowsHitTesting(false)
     }
 
@@ -564,6 +702,20 @@ struct RoomMapView: View {
                 Image(systemName: t.isPerson ? "person.fill" : Rules.symbol(t.icon)).font(.caption).foregroundStyle(Theme.accent)
                 Text(t.kind == .player ? (a.playerName.isEmpty ? "You" : a.playerName) : t.name).font(.subheadline.bold()).foregroundStyle(Theme.fg).lineLimit(1)
                 Spacer(minLength: 0)
+                if t.isPerson {
+                    let looking = (povID == nil && t.kind == .player) || povID == t.id
+                    Button {
+                        withAnimation(.snappy) {
+                            povID = (povID == t.id || t.kind == .player) ? nil : t.id
+                        }
+                    } label: {
+                        Image(systemName: looking ? "eye.fill" : "eye")
+                            .font(.caption.bold())
+                            .foregroundStyle(looking ? Theme.accent : Theme.dim)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Look through \(displayName(t, in: a))'s eyes")
+                }
                 Button(all.count > 5 ? "View all \(all.count)" : "View") { editing = t }.font(.caption.bold())
                 Button { unpin(key(t)) } label: { Image(systemName: "xmark").font(.caption.bold()) }
                     .foregroundStyle(Theme.dim)
