@@ -1657,7 +1657,7 @@ final class StoryEngine {
         let grammar = JSONGrammar.look(cast: cast, places: places, cards: menu, people: cast)
         let q0 = Date()
         let reply = (try? await llm.complete(system: nil, prompt: prompt,
-                                             options: .init(maxTokens: 400, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
+                                             options: .init(maxTokens: 280, temperature: 0.2, repetitionPenalty: 1.1, grammar: grammar))) ?? ""
         noteQ("turn", "What did the player do? (the look)", reply, since: q0)
         guard let got = JSONExtract.object(reply) ?? Optional(Self.salvageJSON(reply)), !got.isEmpty else { return nil }
         var m = JSONExtract.plainKeys(got)
@@ -1700,7 +1700,7 @@ final class StoryEngine {
         read.body = field("body")
         read.feels = field("feels")
         read.goalStep = field("goal_step")
-        for k in ["did", "avoids", "gets_up", "needs", "answer_size", "asks_back", "asks_room", "skips_hours", "weather"] {
+        for k in ["avoids", "gets_up", "needs", "asks_room", "skips_hours", "weather"] {
             if let v = Self.plainValue(m[k]) { read.plan[k] = v }
         }
         // The grammar asks for "look"; a model that ignores grammars wrote "lookup" (Nov 26: the
@@ -2156,6 +2156,7 @@ final class StoryEngine {
         /// after the reply): what they put down or give away, where they move in the room, what they
         /// tell about themselves, and their body. Each is kept only when the message itself says it.
         var actsNow: [String] = []
+        var explicitTurn = false
         func playerActs(_ r: PlayerRead) -> [String] {
             let before = actsNow.count
             let said = Continuity.wordSet(input)
@@ -2200,7 +2201,8 @@ final class StoryEngine {
             let seatedNow = a.room?.player?.on != nil
             let saysStand = input.range(of: #"(?i)\b(stand|stood|get up|got up|rise|rose|on my feet)\b"#, options: .regularExpression) != nil
             let standsWrongly = seatedNow && !saysStand && r.body.lowercased().contains("stand")
-            if !r.body.isEmpty, !standsWrongly, Continuity.grounded(r.body, in: said, share: 0.5), a.body.caseInsensitiveCompare(r.body) != .orderedSame {
+            let gazeOnly = r.body.range(of: #"(?i)^\s*(looking|glancing|gazing|directing\s+(my\s+|their\s+)?gaze|turning|facing|watching|nodding|smiling)\b"#, options: .regularExpression) != nil
+            if !r.body.isEmpty, !standsWrongly, !gazeOnly, Continuity.grounded(r.body, in: said, share: 0.5), a.body.caseInsensitiveCompare(r.body) != .orderedSame {
                 a.body = clip(r.body, 70)
                 actsNow.append("You are → " + r.body)
             }
@@ -2352,6 +2354,18 @@ final class StoryEngine {
                 gotBackThisTurn = back
                 step("You get back → " + back + " (in your hands again)")
             }
+            // Explicit gaze/turn/address in the player's own action ("I direct my gaze towards
+            // the regular", "I turn to Dolores"): settle deterministically before trusting LOOK's
+            // `to` field, so a small model never hijacks who you turned to.
+            let actionText = partsThisTurn?.did ?? Self.speechAndNarration(input).narration
+            if read != nil, let direct = Self.explicitTarget(in: a, input: input, action: actionText) {
+                if read!.to.caseInsensitiveCompare(direct) != .orderedSame {
+                    step("Turned to → " + direct + " (from your words)")
+                    read!.to = direct
+                    if read!.alsoTo.caseInsensitiveCompare(direct) == .orderedSame { read!.alsoTo = "" }
+                }
+                explicitTurn = true
+            }
             let spellable: (String) -> Bool = { n in n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
             // The message names someone here ("I turn to the old barber") while the look heard
             // someone else: that one is asked about too, the same way as a second person addressed.
@@ -2361,11 +2375,11 @@ final class StoryEngine {
             // question to Marcus moved the talk to Earl, who answered about "him".)
             func namedHere(_ n: String) -> Bool { a.lore.first { !$0.isPlayer && $0.name.caseInsensitiveCompare(n) == .orderedSame }.map { Self.addresses($0, in: input) } ?? false }
             var rival = ""
-            if let r = read, !r.to.isEmpty, r.alsoTo.isEmpty, !namedHere(r.to) {
+            if !explicitTurn, let r = read, !r.to.isEmpty, r.alsoTo.isEmpty, !namedHere(r.to) {
                 let named = a.whereabouts.filter { $0.here != false && $0.name.caseInsensitiveCompare(r.to) != .orderedSame && namedHere($0.name) }.map(\.name)
                 if named.count == 1 { rival = named[0] }
             }
-            if let r = read, !r.to.isEmpty, !(r.alsoTo.isEmpty ? rival : r.alsoTo).isEmpty,
+            if !explicitTurn, let r = read, !r.to.isEmpty, !(r.alsoTo.isEmpty ? rival : r.alsoTo).isEmpty,
                r.to.caseInsensitiveCompare(r.alsoTo.isEmpty ? rival : r.alsoTo) != .orderedSame, spellable(r.to), spellable(r.alsoTo.isEmpty ? rival : r.alsoTo) {
                 func role(_ n: String) -> String {
                     let role = a.cast.first { $0.name.caseInsensitiveCompare(n) == .orderedSame }?.role ?? ""
@@ -2499,7 +2513,7 @@ final class StoryEngine {
             // Dolores", turning to her). When the reading moved the talk to someone else, the model
             // is asked plainly whether the player did that; if not, the talk stays where it was.
             let movedTo: [String] = a.whereabouts.filter { $0.here != false && $0.engaged == true }.map(\.name)
-            if !wasWith.isEmpty, !movedTo.isEmpty, Set(movedTo.map { $0.lowercased() }).isDisjoint(with: wasWith.map { $0.lowercased() }) {
+            if !explicitTurn, !wasWith.isEmpty, !movedTo.isEmpty, Set(movedTo.map { $0.lowercased() }).isDisjoint(with: wasWith.map { $0.lowercased() }) {
                 let q = "THE PLAYER WAS TALKING TO: " + wasWith.joined(separator: ", ") + "\nTHE PLAYER NOW SAYS: " + clip(input, 300)
                     + "\nQUESTION: How sure are you, from 0 to 100, that the player turns away to " + movedTo.joined(separator: ", ") + " instead: naming them, calling to them or turning toward them? A 'her' or 'him' about someone else, or a speech slip, is not turning; people announce it when they turn. {\"sure\":\"0 to 100\"}\nThe form:"
                 let q0 = Date()
@@ -2808,22 +2822,27 @@ final class StoryEngine {
             }
             let going = read?.going ?? ""
             if moves, !walkConfirmed, !arrivedNow, (read?.newPlace ?? "").isEmpty {
-                let q0 = Date()
-                let mq = "THE LAST REPLY: " + Fovea.clip(lastGMBefore, 500) + "\nTHE PLAYER SAID: " + input
-                    + "\nQUESTION: Did the player get up or walk somewhere else in the room just now" + (whereTo.isEmpty ? "" : " (to " + whereTo + ")")
-                    + ", in their own words? Asking to join someone or to sit beside them counts as moving (they will be welcome). Asking a question, talking, sitting back or turning to someone is staying.\nCHOICES: moves; stays\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
-                let mraw = (try? await llm.complete(system: nil, prompt: mq, options: .init(maxTokens: 24, temperature: 0.1, repetitionPenalty: 1.0,
-                                                                                         grammar: JSONGrammar.one("answer", from: ["moves", "stays"])))) ?? ""
-                noteQ("turn", "Did you walk somewhere just now?", mraw, since: q0)
-                guard !Task.isCancelled else { adventure = snapshot; return }
-                let mm: [String: Any] = JSONExtract.object(mraw) ?? Self.salvageJSON(mraw)
-                if ((mm["answer"] as? String) ?? "").lowercased() == "stays" { moves = false; spotSaid = "" }
+                let spotCue = #"(?i)\b(walk|walks|go|goes|step|steps|move|moves|head|heads|cross|crosses|come|comes|wander|wanders|join|joins|approach|approaches|stroll|strolls|sit|sits|sitting|stand|stands|standing|slide|slides|scoot|scoots|pull up|over to|up to|booth|table|window|corner|door|across|beside|next to)\b"#
+                if input.range(of: spotCue, options: .regularExpression) == nil {
+                    moves = false; spotSaid = ""
+                } else {
+                    let q0 = Date()
+                    let mq = "THE LAST REPLY: " + Fovea.clip(lastGMBefore, 500) + "\nTHE PLAYER SAID: " + input
+                        + "\nQUESTION: Did the player get up or walk somewhere else in the room just now" + (whereTo.isEmpty ? "" : " (to " + whereTo + ")")
+                        + ", in their own words? Asking to join someone or to sit beside them counts as moving (they will be welcome). Asking a question, talking, sitting back or turning to someone is staying.\nCHOICES: moves; stays\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
+                    let mraw = (try? await llm.complete(system: nil, prompt: mq, options: .init(maxTokens: 24, temperature: 0.1, repetitionPenalty: 1.0,
+                                                                                             grammar: JSONGrammar.one("answer", from: ["moves", "stays"])))) ?? ""
+                    noteQ("turn", "Did you walk somewhere just now?", mraw, since: q0)
+                    guard !Task.isCancelled else { adventure = snapshot; return }
+                    let mm: [String: Any] = JSONExtract.object(mraw) ?? Self.salvageJSON(mraw)
+                    if ((mm["answer"] as? String) ?? "").lowercased() == "stays" { moves = false; spotSaid = "" }
+                }
             }
             let talk = !arrivedNow && !(read?.to ?? "").isEmpty && (going.isEmpty || going == "staying")
                 && (read?.newPlace ?? "").isEmpty && !moves
             talkThisTurn = talk
             talkWithThisTurn = talk ? (read?.to ?? "") : ""
-            if talk { maxOut = 480 }
+            if talk { maxOut = 380 }
             if arrivedNow { maxOut = max(maxOut, 480) }
             var keep: [Bool] = []
             if !items.isEmpty, !talk {
@@ -4608,21 +4627,22 @@ final class StoryEngine {
             a.spot = "beside " + w.name
             log.append("you walk over beside " + w.name)
         }
-        // "I turn toward the woman in the red coat": no walk, but you face them on the map, and the
-        // look after the reply doesn't turn you back to whoever it thinks spoke. (Nov 27: still
-        // facing the counter, with the woman behind you.)
-        if walk.isEmpty, let w = target, let me = r.player, let t = r.named(w.name), t.isPerson, !RoomGrid.faces(me, t),
-           input.range(of: #"(?i)\b(turn|turns|turning|swivel|swivels|spin|spins|face|faces|facing|look over at|look at|looks at|glance at|glances at)\b"#, options: .regularExpression) != nil {
+        // Whenever you engage someone in the room you aren't currently facing, rotate to face them
+        // on the grid (unless you explicitly say you don't look at them), so they are in front of
+        // you instead of stuck "behind you, heard not seen".
+        let avoidsLooking = input.range(of: #"(?i)\b(without (looking|turning)|don't look|doesn't look|looking away|not looking|eyes away)\b"#, options: .regularExpression) != nil
+        if walk.isEmpty, !avoidsLooking, let w = target, let me = r.player, let t = r.named(w.name), t.isPerson, !RoomGrid.faces(me, t) {
             Placer.turn(&r, me.id, toward: w.name)
             r.log.append("turn: you → toward " + w.name)
             log.append("you turn to " + w.name)
             placedByPlan = true
         }
         if !walk.isEmpty { placedByPlan = true }
-        // 1a. Getting up: seated, no walk heard, but the body says something ("standing and
-        // stretching"). The model says whether the player gets up; if so, they stand beside the seat.
-        // ("standing at the bar" while on a stool at the bar is no walk: still asked.)
-        if !(walk + body).trimmingCharacters(in: .whitespaces).isEmpty, let meS = r.player, let seatID = meS.on, let seat = r.thing(seatID) {
+        // 1a. Getting up: seated, no walk heard, only ask when the player's words or body actually
+        // suggest standing, rising, stretching, or moving off their seat.
+        let standCue = #"(?i)\b(stand|stands|standing|stood|get up|gets up|getting up|got up|rise|rises|rising|rose|stretch|stretches|stretching|step|steps|walk|walks|leave|leaves|head|heads|slide off|climb off|hop off|push back|off the stool|off my stool|off the chair|on my feet)\b"#
+        if (!walk.isEmpty || (input + " " + body).range(of: standCue, options: .regularExpression) != nil),
+           let meS = r.player, let seatID = meS.on, let seat = r.thing(seatID) {
             let up = "the player stands up"
             let stay = "the player stays sitting"
             let uq = "THE PLAYER JUST SAID: \"" + clip(input, 200) + "\"" + (body.isEmpty ? "" : " (their body: " + clip(body, 60) + ")") + "\nThe player is sitting on the " + Fovea.bare(seat.name)
@@ -4638,9 +4658,11 @@ final class StoryEngine {
                 placedByPlan = true
             }
         }
-        // 1b. Sitting down: the model says whether the player sits, then on which seat near the person
-        // they turned to (or a stool brought over), so they end up seated, never left standing by it.
-        if let meNow = r.player, meNow.on == nil, !log.contains("you stand up"), !(walk + " " + body).trimmingCharacters(in: .whitespaces).isEmpty {
+        // 1b. Sitting down: only ask when standing and the player's words actually mention sitting
+        // or taking a seat/stool/chair/booth.
+        let sitCue = #"(?i)\b(sit|sits|sitting|sat|seat|stool|chair|booth|bench|settle|perch|pull up|take a|join)\b"#
+        if let meNow = r.player, meNow.on == nil, !log.contains("you stand up"),
+           (input + " " + body + " " + walk).range(of: sitCue, options: .regularExpression) != nil {
             // Two pictures, not yes or no: "I walk over and sit down next to the bartender" got a
             // "no" (the model read "sitting at the bar" as already seated, so not sitting down now).
             let sits = "the player ends this moment sitting on a seat"
@@ -4728,7 +4750,7 @@ final class StoryEngine {
         // The look form already answered these in the same call; the separate question is only
         // asked when it didn't (no usable reading).
         var pm: [String: Any] = [:]
-        if pre["answer_size"] != nil {
+        if pre["avoids"] != nil || pre["gets_up"] != nil || pre["needs"] != nil {
             for (k, v) in pre { pm[k] = v }
         } else {
             pm = await ask("What did you do, and what does " + first + " do?", pq, JSONGrammar.planForm(), 110)
@@ -5638,22 +5660,112 @@ final class StoryEngine {
     }
 
     /// Whether the player turns or speaks to this person, not only about them: named in their own
-    /// narration ("I turn to the old barber"), or called at the start of what they say ("Earl, ...",
-    /// "Hey, barber!"). A typed line with no quotes counts whole.
+    /// narration ("I turn to the old barber", "I direct my gaze towards the regular"), or called at
+    /// the start of what they say ("Earl, ...", "Hey, barber!"). A typed line with no quotes counts whole.
     static func addresses(_ c: LoreEntry, in input: String) -> Bool {
         let (speech, narration) = speechAndNarration(input)
         // "I say:" and "Then" are the turn's own frame, not the player naming anyone.
         let told = narration.replacingOccurrences(of: #"(?i)\b(then )?i say:"#, with: " ", options: .regularExpression)
         if Cards.mentions(c, in: told) { return true }
+        let role = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+        let roleHead = role.split(separator: " ").last.map(String.init) ?? ""
+        let genericRoles: Set<String> = ["man", "woman", "girl", "boy", "lady", "person", "guy", "one", "figure", "stranger", "friend", "guest"]
+        if roleHead.count >= 4, !genericRoles.contains(roleHead),
+           told.lowercased().range(of: #"\b"# + NSRegularExpression.escapedPattern(for: roleHead) + #"\b"#, options: .regularExpression) != nil {
+            return true
+        }
         guard !speech.isEmpty else { return false }
         var words = [Cards.first(c.name).lowercased()]
-        let role = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
         if role.count >= 4 { words.append(role) }
-        if let last = role.split(separator: " ").last, last.count >= 4 { words.append(String(last)) }
+        if roleHead.count >= 4 { words.append(roleHead) }
         let low = speech.lowercased()
         return words.filter { $0.count >= 3 }.contains { w in
             low.range(of: #"^\W*((hey|hi|oh|well|so|say|excuse me|sorry|listen|evening|morning|hello),?\s+)?(mr\.?\s+|mrs\.?\s+|miss\s+|old\s+)?"# + NSRegularExpression.escapedPattern(for: w) + #"\b\s*[,!?]"#, options: .regularExpression) != nil
         }
+    }
+
+    /// Deterministically identifies who the player explicitly turns, looks, gazes, or speaks to
+    /// in their action ("I direct my gaze towards the regular", "I look at the bartender") or
+    /// vocative opening ("Hey Dolores, ..."). Evaluates multiple directed clauses from last to
+    /// first so "I nod at the bartender and turn towards the regular" selects the regular.
+    static func explicitTarget(in a: Adventure, input: String, action: String) -> String? {
+        let present: [LoreEntry] = a.cast.filter { c in
+            guard !c.isPlayer else { return false }
+            if let w = a.whereabouts.first(where: { $0.name.caseInsensitiveCompare(c.name) == .orderedSame }) {
+                return w.here != false
+            }
+            return true
+        }
+        guard !present.isEmpty else { return nil }
+        let genericRoles: Set<String> = ["man", "woman", "girl", "boy", "lady", "person", "guy", "one", "figure", "stranger", "friend", "guest"]
+
+        func matchPerson(_ rawPhrase: String) -> String? {
+            let low = rawPhrase.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard low.count >= 2 else { return nil }
+            let words = Continuity.wordSet(low)
+            // 1. Exact full name or unique first/last name.
+            let byName = present.filter { c in
+                let full = c.name.lowercased()
+                let first = Cards.first(c.name).lowercased()
+                let last = full.split(separator: " ").last.map(String.init) ?? ""
+                return low.contains(full) || (first.count >= 3 && words.contains(first)) || (last.count >= 4 && words.contains(last))
+            }
+            if byName.count == 1 { return byName[0].name }
+            // 2. Full role label ("friendly regular", "serious bartender").
+            let byFullRole = present.filter { c in
+                let role = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+                return role.count >= 4 && low.contains(role)
+            }
+            if byFullRole.count == 1 { return byFullRole[0].name }
+            // 3. Distinctive role head noun ("regular", "bartender", "seamstress", "waitress").
+            let byHead = present.filter { c in
+                let role = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+                let head = role.split(separator: " ").last.map(String.init) ?? ""
+                return head.count >= 4 && !genericRoles.contains(head) && words.contains(head)
+            }
+            if byHead.count == 1 { return byHead[0].name }
+            // 4. Unambiguous gendered reference when only one person of that gender is in the room.
+            if low.range(of: #"\b(woman|girl|lady|she|her)\b"#, options: .regularExpression) != nil {
+                let fem = present.filter { Cards.pronoun($0.name, in: a).lowercased().contains("she") }
+                if fem.count == 1 { return fem[0].name }
+            }
+            if low.range(of: #"\b(man|guy|gentleman|fellow|he|him)\b"#, options: .regularExpression) != nil {
+                let masc = present.filter { Cards.pronoun($0.name, in: a).lowercased().contains("he") && !Cards.pronoun($0.name, in: a).lowercased().contains("she") }
+                if masc.count == 1 { return masc[0].name }
+            }
+            return nil
+        }
+
+        // A. Directed gaze / turn / approach / address clauses in the player's action (last wins).
+        let cleanAction = action.replacingOccurrences(of: #"(?i)\b(then )?i say:"#, with: " ", options: .regularExpression)
+        let dirPattern = #"(?i)\b(?:(?:look|looks|looking|glance|glances|glancing|gaze|gazes|gazing|direct(?:s|ing)?\s+(?:my\s+|your\s+)?gaze|turn|turns|turning|swivel|swivels|nod|nods|nodding|wave|waves|speak|speaks|speaking|talk|talks|talking|call|calls|calling|walk|walks|step|steps|head|heads|move|moves|lean|leans|gesture|gestures|point|points)\s+(?:over\s+|back\s+|up\s+)?(?:at|to|toward|towards|beside|next\s+to)|(?:face|faces|facing|address|addresses|eyes\s+(?:on|to|toward|towards)))\s+([^.,;!?:"“”]{2,45})"#
+        if let re = try? NSRegularExpression(pattern: dirPattern) {
+            let ns = cleanAction as NSString
+            let matches = re.matches(in: cleanAction, range: NSRange(location: 0, length: ns.length))
+            for m in matches.reversed() where m.numberOfRanges > 1 {
+                let captured = ns.substring(with: m.range(at: 1))
+                if let hit = matchPerson(captured) { return hit }
+            }
+        }
+
+        // B. Vocative direct address at the start of spoken dialogue ("Hey Dolores, ...", "Bartender, ...").
+        let (speech, _) = speechAndNarration(input)
+        let spokenText = speech.isEmpty ? input : speech
+        if !spokenText.isEmpty {
+            let low = spokenText.lowercased()
+            let vocMatches = present.filter { c in
+                let first = Cards.first(c.name).lowercased()
+                let role = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+                let head = role.split(separator: " ").last.map(String.init) ?? ""
+                let candidates = [first, role, head].filter { $0.count >= 3 && !genericRoles.contains($0) }
+                return candidates.contains { w in
+                    low.range(of: #"^\W*((hey|hi|oh|well|so|say|excuse me|sorry|listen|evening|morning|hello),?\s+)?(mr\.?\s+|mrs\.?\s+|miss\s+|old\s+)?"# + NSRegularExpression.escapedPattern(for: w) + #"\b\s*[,!?]"#, options: .regularExpression) != nil
+                }
+            }
+            if vocMatches.count == 1 { return vocMatches[0].name }
+        }
+
+        return nil
     }
 
     /// Someone here or in the story whom the player asks about in what they say, when they are

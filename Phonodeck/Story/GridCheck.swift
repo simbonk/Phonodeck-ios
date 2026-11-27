@@ -178,7 +178,7 @@ enum GridCheck {
         if let r = a.room, let me = r.player {
             // 3a. Offering a seat when already seated.
             if me.on != nil {
-                let seatOffer = #"(?i)\b(have a seat|take a seat|pull up a (stool|chair)|sit down|gestures? (to|at|toward) an? (empty |open )?(stool|chair|seat))\b"#
+                let seatOffer = #"(?i)\b(have a seat|take a seat|pull up a (stool|chair)|sit down|(gestures?|motions?|nods?|waves?|points?) (to|at|towards?) (an?|the|another) (empty |open |free |vacant )?(stool|chair|seat|booth)|waiting for you to (sit|settle in|take a seat))\b"#
                 if reply.range(of: seatOffer, options: .regularExpression) != nil {
                     let seatName = r.thing(me.on).map { Fovea.bare($0.name) } ?? "a seat"
                     report.softNotes.append("You are already sitting on \(seatName); no need to offer a seat.")

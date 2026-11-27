@@ -714,10 +714,17 @@ struct PresenceFilter {
         return Double(covered.filter { $0 }.count) / Double(w.count)
     }
 
-    /// The sentence only quotes back what the player just said ("Yes I do.").
+    /// The sentence only quotes back what the player just said verbatim ("Yes I do, I came here for...").
+    /// Short natural callbacks ("Good?", "Rain?", "A night like this?") and mid-quote fragments are
+    /// kept so we never amputate the opening half of a character's spoken line.
     private func echoesPlayer(_ unit: String) -> Bool {
+        let trimmed = unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        let straightQuotes = trimmed.filter { $0 == "\"" }.count
+        let balanced = (straightQuotes >= 2 && straightQuotes % 2 == 0) || (trimmed.contains("“") && trimmed.contains("”"))
+        guard balanced else { return false }
         let k = Self.key(unit)
-        return k.count >= 4 && playerKey.count >= 4 && playerKey.contains(k) && (unit.contains("\"") || unit.contains("“"))
+        let w = Self.words(unit)
+        return w.count >= 5 && k.count >= 24 && playerKey.count >= 24 && playerKey.contains(k)
     }
 
     /// Nothing to check: nobody is elsewhere and there are no earlier replies.

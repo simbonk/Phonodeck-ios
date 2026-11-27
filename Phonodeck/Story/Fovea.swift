@@ -349,6 +349,8 @@ enum Fovea {
 
         This is a real conversation between real people, not a script. Let the person the player is talking with feel genuinely alive—warm, specific, opinionated, funny, tired, or guarded in their own distinct voice. They listen closely to what the player actually said, react naturally (a small gesture or look if it fits, then their real spoken words), and follow the human thread of the talk. They share stories, memories, opinions, small details from their life, tease, disagree, or ask something back whenever it genuinely fits the moment.
 
+        Keep the rhythm brisk and conversational for audio: get to their reaction and spoken words quickly instead of pausing for long narrator preamble, and let ordinary back-and-forth land around 70–140 words (longer only when they're truly telling a story).
+
         Keep it grounded:
         - Stay true to the setting and positions below so nobody teleports and nothing appears from nowhere; don't re-describe scenery or clothes the player already knows unless asked.
         - Never write the player's own spoken words, choices, or feelings, and never call them "the player".
@@ -427,12 +429,15 @@ enum Fovea {
                 if let role = c?.role, !role.isEmpty { line += " (" + role + ")" }
                 let pr = Cards.pronoun(name, in: a)
                 if !pr.isEmpty { line += ", " + pr }
-                if let c, !c.desc.isEmpty { line += ": " + clip(c.desc, 160) }
+                if let c, !c.desc.isEmpty {
+                    let d = clip(c.desc, 180)
+                    line += ": " + d + (d.hasSuffix(".") || d.hasSuffix("!") || d.hasSuffix("?") ? "" : ".")
+                }
                 if let c {
                     if arrived {
                         line += presence(c)
                     } else {
-                        let bits = [c.voice.isEmpty ? "" : "Voice: " + clip(c.voice, 80), c.habit.isEmpty ? "" : "Habit: " + clip(c.habit, 70)].filter { !$0.isEmpty }
+                        let bits = [c.voice.isEmpty ? "" : "Voice: " + clip(c.voice, 140), c.habit.isEmpty ? "" : "Habit: " + clip(c.habit, 120)].filter { !$0.isEmpty }
                         if !bits.isEmpty { line += " " + bits.joined(separator: ". ") + "." }
                     }
                 }
