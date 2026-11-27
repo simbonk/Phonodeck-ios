@@ -676,12 +676,16 @@ extension TestRunner {
                 let n = String(arg.dropFirst()).lowercased()
                 return people.first { $0.name.lowercased() == n }
             }
-            let ws = words(arg)
-            return people.first { p in
+            // Each word in the order the check gives them: "red coat|woman" is the woman in the red
+            // coat, not the owner whose card says "a woman in her fifties". (Nov 27.)
+            func text(_ p: Thing) -> String {
                 let card = cast.first { $0.name.lowercased() == p.name.lowercased() }
-                let text = (p.name + " " + (card.map { $0.role + " " + $0.desc + " " + $0.looks + " " + $0.wears } ?? "")).lowercased()
-                return ws.contains { text.contains($0) }
+                return (p.name + " " + (card.map { $0.role + " " + $0.desc + " " + $0.looks + " " + $0.wears } ?? "")).lowercased()
             }
+            for w in words(arg) {
+                if let p = people.first(where: { text($0).contains(w) }) { return p }
+            }
+            return nil
         }
     }
 }
