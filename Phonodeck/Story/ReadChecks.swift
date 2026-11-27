@@ -96,6 +96,21 @@ enum ReadChecks {
             check(!StoryEngine.asksWhoIsHere(q), "asksWhoIsHere(\"\(q)\") should be false")
         }
 
+        // Who the player speaks to, and who they only ask about (Nov 27: a question about the old
+        // barber, put to his nephew, moved the talk to the barber).
+        let earl = LoreEntry(name: "Earl Hollis", kind: .person, role: "the old barber")
+        let hannah = LoreEntry(name: "Hannah Crane", kind: .person, role: "the grown daughter")
+        check(!StoryEngine.addresses(earl, in: "I say: \"How long have you known the old barber?\""), "a question about the old barber isn't speaking to him")
+        check(StoryEngine.addresses(earl, in: "I turn to the old barber. Then I say: \"How's business?\""), "turning to the old barber is speaking to him")
+        check(StoryEngine.addresses(earl, in: "I say: \"Earl, how's business?\""), "\"Earl, ...\" is speaking to Earl")
+        check(!StoryEngine.addresses(hannah, in: "I turn to the old keeper. Then I say: \"Is the grown daughter all right?\""), "asking after the daughter isn't speaking to her")
+
+        // He and she after a name said inside someone's speech belong to the speaker (Nov 27).
+        let walter = Continuity.pronounCounts(in: "\"Walter's right there behind you,\" she says softly. \"And the costumer? She's got her sketchbook open.\"", for: "Walter Pruitt", others: ["Walter", "Dolores"])
+        check(walter.she == 0, "the speaker's \"she says\" was counted for Walter (\(walter.she))")
+        let elias = Continuity.pronounCounts(in: "Elias sets down the tool. \"Fine,\" he says, and he turns back.", for: "Elias Crane", others: ["Elias"])
+        check(elias.he == 2, "Elias's own \"he says\" should count (\(elias.he))")
+
         count = n
         failures = bad
         for b in bad { print("ReadChecks failed: " + b) }
