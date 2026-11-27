@@ -261,7 +261,7 @@ struct WorldView: View {
                      marquee: latest(changes, a) { $0.contains(first) }, open: openCards.contains(p.id.uuidString)) { toggle(p.id.uuidString) } content: {
                 VStack(alignment: .leading, spacing: 4) {
                     person(p, a)
-                    if let want = a.wants[p.name.lowercased()] { attr("Wants", Continuity.unnamed(want, in: a)) }
+                    if let want = a.wants[p.name.lowercased()] ?? (p.wants.isEmpty ? nil : p.wants) { attr("Wants", Continuity.unnamed(want, in: a)) }
                     if let knows = a.knows[p.name.lowercased()], !knows.isEmpty { attr("Knows", knows.joined(separator: "; ")) }
                     Button("Edit") { editing = p }.font(.caption.bold()).padding(.top, 2)
                 }

@@ -512,7 +512,7 @@ struct RoomMapView: View {
             } else {
                 let k = t.name.lowercased()
                 let card = a.lore.first(where: { $0.name == t.name })
-                out += [("Doing", t.doing), ("Said", t.dialogue.last ?? ""), ("Feels", t.feeling), ("Wants", a.wants[k] ?? ""), ("Where", spot),
+                out += [("Doing", t.doing), ("Said", t.dialogue.last ?? ""), ("Feels", t.feeling), ("Wants", a.wants[k] ?? card?.wants ?? ""), ("Where", spot),
                         ("Holding", t.holding.joined(separator: ", ")), ("Wearing", Fovea.outfit(t, card)), ("Expression", t.expression),
                         ("Knows of you", (a.knows[k] ?? []).joined(separator: "; ")), ("Between you", (a.between[k] ?? []).joined(separator: "; "))]
                 if let c = a.lore.first(where: { $0.name == t.name }) {

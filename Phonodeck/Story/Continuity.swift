@@ -706,7 +706,7 @@ struct PresenceFilter {
     /// in a run of four or more words found there.
     func copied(_ unit: String) -> Double {
         let w = Self.words(unit)
-        guard w.count >= 8, !runs.isEmpty else { return 0 }
+        guard w.count >= 10, !runs.isEmpty else { return 0 }
         var covered = [Bool](repeating: false, count: w.count)
         for i in 0...(w.count - 4) where runs.contains(w[i..<(i + 4)].joined(separator: " ")) {
             for j in i..<(i + 4) { covered[j] = true }
@@ -783,7 +783,7 @@ struct PresenceFilter {
         var keep = true
         if dropping {
             keep = false
-        } else if !isAnswer(unit), !speaksNew(unit, from: startsInQuote), said.contains(Self.key(unit)) || copied(unit) >= 0.6 || echoesPlayer(unit) {
+        } else if !isAnswer(unit), !speaksNew(unit, from: startsInQuote), said.contains(Self.key(unit)) || copied(unit) >= 0.78 || echoesPlayer(unit) {
             keep = false
             echoes += 1
         } else if voicing && startsInQuote {
@@ -794,16 +794,12 @@ struct PresenceFilter {
             keep = false
             voicing = true
             spokeForPlayer += 1
-        } else if caught.count < 3, let who = hit(narrated) {
+        } else if caught.count < 3, let who = hit(narrated), !who.background {
+            // Only censor people who are genuinely elsewhere (not in this room). Bystanders in
+            // the same room reacting naturally make the place feel inhabited, not frozen.
             keep = false
-            if who.background {
-                // Someone here in the background: only their line goes. (Nov 26: "Marcus looks up
-                // from his notebook" took the barber's whole answer with it.)
-                quieted += 1
-            } else {
-                dropping = true
-                if !caught.contains(where: { $0.name == who.name }) { caught.append(who) }
-            }
+            dropping = true
+            if !caught.contains(where: { $0.name == who.name }) { caught.append(who) }
         }
         if endsParagraph { dropping = false; inQuote = false; voicing = false }
         if keep {
@@ -830,21 +826,13 @@ struct PresenceFilter {
     /// The sentence carries new spoken words (an answer in quotes that no earlier reply had):
     /// it stays, even if the narration around it is a copy.
     private func speaksNew(_ unit: String, from quoted: Bool) -> Bool {
-        // Only the words inside quotation marks, in order. (Taking the narration's letters out one
-        // by one scrambled the words, so a copied line read as new speech and went through.)
         let spoken = speech(of: unit, from: quoted)
         let w = Self.words(spoken)
-        // A short answer ("Sam," he says) is still an answer: new when no earlier reply said it.
         if w.count < 3 {
             let k = Self.key(spoken)
             return !k.isEmpty && !spokenBefore.contains(k) && !playerKey.contains(k)
         }
-        // Even a short line ("I'll be right back with—") counts as a copy when a run of four of
-        // its words was in an earlier reply.
-        if w.count >= 4, (0...(w.count - 4)).contains(where: { runs.contains(w[$0..<($0 + 4)].joined(separator: " ")) }), copied(spoken) >= 0.6 || w.count < 8 {
-            return false
-        }
-        return !said.contains(Self.key(spoken)) && copied(spoken) < 0.6
+        return !said.contains(Self.key(spoken)) && !spokenBefore.contains(Self.key(spoken)) && copied(spoken) < 0.78
     }
 
     /// Each quoted stretch of a text, on its own.

@@ -433,7 +433,7 @@ enum JSONGrammar {
     static func stateDiff(steps: [String], holders: [String]) -> String {
         [
             "root ::= \"{\" ws " + [key("passed") + " st", key("moved") + " moves", key("doing") + " s80", key("mood") + " md",
-                                    key("facts") + " facts", key("answered") + " yn"].joined(separator: " \",\" ws ") + " ws \"}\"",
+                                    key("between") + " s100", key("facts") + " facts", key("answered") + " yn"].joined(separator: " \",\" ws ") + " ws \"}\"",
             #"moves ::= "[" ws ( mv ( "," ws mv )? )? ws "]""#,
             "mv ::= \"{\" ws " + [key("item") + " s40", key("from") + " hd", key("to") + " hd"].joined(separator: " \",\" ws ") + " ws \"}\"",
             #"facts ::= "[" ws ( s160 ( "," ws s160 )? )? ws "]""#,
@@ -441,7 +441,7 @@ enum JSONGrammar {
             choice("hd", holders),
             choice("yn", ["yes", "no"]),
             choice("md", moods),
-            capped("s30", 30), capped("s40", 40), capped("s80", 80), capped("s160", 160),
+            capped("s30", 30), capped("s40", 40), capped("s80", 80), capped("s100", 100), capped("s160", 160),
             common,
         ].joined(separator: "\n")
     }

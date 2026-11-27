@@ -212,27 +212,28 @@ enum Fovea {
         for c in facedCards {
             // Core lore first (two lines from the cards they were made with), then the latest
             // three things learned in talk: what is learned never pushes out who they are.
+            let key = c.name.lowercased()
             let theirs = Cards.facts(about: c, in: a)
             let core = Set(a.coreFacts)
             for f in theirs.filter({ core.contains($0) }).prefix(2) { add("person", f) }
             for f in theirs.filter({ !core.contains($0) }).suffix(3) { add("person", f) }
-            if let x = a.feelings[c.name.lowercased()] { add("feeling", c.name + " feels " + x + " about you") }
-            if let x = a.wants[c.name.lowercased()] { add("want", c.name + " wants " + x + " (it shows in what they do; unsaid unless asked)") }
-            if let b = a.between[c.name.lowercased()], !b.isEmpty { add("between", "Between you and " + c.name + " so far: " + b.suffix(3).joined(separator: "; ")) }
-            if let k = a.knows[c.name.lowercased()], !k.isEmpty { add("knows", c.name + " knows about you: " + k.suffix(3).joined(separator: "; ")) }
-            // Their private life is always offered (hearing it is often why the player came); the
-            // pass lets it in when the moment turns to their life, and they share only a little.
-            if !c.ties.isEmpty { add("ties", c.name + " and the others here (it shows in how they act; unsaid unless asked): " + c.ties) }
-            // What they keep close, as deep as the talk has earned: the first always, one more each
-            // time the player showed real interest (see `StoryEngine.openUp`). Without that ladder
-            // (someone who came in later), the one private line, as before.
-            let key = c.name.lowercased()
+            if let x = a.feelings[key] { add("feeling", c.name + " feels " + x + " about you") }
+            if let x = a.wants[key] ?? (c.wants.isEmpty ? nil : c.wants) {
+                add("want", "What drives " + c.name + ": " + x + " (let it quietly colour how they listen and speak)")
+            }
+            if let b = a.between[key], !b.isEmpty { add("between", "Between you and " + c.name + " so far: " + b.suffix(4).joined(separator: "; ")) }
+            if let k = a.knows[key], !k.isEmpty { add("knows", c.name + " knows about you: " + k.suffix(4).joined(separator: "; ")) }
+            if !c.ties.isEmpty { add("ties", c.name + " and the others here: " + c.ties) }
+            // What they carry privately, as deep as the talk has earned: the first always, one more
+            // each time the conversation invites them to open up.
             let open = c.depths.prefix(1 + (a.opened[key] ?? 0))
             if !open.isEmpty {
-                let newest = open.count > 1 ? " The last one has only just come within reach: it can come out now if the talk turns that way, in their own words and a little at a time." : ""
-                add("private", c.name + " keeps close (what the talk has earned so far; nothing deeper, and never all at once): " + open.joined(separator: " ") + newest)
+                let cue = open.count > 1
+                    ? " (the last one has just come close to the surface; let it come out naturally in their own words if the talk leans there)"
+                    : " (colours how they talk; let it surface naturally when the conversation invites it)"
+                add("private", "On " + c.name + "'s mind" + cue + ": " + open.joined(separator: " "))
             } else if !c.privateLife.isEmpty {
-                add("private", c.name + "'s private life (shared a little, only if the player asks about their life, work, hopes or plans): " + c.privateLife)
+                add("private", "What " + c.name + " carries privately (shared naturally when the conversation invites it): " + c.privateLife)
             }
         }
         // Everyone else keeps their own card; it is offered as one item each.
@@ -340,41 +341,142 @@ enum Fovea {
         var to = "", going = "", newPlace = "", takes = "", putsDown = "", tells = ""
     }
 
-    /// The storyteller's rules in this mode: short, and the facing person always reacts with what
-    /// they do, then what they say.
+    /// The storyteller's craft guidelines: short, warm, and positive so a small on-device model
+    /// stays in natural conversational flow rather than freezing under dozens of prohibitions.
     static func system(_ a: Adventure, nameless: Bool, playerNamed: Bool, age: Int, talk: Bool = false) -> String {
-        // Talking to one person: the same rules, said in a few lines.
         var s = talk ? """
-        You are the third-person narrator of an audio story the player hears. The player is "you"; every other person is "he" or "she", or their role ("the conductor"). Present tense, plain words. Never "I" or "my" outside spoken dialogue, never "I say", and never the words "the player" in the story.
-        - This is a conversation: the person the player faces answers like a real person would, as long as the moment needs and no longer. A plain question can get a one-line answer. At most a short gesture around it.
-        - What they say is in quotation marks, their actual words, never told about ("he talks about growing up…"). A question gets a real, specific answer: a name, a place, a number.
-        - Don't describe the room, the weather, the music or what anyone wears again unless the player asks about it: they already have it. Only what changed.
-        - Never speak, choose or feel for the player. Nobody touches the player unless the player reaches out first.
-        - The room: only the people and physical things listed are here; nothing appears from nowhere.
-        - In dialogue: speaking in quotes, a person talks freely from their own life (memories, years, opinions, stories) in a way that fits their card, the time and the place. What their card says stays true; what it doesn't say, they can fill in.
-        - End on that person, leaving room to answer.
-        """ : """
-        You are the third-person narrator of an audio story the player hears read aloud: their vacation from reality.
+        You are telling an intimate, grounded audio story in second person, present tense ("you" for the player; spoken dialogue in quotation marks; plain, vivid words that sound great read aloud).
 
-        - The player is "you"; every other person is "he" or "she", or their role ("the conductor"). Present tense. Never "I" or "my" outside spoken dialogue, never "I say", and never the words "the player" in the story. Plain, vivid words that are easy to hear, as long as the moment needs: a spoken answer can be one line. No headings, lists or notes.
-        - Paint the place only when the player arrives somewhere or moves. Otherwise don't describe again what was already described; only what changed.
-        - The person the player is facing reacts to exactly what the player said or did: first what they do, then what they say, in quotation marks, their actual words (never "he talks about…"). Let them be warm, real and specific, with their own way of talking.
-        - Never speak, choose or feel for the player. Nobody touches the player unless the player reaches out first.
-        - The room: only the people and physical things given for this moment are here. Anyone else stays quiet and out of the way, and nothing appears from nowhere.
-        - In dialogue: speaking in quotes, a person talks freely from their own life (memories, years, opinions, stories) in a way that fits their card, the time and the place.
-        - People keep their private lives to themselves unless the player asks.
-        - End on the person turned to the player, leaving room to answer. Never a list of options.
+        This is a real conversation between real people, not a script. Let the person the player is talking with feel genuinely alive—warm, specific, opinionated, funny, tired, or guarded in their own distinct voice. They listen closely to what the player actually said, react naturally (a small gesture or look if it fits, then their real spoken words), and follow the human thread of the talk. They share stories, memories, opinions, small details from their life, tease, disagree, or ask something back whenever it genuinely fits the moment.
+
+        Keep it grounded:
+        - Stay true to the setting and positions below so nobody teleports and nothing appears from nowhere; don't re-describe scenery or clothes the player already knows unless asked.
+        - Never write the player's own spoken words, choices, or feelings, and never call them "the player".
+        - Leave natural room for the player to answer—never a list of options.
+        """ : """
+        You are telling an immersive, grounded audio story in second person, present tense ("you" for the player; spoken dialogue in quotation marks; plain, vivid words that sound great read aloud).
+
+        Make the place and the people feel unmistakably real—ordinary, solid humans with their own rhythms, small habits, and distinct voices. Paint the place richly when the player arrives or looks around; otherwise focus on what changes and how the people react in their own words.
+
+        Keep it grounded:
+        - Keep to the physical layout and people below so nothing teleports or appears from nowhere.
+        - People react naturally to what the player actually did and said, with real spoken words in quotes.
+        - Never write the player's own spoken words, choices, or feelings, and never call them "the player".
+        - Leave natural room for the player to respond—never a list of options.
         """
         if nameless { s += "\n- " + Prompts.namelessRule }
-        if playerNamed, !a.playerName.isEmpty { s += "\n- The player character is \(a.playerName), and that is \"you\". The name appears only in other characters' dialogue." }
+        if playerNamed, !a.playerName.isEmpty { s += "\n- The player's name is \(a.playerName) (that is \"you\"; use the name only in other characters' spoken dialogue)." }
         let feeling = a.setup.feeling.isEmpty ? "whatever the player came for" : a.setup.feeling
         s += "\n\nFEELING TO ACHIEVE: " + feeling
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }
         var limits: [String] = []
         if !a.setup.avoid.isEmpty { limits.append("The player asked: " + a.setup.avoid) }
         if a.setup.simulator { limits.append("This is an experience with no threat, danger, villain or mystery.") }
-        if !limits.isEmpty { s += "\n\nLIMITS (never break them):\n" + limits.map { "- " + $0 }.joined(separator: "\n") }
+        if !limits.isEmpty { s += "\n\nLIMITS:\n" + limits.map { "- " + $0 }.joined(separator: "\n") }
         return s
+    }
+
+    /// Clean, human-readable scene & character grounding appended to the `SYSTEM` prompt rather
+    /// than stuffed into the user's message. This lets the model treat the conversation history
+    /// as a real dialogue while still staying anchored to the room grid and character cards.
+    static func sceneContext(_ a: Adventure, arrived: Bool, roomAsked: Bool, talk: Bool,
+                             events: [String], kept: [Item], talkTo: String? = nil,
+                             also: String = "", reach showReach: Bool = false) -> String {
+        var sections: [String] = []
+
+        // 1. Who the player is with right now.
+        var faced = facing(a)
+        if let to = talkTo, !to.isEmpty {
+            let one = faced.filter { Cards.first($0.name).lowercased() == Cards.first(to).lowercased() || $0.name.lowercased().contains(to.lowercased()) }
+            if !one.isEmpty { faced = Array(one.prefix(1)) } else { faced = Array(faced.prefix(1)) }
+        }
+        if !also.isEmpty, !faced.contains(where: { $0.name.caseInsensitiveCompare(also) == .orderedSame }),
+           let w = a.whereabouts.first(where: { $0.here != false && $0.name.caseInsensitiveCompare(also) == .orderedSame }) {
+            faced.append(w)
+        }
+
+        // 2. Spatial grounding from the 1m grid: concise during talk, full room view when moving/exploring/asking.
+        let detailed = !talk || arrived || roomAsked
+        let ground = GridCheck.grounding(in: a, focused: faced, detailed: detailed, showReach: showReach)
+        if !ground.isEmpty {
+            sections.append("## RIGHT NOW\n" + ground.joined(separator: "\n"))
+        }
+
+        // 3. Arriving in a new place: paint it vividly in natural order.
+        if arrived {
+            let y = year(a)
+            let time = a.storyTime.isEmpty ? (a.clock.map { Continuity.clockText($0) } ?? "") : a.storyTime
+            let when = [y, time].filter { !$0.isEmpty }.joined(separator: ", ")
+            let r = a.room.flatMap { $0.name.caseInsensitiveCompare(a.location) == .orderedSame ? $0 : nil }
+            var arrive = "ARRIVING AT " + (a.location.isEmpty ? "A NEW PLACE" : a.location.uppercased())
+                + ": bring the place to life in vivid, sensory prose ("
+                + [when.isEmpty ? "" : when, (r?.outside ?? "").isEmpty ? "" : "outside: " + clip(r!.outside, 100), (r?.inside ?? "").isEmpty ? "" : "inside: " + clip(r!.inside, 100)]
+                    .filter { !$0.isEmpty }.joined(separator: "; ")
+                + ")."
+            if let card = Cards.placeCard(a), !card.desc.isEmpty { arrive += " " + clip(card.desc, 200) }
+            sections.append(arrive)
+        }
+
+        // 4. The person(s) you're with: living portrait (who they are, voice, motivation, relationship, inner life).
+        if !faced.isEmpty {
+            var who: [String] = []
+            for w in faced {
+                let c = Cards.card(for: w, in: a)
+                let name = c?.name ?? w.name
+                var line = name
+                if let role = c?.role, !role.isEmpty { line += " (" + role + ")" }
+                let pr = Cards.pronoun(name, in: a)
+                if !pr.isEmpty { line += ", " + pr }
+                if let c, !c.desc.isEmpty { line += ": " + clip(c.desc, 160) }
+                if let c {
+                    if arrived {
+                        line += presence(c)
+                    } else {
+                        let bits = [c.voice.isEmpty ? "" : "Voice: " + clip(c.voice, 80), c.habit.isEmpty ? "" : "Habit: " + clip(c.habit, 70)].filter { !$0.isEmpty }
+                        if !bits.isEmpty { line += " " + bits.joined(separator: ". ") + "." }
+                    }
+                }
+                who.append(line)
+            }
+            let facingWords = Continuity.wordSet(who.joined(separator: " "))
+            let kept1 = kept.filter { !Continuity.grounded($0.text, in: facingWords, share: 0.75) }
+            if !kept1.isEmpty {
+                who += kept1.map { "- " + $0.text }
+            }
+            sections.append("## WHO YOU'RE WITH\n" + who.joined(separator: "\n"))
+        } else if !kept.isEmpty {
+            sections.append("## RELEVANT DETAILS\n" + kept.map { "- " + $0.text }.joined(separator: "\n"))
+        }
+
+        // 5. Real events or lookups for this moment (only when non-empty).
+        let cleanEvents = events.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if !cleanEvents.isEmpty {
+            sections.append("## THIS MOMENT\n" + cleanEvents.map { "- " + $0 }.joined(separator: "\n"))
+        }
+
+        return sections.joined(separator: "\n\n")
+    }
+
+    /// The player's actual turn as the final `user` message: clean and natural so it matches the
+    /// preceding conversation history, without wrapping it in a 600-token meta-form.
+    static func playerTurn(input: String, parts: (did: String, said: String)?, to: String, also: String) -> String {
+        if let p = parts {
+            let did = p.did.trimmingCharacters(in: .whitespacesAndNewlines)
+            let said = p.said.trimmingCharacters(in: .whitespacesAndNewlines)
+            var out: [String] = []
+            if !did.isEmpty {
+                out.append(did.hasSuffix(".") || did.hasSuffix("!") || did.hasSuffix("?") ? did : did + ".")
+            }
+            if !said.isEmpty {
+                let target = also.isEmpty || to.isEmpty ? to : to + " and " + also
+                let lead = out.isEmpty ? "I say" : "Then I say"
+                out.append(lead + (target.isEmpty ? "" : " to " + target) + ": \"" + said.replacingOccurrences(of: "\"", with: "'") + "\"")
+            } else if !did.isEmpty {
+                out.append("(I say nothing aloud.)")
+            }
+            if !out.isEmpty { return out.joined(separator: " ") }
+        }
+        return input.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// The private note before the player's words: when and where, who they face, this turn's

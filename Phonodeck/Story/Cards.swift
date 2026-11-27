@@ -269,7 +269,10 @@ enum Cards {
         }
         if !feel.isEmpty { l.append("- How they feel about you now (it carries into how they speak): " + feel.joined(separator: "; ")) }
         let facingCards: [LoreEntry] = a.whereabouts.filter { $0.here != false && $0.engaged == true && first($0.name).lowercased() != me }.compactMap { card(for: $0, in: a) }
-        let want: [String] = facingCards.compactMap { c in a.wants[c.name.lowercased()].map { c.name + " wants " + $0 } }
+        let want: [String] = facingCards.compactMap { c in
+            let w = a.wants[c.name.lowercased()] ?? (c.wants.isEmpty ? nil : c.wants)
+            return w.map { c.name + " wants " + $0 }
+        }
         if !want.isEmpty { l.append("- What they want right now, and why (it shows in what they do; they don't say it unless you ask): " + want.joined(separator: "; ")) }
         for c in facingCards {
             guard let k = a.knows[c.name.lowercased()], !k.isEmpty else { continue }
