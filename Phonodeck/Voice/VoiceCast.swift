@@ -137,61 +137,163 @@ struct VoiceCast {
         return VoiceCast(characters: assigned, defaultSpeakerName: defaultSpeaker)
     }
 
-    /// Finds the acting/speaking character in a narration cue (e.g. "Walter says", "the regular chuckles",
-    /// "she whispers"), ignoring characters mentioned only as the object of a glance or preposition
-    /// ("She glances briefly toward the bartender" -> Dolores, not Walter).
-    func matchSpeaker(in narration: String) -> CharacterVoice? {
-        var low = narration.lowercased()
-        guard low.count >= 2 else { return nil }
+    private static let speechVerbs = #"(?:says|said|asks|asked|replies|replied|answers|answered|adds|added|mutters|muttered|whispers|whispered|murmurs|murmured|chuckles|chuckled|laughs|laughed|calls|called|continues|continued|repeats|repeated|offers|offered|teases|teased|tells|told|corrects|corrected|interrupts|interrupted|grumbles|grumbled|sighs|sighed|speaks|spoke|chimes|chimed|pipes|piped)"#
 
-        // Remove character references that are merely the object of a preposition ("toward the bartender",
-        // "at Dolores", "past Walter", "to the regular") so glancing at someone never steals the voice.
-        let prep = #"\b(?:toward|towards|at|past|behind|beside|near|about|to|for|with|from|than|like)\s+(?:the\s+|a\s+|an\s+)?"#
+    private static let invertedSpeechVerbs = #"(?:says|said|asks|asked|replies|replied|answers|answered|adds|added|mutters|muttered|whispers|whispered|murmurs|murmured|chuckles|chuckled|laughs|laughed|calls|called|continues|continued|repeats|repeated|grumbles|grumbled|sighs|sighed|speaks|spoke)"#
+
+    private static let transitiveVerbs = #"(?:watch|watches|watched|watching|eye|eyes|eyed|eyeing|see|sees|saw|seeing|notice|notices|noticed|noticing|hear|hears|heard|hearing|tell|tells|told|telling|ask|asks|asked|asking|hand|hands|handed|handing|pass|passes|passed|passing|offer|offers|offered|offering|show|shows|showed|showing|face|faces|faced|facing|ignore|ignores|ignored|ignoring|study|studies|studied|studying|leave|leaves|left|leaving|catch|catches|caught|catching|mention|mentions|mentioned|mentioning|address|addresses|addressed|addressing|remind|reminds|reminded|reminding|warn|warns|warned|warning|join|joins|joined|joining|follow|follows|followed|following|meet|meets|met|meeting|greet|greets|greeted|greeting)"#
+
+    private static let subordinateClausePattern = #"\b(?:where|while|who|whom|whose|which|when|whenever|until|before|after|since|though|although|because|as)\b[^,;—–.!?]*"#
+
+    private static let prepositionalPhrasePattern = #"\b(?:toward|towards|at|past|behind|beside|near|about|of|to|for|with|from|than|like|into|onto|over|across|against|around|between|opposite|by|in|on|under|along|through)\b(?:\s+(?!and\b|but\b|then\b|so\b|yet\b)[^,;—–.!?\s]+)*"#
+
+    private func subjectPatterns(for c: CharacterVoice) -> [String] {
+        var pats = [#"\b"# + NSRegularExpression.escapedPattern(for: c.name.lowercased()) + #"\b"#]
+        if c.firstName.count >= 3 {
+            pats.append(#"\b"# + NSRegularExpression.escapedPattern(for: c.firstName) + #"\b"#)
+        }
+        if c.fullRole.count >= 4 {
+            pats.append(#"\b(?:the\s+)?"# + NSRegularExpression.escapedPattern(for: c.fullRole) + #"\b"#)
+        }
+        if !c.roleHead.isEmpty {
+            // Require definite article so adjective uses like "his regular coffee" never match "the regular".
+            pats.append(#"\bthe\s+(?:[a-z'-]+\s+){0,2}"# + NSRegularExpression.escapedPattern(for: c.roleHead) + #"\b"#)
+        }
+        if c.gender == .male, characters.filter({ $0.gender == .male }).count == 1 {
+            pats.append(#"\bhe\b"#)
+        }
+        if c.gender == .female, characters.filter({ $0.gender == .female }).count == 1 {
+            pats.append(#"\bshe\b"#)
+        }
+        return pats
+    }
+
+    private func targetPatterns(for c: CharacterVoice) -> [String] {
+        var pats = [NSRegularExpression.escapedPattern(for: c.name.lowercased())]
+        if c.firstName.count >= 3 { pats.append(NSRegularExpression.escapedPattern(for: c.firstName)) }
+        if c.fullRole.count >= 4 { pats.append(NSRegularExpression.escapedPattern(for: c.fullRole)) }
+        if !c.roleHead.isEmpty { pats.append(NSRegularExpression.escapedPattern(for: c.roleHead)) }
+        return pats
+    }
+
+    private func lastMatch(of pattern: String, in text: String) -> String.Index? {
+        var found: String.Index? = nil
+        var start = text.startIndex
+        while start < text.endIndex,
+              let r = text.range(of: pattern, options: .regularExpression, range: start..<text.endIndex) {
+            found = r.lowerBound
+            start = r.upperBound > start ? r.upperBound : text.index(after: start)
+        }
+        return found
+    }
+
+    private func stripSubordinateClauses(in sentence: String) -> String {
+        sentence.replacingOccurrences(of: Self.subordinateClausePattern, with: " ", options: .regularExpression)
+    }
+
+    private func stripNonSubjectClauses(in sentence: String) -> String {
+        var s = stripSubordinateClauses(in: sentence)
+        s = s.replacingOccurrences(of: Self.prepositionalPhrasePattern, with: " ", options: .regularExpression)
         for c in characters {
-            var targets = [c.name.lowercased()]
-            if c.firstName.count >= 3 { targets.append(c.firstName) }
-            if c.fullRole.count >= 4 { targets.append(c.fullRole) }
-            if !c.roleHead.isEmpty { targets.append(c.roleHead) }
-            for t in targets {
-                let pat = prep + NSRegularExpression.escapedPattern(for: t) + #"\b"#
-                low = low.replacingOccurrences(of: pat, with: " ", options: .regularExpression)
+            for t in targetPatterns(for: c) {
+                let objPat = #"\b"# + Self.transitiveVerbs + #"\s+(?:the\s+(?:[a-z'-]+\s+){0,2}|a\s+|an\s+)?"# + t + #"(?:'s|’s)?\b"#
+                s = s.replacingOccurrences(of: objPat, with: " ", options: .regularExpression)
+                // Strip trailing absolute participial background clauses (", the friendly regular still humming").
+                let partPat = #"[,;—–]\s*(?:the\s+(?:[a-z'-]+\s+){0,2})?"# + t + #"\s+(?:still\s+|quietly\s+|softly\s+|slowly\s+)?[a-z]+ing\b[^,;—–.!?]*"#
+                s = s.replacingOccurrences(of: partPat, with: " ", options: .regularExpression)
             }
         }
+        return s
+    }
 
-        let words = Continuity.wordSet(low)
-
-        // 1. Direct name or role match (take the last remaining subject mention in the narration).
+    private func matchSpeechVerb(in sentence: String, isPostQuoteTag: Bool) -> CharacterVoice? {
+        let stripped = stripSubordinateClauses(in: sentence)
         var best: (CharacterVoice, String.Index)? = nil
-        func consider(_ c: CharacterVoice, range: Range<String.Index>?) {
-            guard let r = range else { return }
-            if best == nil || r.lowerBound > best!.1 { best = (c, r.lowerBound) }
-        }
         for c in characters {
-            consider(c, range: low.range(of: c.name.lowercased(), options: .backwards))
-            if c.firstName.count >= 3, words.contains(c.firstName) {
-                consider(c, range: low.range(of: #"\b"# + NSRegularExpression.escapedPattern(for: c.firstName) + #"\b"#, options: [.regularExpression, .backwards]))
-            }
-            if c.fullRole.count >= 4 {
-                consider(c, range: low.range(of: c.fullRole, options: .backwards))
-            }
-            if !c.roleHead.isEmpty, words.contains(c.roleHead) {
-                consider(c, range: low.range(of: #"\b"# + NSRegularExpression.escapedPattern(for: c.roleHead) + #"\b"#, options: [.regularExpression, .backwards]))
+            for sp in subjectPatterns(for: c) {
+                let pat = sp + #"(?:\s+[a-z'-]+ly)?\s+"# + Self.speechVerbs + #"\b"#
+                if let idx = lastMatch(of: pat, in: stripped) {
+                    if best == nil || idx > best!.1 { best = (c, idx) }
+                }
             }
         }
         if let found = best { return found.0 }
-
-        // 2. Unambiguous pronoun cue ("he says", "she laughs", "her voice").
-        let hasShe = low.range(of: #"\b(she|her|hers)\b"#, options: .regularExpression) != nil
-        let hasHe = low.range(of: #"\b(he|him|his)\b"#, options: .regularExpression) != nil
-        if hasShe && !hasHe {
-            let fem = characters.filter { $0.gender == .female }
-            if fem.count == 1 { return fem[0] }
-        }
-        if hasHe && !hasShe {
-            let masc = characters.filter { $0.gender == .male }
-            if masc.count == 1 { return masc[0] }
+        if isPostQuoteTag {
+            for c in characters {
+                for sp in subjectPatterns(for: c) {
+                    let pat = #"^[,;—–\s]*"# + Self.invertedSpeechVerbs + #"\s+"# + sp
+                    if stripped.range(of: pat, options: .regularExpression) != nil {
+                        return c
+                    }
+                }
+            }
         }
         return nil
+    }
+
+    private func findLastSubject(in skeleton: String) -> CharacterVoice? {
+        var best: (CharacterVoice, String.Index)? = nil
+        for c in characters {
+            for pat in subjectPatterns(for: c) {
+                if let idx = lastMatch(of: pat, in: skeleton) {
+                    if best == nil || idx > best!.1 { best = (c, idx) }
+                }
+            }
+        }
+        return best?.0
+    }
+
+    /// Finds the acting/speaking character in a narration cue (e.g. "Walter says", "the regular chuckles",
+    /// "she whispers"), ignoring characters mentioned only in subordinate clauses, prepositional phrases,
+    /// or as direct objects ("He turns to the neighbor stools where the friendly regular hums, then back to you." -> Walter).
+    func matchSpeaker(in narration: String, isPostQuoteTag: Bool = false) -> CharacterVoice? {
+        let low = narration.lowercased()
+        guard low.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return nil }
+
+        let sentences = low
+            .components(separatedBy: CharacterSet(charactersIn: ".!?\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !sentences.isEmpty else { return nil }
+
+        // For a post-quote attribution tag, only the first sentence belongs to the preceding quote.
+        let ordered = isPostQuoteTag ? [sentences[0]] : Array(sentences.reversed())
+
+        for sent in ordered {
+            // 1. Explicit speaking-verb attribution ("she tells the bartender", "says Dolores").
+            if let sp = matchSpeechVerb(in: sent, isPostQuoteTag: isPostQuoteTag) {
+                return sp
+            }
+            // 2. Main-clause grammatical subject after stripping subordinate/prepositional/object mentions.
+            let skeleton = stripNonSubjectClauses(in: sent)
+            if let sp = findLastSubject(in: skeleton) {
+                return sp
+            }
+            // 3. Unambiguous possessive pronoun fallback ("His voice drops low.", "Her eyes light up.").
+            let hasHis = skeleton.range(of: #"\bhis\b"#, options: .regularExpression) != nil
+            let hasHer = skeleton.range(of: #"\bher\b"#, options: .regularExpression) != nil
+            if hasHis && !hasHer {
+                let masc = characters.filter { $0.gender == .male }
+                if masc.count == 1 { return masc[0] }
+            }
+            if hasHer && !hasHis {
+                let fem = characters.filter { $0.gender == .female }
+                if fem.count == 1 { return fem[0] }
+            }
+        }
+        return nil
+    }
+
+    /// True when the narration immediately following a closing quote is a dialogue tag for that quote
+    /// (`"Bob," he repeats.` or `"Good?" she asks.`), rather than an unrelated next sentence (`"Good." Dolores hums.`).
+    private func looksLikeDialogueTag(quote: String, after: String) -> Bool {
+        let q = quote.trimmingCharacters(in: .whitespacesAndNewlines)
+        let a = after.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !a.isEmpty else { return false }
+        if let last = q.last, last == "," || last == "—" || last == "–" { return true }
+        if let first = a.first, first.isLowercase { return true }
+        let firstSentence = a.components(separatedBy: CharacterSet(charactersIn: ".!?\n")).first ?? a
+        return matchSpeechVerb(in: firstSentence.lowercased(), isPostQuoteTag: true) != nil
     }
 
     func character(named name: String) -> CharacterVoice? {
@@ -244,16 +346,17 @@ struct VoiceCast {
             let piece = rawSpans[idx].text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !piece.isEmpty else { continue }
             if !rawSpans[idx].isDialogue {
-                // Narration updates who's currently acting/speaking if a person is named.
+                // Narration updates who's currently acting/speaking if a person is the grammatical subject.
                 if let matched = matchSpeaker(in: piece) {
                     currentSpeaker = matched.name
                 }
                 out.append(Segment(text: piece, speaker: nil, isDialogue: false))
             } else {
-                // Dialogue: if the immediately following narration attributes this quote
-                // ("\"Bob,\" he repeats" or "\"My name's Dolores,\" the regular says"), prefer it!
+                // Dialogue: if the immediately following narration is an attribution tag for this quote
+                // ("\"Bob,\" he repeats" or "\"My name's Dolores,\" the regular says"), prefer it.
                 if idx + 1 < rawSpans.count, !rawSpans[idx + 1].isDialogue,
-                   let after = matchSpeaker(in: rawSpans[idx + 1].text) {
+                   looksLikeDialogueTag(quote: piece, after: rawSpans[idx + 1].text),
+                   let after = matchSpeaker(in: rawSpans[idx + 1].text, isPostQuoteTag: true) {
                     currentSpeaker = after.name
                 }
                 let resolved = currentSpeaker.flatMap { character(named: $0) }

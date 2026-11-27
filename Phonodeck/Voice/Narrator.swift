@@ -45,6 +45,7 @@ final class Narrator: NSObject {
     private var cast: VoiceCast = .empty
     private var inQuote = false
     private var currentSpeaker: String?
+    private var endedWithNewline = false
 
     // Neural voice
     private var ttsModel: SpeechGenerationModel?
@@ -248,15 +249,22 @@ final class Narrator: NSObject {
         buffer = ""
         inQuote = false
         currentSpeaker = nil
+        endedWithNewline = false
     }
 
     /// Adds newly written text; complete sentences are spoken right away.
     func feed(_ text: String) {
         buffer += text
         while let cut = Self.sentenceEnd(in: buffer) {
-            let sentence = String(buffer[..<cut]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let raw = String(buffer[..<cut])
             buffer = String(buffer[cut...])
-            if !sentence.isEmpty { enqueue(sentence) }
+            let paragraphBreak = raw.hasPrefix("\n\n") || (endedWithNewline && raw.hasPrefix("\n"))
+            endedWithNewline = raw.hasSuffix("\n")
+            let sentence = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty {
+                if paragraphBreak && !inQuote { currentSpeaker = nil }
+                enqueue(sentence)
+            }
         }
     }
 
@@ -267,9 +275,15 @@ final class Narrator: NSObject {
 
     /// The reply is complete: speak what is left.
     func finish() {
-        let rest = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = buffer
         buffer = ""
-        if !rest.isEmpty { enqueue(rest) }
+        let paragraphBreak = raw.hasPrefix("\n\n") || (endedWithNewline && raw.hasPrefix("\n"))
+        endedWithNewline = false
+        let rest = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !rest.isEmpty {
+            if paragraphBreak && !inQuote { currentSpeaker = nil }
+            enqueue(rest)
+        }
         streamDone = true
         checkFinished()
     }
@@ -295,6 +309,7 @@ final class Narrator: NSObject {
         buffer = ""
         inQuote = false
         currentSpeaker = nil
+        endedWithNewline = false
         streamDone = true
         speaking = false
         preparing = false
