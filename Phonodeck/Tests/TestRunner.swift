@@ -436,6 +436,26 @@ final class TestRunner {
                 return !words.contains { low.contains($0) }
             }.map(\.name)
             return ("names-who-is-here", "The reply", "mentions everyone with you (" + peopleList + ")", missing.isEmpty ? "yes" : "left out " + missing.joined(separator: ", "), missing.isEmpty)
+        case "recalls":
+            // The reply picks up the thread from N replies back: it shares a telling word (five
+            // letters or more, not a name or the place) with that earlier reply.
+            let n = Int(arg) ?? 4
+            let replies = after.transcript.filter { $0.role == .gm }.map(\.text)
+            guard replies.count > n else { return ("remembers-thread", "The reply", "picks up a word from \(n) replies back", "too few replies", false) }
+            let earlier = replies[replies.count - 1 - n]
+            let common: Set<String> = ["there", "their", "about", "would", "could", "should", "which", "where", "these", "those", "while", "still", "something",
+                                       "nothing", "really", "little", "right", "think", "years", "always", "never", "again", "voice", "smile", "smiles", "looks", "says"]
+            let names = Set(after.cast.flatMap { Continuity.wordSet($0.name + " " + $0.role) } + Continuity.wordSet(after.location + " " + after.playerName))
+            func telling(_ x: String) -> Set<String> { Set(Continuity.wordSet(x).filter { $0.count >= 5 && !common.contains($0) && !names.contains($0) }) }
+            let shared = telling(earlier).intersection(telling(reply))
+            return ("remembers-thread", "The reply", "picks up a word from \(n) replies back", shared.isEmpty ? "no" : "yes: " + shared.sorted().prefix(4).joined(separator: ", "), !shared.isEmpty)
+        case "opened":
+            // Real interest over a few turns opened at least one more of what they keep close.
+            let card = ctx.card(arg, in: after.cast)
+            let depth = card.map { after.opened[$0.name.lowercased()] ?? 0 } ?? 0
+            let have = card?.depths.count ?? 0
+            return ("opens-up", "What does " + ctx.label(arg) + " keep close?", ctx.label(arg) + " opened up at least once",
+                    have == 0 ? "no ladder made" : "opened \(depth) of \(max(0, have - 1))", depth >= 1)
         default:
             return (name, "", c, "unknown check", false)
         }

@@ -116,6 +116,10 @@ struct LoreEntry: Codable, Hashable, Identifiable {
     /// keeps her secret"). Asked once at the start so the people stay consistent with each other;
     /// it shows in how they act, and nobody explains it unless the player asks.
     var ties = ""
+    /// What they keep close, from easiest to share to hardest (a small worry, then a regret, then
+    /// what they'd tell almost nobody). Made once with them; the talk opens one more each time the
+    /// player shows real interest (see `Adventure.opened`), so a revelation is earned, a step at a time.
+    var depths: [String] = []
     /// Everything this person has said aloud in the story, in order ("turn 2: Sarah was my first
     /// customer…"), for their card and for looking back. Never sent whole to the storyteller.
     var said: [String] = []
@@ -136,7 +140,7 @@ struct LoreEntry: Codable, Hashable, Identifiable {
         self.name = name; self.kind = kind; self.desc = desc; self.role = role; self.known = known; self.wants = wants; self.isPlayer = isPlayer
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, kind, desc, role, known, wants, privateLife, ties, said, looks, wears, voice, habit, isPlayer, byPlayer, updatedTurn }
+    enum CodingKeys: String, CodingKey { case id, name, kind, desc, role, known, wants, privateLife, ties, depths, said, looks, wears, voice, habit, isPlayer, byPlayer, updatedTurn }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decodeIfPresent(UUID.self, forKey: .id)) ?? UUID()
@@ -148,6 +152,7 @@ struct LoreEntry: Codable, Hashable, Identifiable {
         wants = (try? c.decodeIfPresent(String.self, forKey: .wants)) ?? ""
         privateLife = (try? c.decodeIfPresent(String.self, forKey: .privateLife)) ?? ""
         ties = (try? c.decodeIfPresent(String.self, forKey: .ties)) ?? ""
+        depths = (try? c.decodeIfPresent([String].self, forKey: .depths)) ?? []
         said = (try? c.decodeIfPresent([String].self, forKey: .said)) ?? []
         looks = (try? c.decodeIfPresent(String.self, forKey: .looks)) ?? ""
         wears = (try? c.decodeIfPresent(String.self, forKey: .wears)) ?? ""
@@ -373,6 +378,14 @@ struct Adventure: Codable, Identifiable, Hashable {
     /// What has happened between each person and the player ("you bought him a drink"), newest
     /// last, by lowercased card name. Kept on their card so later moments remember it.
     var between: [String: [String]] = [:]
+    /// A running summary of the player's talk with each person, older than the last few messages
+    /// the storyteller sees word for word, by lowercased card name. At most about 80 words, so a
+    /// long talk costs no more than a short one.
+    var talkSummary: [String: String] = [:]
+    /// How many of each person's `depths` beyond the first the talk has opened, by lowercased card
+    /// name, and the turn the last one opened.
+    var opened: [String: Int] = [:]
+    var openedAt: [String: Int] = [:]
     /// How the player is, physically ("soaked and cold, one drink in").
     var body = ""
     /// How the player says they feel, in their own words ("homesick", "nervous about the job").
@@ -397,7 +410,7 @@ struct Adventure: Codable, Identifiable, Hashable {
              summarisedTurns, goalProgress, mood, transcript, minutes, elapsed, lastSendAt, turnTimes, left, ended, report, lastDirector,
              notes, notesTurn, notesStale, bibleTurn, places, links, sequelOf, link, facts, fixes, nextMove, scene,
              storyTime, timeline, whereabouts, gmWait, clock, carrying, things, placeThings, nameless, checks, frames, placeSeen,
-             pending, feelings, spot, ambience, wants, knows, body, feels, progress, placeClock, between, rooms, roomID, coreFacts
+             pending, feelings, spot, ambience, wants, knows, body, feels, progress, placeClock, between, rooms, roomID, coreFacts, talkSummary, opened, openedAt
     }
 
     /// Tolerant: stories saved by an older version (with "cast" instead of "lore") still open.
@@ -434,6 +447,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         wants = v(.wants, [String: String]()); knows = v(.knows, [String: [String]]()); body = v(.body, ""); feels = v(.feels, ""); progress = v(.progress, [String]())
         placeClock = v(.placeClock, [String: Int]()); between = v(.between, [String: [String]]())
         rooms = v(.rooms, [Room]()); roomID = try? c.decodeIfPresent(UUID.self, forKey: .roomID)
+        talkSummary = v(.talkSummary, [String: String]()); opened = v(.opened, [String: Int]()); openedAt = v(.openedAt, [String: Int]())
     }
 
     func encode(to encoder: Encoder) throws {
@@ -459,6 +473,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         try c.encode(wants, forKey: .wants); try c.encode(knows, forKey: .knows); try c.encode(body, forKey: .body); try c.encode(feels, forKey: .feels); try c.encode(progress, forKey: .progress)
         try c.encode(placeClock, forKey: .placeClock); try c.encode(between, forKey: .between)
         try c.encode(rooms, forKey: .rooms); try c.encodeIfPresent(roomID, forKey: .roomID)
+        try c.encode(talkSummary, forKey: .talkSummary); try c.encode(opened, forKey: .opened); try c.encode(openedAt, forKey: .openedAt)
         try c.encode(places, forKey: .places); try c.encode(links, forKey: .links)
     }
 
@@ -476,6 +491,7 @@ struct Adventure: Codable, Identifiable, Hashable {
         pending = o.pending; feelings = o.feelings; spot = o.spot; ambience = o.ambience
         wants = o.wants; knows = o.knows; body = o.body; feels = o.feels; progress = o.progress; placeClock = o.placeClock; between = o.between
         rooms = o.rooms; roomID = o.roomID
+        talkSummary = o.talkSummary; opened = o.opened; openedAt = o.openedAt
     }
 
     /// The mission map as the Game Master reads it: where you are, where you have been, and what connects.
