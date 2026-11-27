@@ -307,6 +307,7 @@ final class StoryEngine {
 
     func close() {
         stopAll()
+        AmbientSoundscape.shared.stop()
         handsFree = false
         if let a = adventure { library.save(a) }
         adventure = nil
@@ -816,99 +817,55 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
-            // Each person here, once: how they come across in a room (their look, what they wear,
-            // their voice, one habit), written to fit the age just settled. It goes on their card
-            // and comes along whenever they are in a scene, so they read as real people from the
-            // first line.
+            // Each person here, once: one coherent portrait call (look, clothes, voice, habit, three
+            // true life memories, and three layered private depths) written together against their
+            // settled age and tenure — cuts 4-6 sequential startup calls (~20s) and keeps all details consistent.
             if source == nil {
-                let here = a.cast.filter { c in !c.isPlayer && Cards.first(c.name).lowercased() != me1 && c.looks.isEmpty
+                let here = a.cast.filter { c in !c.isPlayer && !c.byPlayer && c.looks.isEmpty && Cards.first(c.name).lowercased() != me1
                     && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
                 for c in here.prefix(3) {
                     stage = "Getting to know " + Cards.first(c.name)
                     let fixed = settled(c)
-                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN: " + Fovea.whenWhere(a)
+                    let known = a.facts.filter { f in a.cast.contains { Cards.mentions($0, in: f) } && !f.contains(" uses ") && !fixed.contains(f) }.suffix(8)
+                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN AND WHERE: " + Fovea.whenWhere(a)
+                        + (a.setup.place.isEmpty ? "" : " " + clip(a.setup.place, 100))
                         + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
-                        + (fixed.isEmpty ? "" : "\nSETTLED (true; their look must fit it):\n" + fixed.map { "- " + $0 }.joined(separator: "\n"))
-                        + "\nQUESTION: How does " + Cards.first(c.name) + " come across to someone who walks in? Keep to what THE STORY, WHO THEY ARE and SETTLED say about them (their age, their work). Their look (face, build, one striking detail; they look exactly the age SETTLED gives, so name no other age), what they wear, how they sound when they talk (cadence, tone, accent, a phrase they lean on; never what they will or won't talk about, and no 'only' or 'never'), and one small habit of theirs. True to their time, place and work; specific and a little imperfect, like a real person. Each a complete phrase of at most 14 words.\nOutput ONLY one JSON object:\n{\"looks\":\"a short line\",\"wears\":\"a short line\",\"voice\":\"a short line\",\"habit\":\"a short line\"}\nThe form:"
+                        + (fixed.isEmpty ? "" : "\nSETTLED (true; everything must fit it):\n" + fixed.map { "- " + $0 }.joined(separator: "\n"))
+                        + (c.ties.isEmpty ? "" : "\nHOW THEY KNOW THE OTHERS: " + clip(c.ties, 220))
+                        + (c.wants.isEmpty ? "" : "\nWHAT THEY WANT: " + clip(c.wants, 160))
+                        + (c.privateLife.isEmpty ? "" : "\nPRIVATE: " + clip(c.privateLife, 180))
+                        + (known.isEmpty ? "" : "\nALREADY ON FILE (never repeat someone else's memory):\n" + known.map { "- " + clip($0, 150) }.joined(separator: "\n"))
+                        + "\nQUESTION: Bring " + c.name + " to life as a real, specific, slightly imperfect human who fits SETTLED, WHEN AND WHERE, and their work. Output ONLY one JSON object:\n"
+                        + "{\"looks\":\"face, build, one striking detail matching their exact age (<=14 words)\","
+                        + "\"wears\":\"what they wear (<=14 words)\","
+                        + "\"voice\":\"cadence, tone, accent, or verbal tic (<=14 words)\","
+                        + "\"habit\":\"one small physical habit (<=14 words)\","
+                        + "\"life\":[\"three true human-scale sentences starting with their name: where they were before, a memory here, something they are proud of; no calendar years or ages\"],"
+                        + "\"depths\":[\"three private sentences starting with their name, easiest to share first: a small worry/hope, a regret/loss, and what they tell almost nobody; no calendar years or ages\"]}\nThe form:"
                     let q0 = Date()
-                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 240, temperature: 0.7, repetitionPenalty: 1.1,
-                                                                                         grammar: JSONGrammar.quad([("looks", 110), ("wears", 110), ("voice", 110), ("habit", 110)])))) ?? ""
-                    noteQ("cards", "How does " + Cards.first(c.name) + " come across?", raw, since: q0)
+                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 460, temperature: 0.65, repetitionPenalty: 1.1))) ?? ""
+                    noteQ("cards", "Portrait of " + Cards.first(c.name), raw, since: q0)
                     guard !Task.isCancelled else { return }
                     let m = JSONExtract.object(raw) ?? Self.salvageJSON(raw)
                     @MainActor func v(_ k: String) -> String {
                         let t = ((m[k] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " .\n"))
                         return t.count > 3 && !Self.echoesPrompt(t) ? t : ""
                     }
-                    guard let k = a.lore.firstIndex(where: { $0.id == c.id }), !a.lore[k].byPlayer else { continue }
-                    a.lore[k].looks = v("looks"); a.lore[k].wears = v("wears"); a.lore[k].voice = v("voice"); a.lore[k].habit = v("habit")
-                }
-                stage = ""
-                adventure = a
-                library.save(a)
-            }
-            // Each person here, once: three true things from their life (where they were before,
-            // a memory from here, something they are fond of), saved as facts. Small talk ("how
-            // long have you kept this light?") then has something on file to answer from, and the
-            // answer is the same every time. The examples come from this place, never from
-            // another story: a list that says "a ship sighted" puts a ship in the desert.
-            if source == nil {
-                let here = a.cast.filter { c in !c.isPlayer && !c.byPlayer && Cards.first(c.name).lowercased() != me1
-                    && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
-                for c in here.prefix(3) {
-                    stage = "The life of " + Cards.first(c.name)
-                    let fixed = settled(c)
-                    let known = a.facts.filter { f in a.cast.contains { Cards.mentions($0, in: f) } && !f.contains(" uses ") && !fixed.contains(f) }.suffix(10)
-                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN AND WHERE: " + Fovea.whenWhere(a)
-                        + (a.setup.place.isEmpty ? "" : " " + clip(a.setup.place, 100))
-                        + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
-                        + (fixed.isEmpty ? "" : "\nSETTLED (true; every line must fit it):\n" + fixed.map { "- " + $0 }.joined(separator: "\n"))
-                        + (c.ties.isEmpty ? "" : "\nHOW THEY KNOW THE OTHERS: " + clip(c.ties, 240))
-                        + (c.privateLife.isEmpty ? "" : "\nPRIVATE: " + clip(c.privateLife, 200))
-                        + (known.isEmpty ? "" : "\nALREADY ON FILE (keep to it; never repeat someone else's memory):\n" + known.map { "- " + clip($0, 160) }.joined(separator: "\n"))
-                        + "\nQUESTION: Give three true things from " + c.name + "'s own life that they could tell a visitor: what they did or where they lived before, one memory from their time here, and one thing here they are proud of or fond of. Mundane, realistic and human-scale, made of what WHEN AND WHERE really has (its land and weather, its roads, its work, the people who pass through): nothing that could only happen in another kind of place, no tall tales, heroic rescues or large animals. Each fits SETTLED: nothing from before they could have been there, nothing older than they are. Theirs alone, different from anyone else's on file. No calendar years and no ages. Each a full sentence starting with their name, at most 20 words.\nOutput ONLY one JSON object:\n{\"life\":[\"three sentences\"]}\nThe form:"
-                    let q0 = Date()
-                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 160, temperature: 0.6, repetitionPenalty: 1.1,
-                                                                                         grammar: JSONGrammar.strings("life", max: 3, chars: 130)))) ?? ""
-                    noteQ("cards", "What has " + Cards.first(c.name) + " lived?", raw, since: q0)
-                    guard !Task.isCancelled else { return }
-                    let life = (((JSONExtract.object(raw) ?? Self.salvageJSON(raw))["life"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    if let k = a.lore.firstIndex(where: { $0.id == c.id }), !a.lore[k].byPlayer {
+                        a.lore[k].looks = v("looks")
+                        a.lore[k].wears = v("wears")
+                        a.lore[k].voice = v("voice")
+                        a.lore[k].habit = v("habit")
+                        let gotDepths = ((m["depths"] as? [Any]) ?? []).map { JSONExtract.text($0) }
+                            .filter { $0.count > 12 && !Self.echoesPrompt($0) }
+                        if !gotDepths.isEmpty {
+                            a.lore[k].depths = Array(gotDepths.prefix(3)).map { clip($0, 180) }
+                        }
+                    }
+                    let life = ((m["life"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
                     for l in life.prefix(3) where l.count > 12 && !Self.echoesPrompt(l) && !a.facts.contains(where: { Self.similar($0, l) }) {
                         a.facts.append(Cards.mentions(c, in: l) ? l : c.name + ": " + l)
                     }
-                }
-                stage = ""
-                adventure = a
-                library.save(a)
-            }
-            // Each person here, once: what they keep close, from easy to share to hardest (a small
-            // worry, a regret, what they'd tell almost nobody). The talk opens them one at a time as
-            // the player shows real interest, so there is something to find and it comes out
-            // earned. (Nov 26: one private sentence, given only when asked about their life, left
-            // little to reveal and one way to reach it.)
-            if source == nil {
-                let here = a.cast.filter { c in !c.isPlayer && !c.byPlayer && c.depths.isEmpty && Cards.first(c.name).lowercased() != me1
-                    && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
-                for c in here.prefix(3) {
-                    stage = "What " + Cards.first(c.name) + " keeps close"
-                    let fixed = settled(c)
-                    let theirs = a.facts.filter { Cards.mentions(c, in: $0) && !$0.contains(" uses ") }.suffix(6)
-                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN AND WHERE: " + Fovea.whenWhere(a)
-                        + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
-                        + (fixed.isEmpty ? "" : "\nSETTLED (true; every line must fit it):\n" + fixed.map { "- " + $0 }.joined(separator: "\n"))
-                        + (theirs.isEmpty ? "" : "\nTHEIR LIFE ON FILE:\n" + theirs.map { "- " + clip($0, 160) }.joined(separator: "\n"))
-                        + (c.wants.isEmpty ? "" : "\nWHAT THEY WANT: " + clip(c.wants, 160))
-                        + (c.privateLife.isEmpty ? "" : "\nPRIVATE: " + clip(c.privateLife, 200))
-                        + "\nQUESTION: What does " + Cards.first(c.name) + " keep close? Three things, from easiest to share to hardest: 1) a small worry or hope they'd admit to a friendly stranger; 2) a regret or a loss that still sits with them; 3) what they'd tell almost nobody" + (c.privateLife.isEmpty ? "" : " (it can be PRIVATE, said more fully)") + ". Concrete and human-scale, true to THEIR LIFE ON FILE, WHEN AND WHERE and SETTLED; each deeper than the one before, and the three of one life. No calendar years and no ages. Each a full sentence starting with their name, at most 22 words.\nOutput ONLY one JSON object:\n{\"depths\":[\"three sentences, easiest first\"]}\nThe form:"
-                    let q0 = Date()
-                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 200, temperature: 0.7, repetitionPenalty: 1.1,
-                                                                                         grammar: JSONGrammar.strings("depths", max: 3, chars: 150)))) ?? ""
-                    noteQ("cards", "What does " + Cards.first(c.name) + " keep close?", raw, since: q0)
-                    guard !Task.isCancelled else { return }
-                    let got = (((JSONExtract.object(raw) ?? Self.salvageJSON(raw))["depths"] as? [Any]) ?? []).map { JSONExtract.text($0) }
-                        .filter { $0.count > 12 && !Self.echoesPrompt($0) }
-                    guard let k = a.lore.firstIndex(where: { $0.id == c.id }), !a.lore[k].byPlayer, !got.isEmpty else { continue }
-                    a.lore[k].depths = Array(got.prefix(3)).map { clip($0, 180) }
                 }
                 stage = ""
                 adventure = a
@@ -2285,15 +2242,25 @@ final class StoryEngine {
             step("Who is back? → " + who + " (comes back in; you stay)")
         }
 
-        // 1. Look. One short call: who the player turns to, where they go, and what to look up.
+        // 1. Look. Fast-path pure conversation turns in 0 ms when target and intent are unambiguous;
+        // otherwise run the full LOOK call for physical actions, movement, items, or room lookups.
         var read: PlayerRead? = nil
         let context = readContext(a, input: input)
         if !hidden, !playerNarrates {
-            stage = "Who are you talking to?"
-            lapFrom = Date()
-            read = await lookPlayer(a, input: input, context: context)
-            guard !Task.isCancelled else { adventure = snapshot; return }
-            lap("look")
+            let fastAction = partsThisTurn?.did ?? Self.speechAndNarration(input).narration
+            if pickedNow == nil, returnerThisTurn.isEmpty,
+               let fast = Self.fastTalkRead(in: a, input: input, action: fastAction) {
+                read = fast
+                explicitTurn = true
+                step("Fast talk path → " + fast.to + " (0s LOOK)")
+                lap("look")
+            } else {
+                stage = "Who are you talking to?"
+                lapFrom = Date()
+                read = await lookPlayer(a, input: input, context: context)
+                guard !Task.isCancelled else { adventure = snapshot; return }
+                lap("look")
+            }
             // Someone else coming back in: the player doesn't move ("The young apprentice comes back
             // in" was filed as your body, and walked you to the door).
             if !returnerThisTurn.isEmpty, read != nil {
@@ -3066,7 +3033,12 @@ final class StoryEngine {
         a.gmWait = Date().timeIntervalSince(ticked)
         lapFrom = Date()
         var firstWord = true
-        if narrate { narrator.begin() }
+        let defaultVoiceSpeaker = !(read?.to ?? "").isEmpty ? (read?.to ?? "") : focusThisTurn
+        AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a))
+        if narrate {
+            narrator.setCast(a.cast, facts: a.facts, defaultSpeaker: defaultVoiceSpeaker)
+            narrator.begin()
+        }
         var reply = ""
         var interrupted = false
         var presence: PresenceFilter? = nil
@@ -5808,6 +5780,102 @@ final class StoryEngine {
         }
 
         return nil
+    }
+
+    /// Deterministic 0 ms fast-path for pure conversation turns (including turning/looking at
+    /// someone and speaking). Returns a populated `PlayerRead` when the target and conversational
+    /// intent are completely unambiguous, skipping the ~10 s `LOOK` LLM call. Any physical action,
+    /// item interaction, movement, drink/menu order, time skip, or room lookup returns `nil` so
+    /// the full `LOOK` pass handles it.
+    static func fastTalkRead(in a: Adventure, input: String, action: String) -> PlayerRead? {
+        guard a.room != nil, !a.location.isEmpty else { return nil }
+        let (speech, rawNarration) = speechAndNarration(input)
+        let cleanAction = action
+            .replacingOccurrences(of: #"(?i)\b(then\s+)?i\s+say:\s*"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let spoken = speech.isEmpty ? rawNarration.trimmingCharacters(in: .whitespacesAndNewlines) : speech
+        guard !spoken.isEmpty else { return nil }
+
+        // 1. Resolve an unambiguous single conversational partner in the room.
+        let target: String
+        if let explicit = explicitTarget(in: a, input: input, action: cleanAction) {
+            target = explicit
+        } else {
+            // Without an explicit turn, only fast-path if the action is empty or a simple passive
+            // conversational beat (nod, smile, listen, lean, sigh, laugh, chuckle).
+            if !cleanAction.isEmpty {
+                let simpleBeat = #"(?i)^(?:i\s+)?(?:nod|nods|nodding|smile|smiles|smiling|grin|grins|laugh|laughs|chuckle|chuckles|sigh|sighs|listen|listens|lean\s+in|shrug|shrugs|wink|winks|pause|pauses)\b[^.!?]*[.!?]?$"#
+                guard cleanAction.range(of: simpleBeat, options: .regularExpression) != nil else { return nil }
+            }
+            let engaged = a.whereabouts.filter { $0.here != false && $0.engaged == true }
+            if engaged.count == 1 {
+                target = engaged[0].name
+            } else {
+                let here = a.whereabouts.filter { $0.here != false }
+                guard here.count == 1 else { return nil }
+                target = here[0].name
+            }
+        }
+        guard !target.isEmpty else { return nil }
+
+        // 2. Bail out to full LOOK if anything physical, spatial, group-addressed, or complex is present.
+        let actionToCheck = speech.isEmpty ? input : cleanAction
+        let physicalMove = #"(?i)\b(walk|walks|walking|go|goes|going|head|heads|leave|leaves|leaving|exit|exits|step|steps|move|moves|cross|crosses|stand|stands|standing|stood|sit|sits|sitting|sat|get\s+up|rise|rises|door|outside|inside|upstairs|downstairs|street|alley|window|corner|booth|across|over\s+to|up\s+to)\b"#
+        if !actionToCheck.isEmpty, actionToCheck.range(of: physicalMove, options: .regularExpression) != nil { return nil }
+
+        let physicalItem = #"(?i)\b(take|takes|taking|grab|grabs|pick|picks|put|puts|set|sets|drop|drops|hand|hands|give|gives|pay|pays|pour|pours|drink|drinks|sip|sips|swig|gulp|open|opens|close|closes|remove|removes|wear|wears|coat|hat|jacket|bag|bottle|glass|cup|coin|dollar|key|letter|book|note|pocket|chair|stool|bar|counter|table)\b"#
+        if !actionToCheck.isEmpty, actionToCheck.range(of: physicalItem, options: .regularExpression) != nil { return nil }
+
+        let arrivalOrLeave = #"(?i)\b(arrives?|enters?|walks?\s+in|comes?\s+in|knocks?|stranger|visitor|newcomer|someone|somebody|leaves?\s+the)\b"#
+        if !actionToCheck.isEmpty, actionToCheck.range(of: arrivalOrLeave, options: .regularExpression) != nil { return nil }
+
+        let leaveSpeech = #"(?i)\b(let'?s\s+(go|leave|head|walk)|i'?m\s+(leaving|heading\s+out)|walk\s+(you\s+|her\s+|him\s+)?home|step\s+outside|go\s+outside|come\s+with\s+me)\b"#
+        if spoken.range(of: leaveSpeech, options: .regularExpression) != nil { return nil }
+
+        let orderOrServe = #"(?i)\b(menu|order|pour\s+me|get\s+me|give\s+me|bring\s+me|pass\s+me|hand\s+me|i'?ll\s+(take|have)|can\s+i\s+have|what\s+do\s+you\s+(serve|have|got)|what'?s\s+(on\s+the\s+menu|served)|buy\s+a|pay\s+for|refill|another\s+round|whiskey|beer|gin|scotch|coffee|tea|water|drink)\b"#
+        if spoken.range(of: orderOrServe, options: .regularExpression) != nil { return nil }
+
+        let groupCue = #"(?i)\b(both\s+of\s+you|you\s+two|you\s+guys|everyone|everybody|all\s+of\s+you|either\s+of\s+you|y'?all)\b"#
+        if input.range(of: groupCue, options: .regularExpression) != nil { return nil }
+
+        let timeOrWeather = #"(?i)\b(hours?\s+(pass|later)|next\s+(morning|day|evening)|wait\s+until|stops?\s+raining|clears?\s+up|starts?\s+(raining|snowing)|sun\s+comes?\s+out)\b"#
+        if input.range(of: timeOrWeather, options: .regularExpression) != nil { return nil }
+
+        let lookupCue = #"(?i)\b(who\s+(else\s+)?is\s+here|who'?s\s+here|where\s+am\s+i|where\s+is\b|what\s+do\s+i\s+have|what'?s\s+around|what\s+is\s+around|what\s+time|outside|window|ways?\s+out|doors?|belong|whose\b|remember\b|earlier\b|look\s+around)\b"#
+        if input.range(of: lookupCue, options: .regularExpression) != nil { return nil }
+
+        // 3. Build a clean, zero-latency PlayerRead.
+        var read = PlayerRead()
+        read.to = target
+        read.going = "staying"
+        read.plan = [
+            "avoids": "no",
+            "gets_up": "no",
+            "needs": "",
+            "asks_room": "no",
+            "skips_hours": "0",
+            "weather": ""
+        ]
+
+        // Extract self-introduction name cleanly ("The name is Bob Hatchet", "My name is Bob", "Call me Bob").
+        let nameRe = #"(?i)\b(?:(?:my|the)\s+name(?:'s|\s+is)|call\s+me)\s+([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)?)\b"#
+        if let re = try? NSRegularExpression(pattern: nameRe) {
+            let ns = spoken as NSString
+            if let m = re.firstMatch(in: spoken, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges > 1 {
+                let given = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if given.count >= 2 {
+                    read.tells = "your name is " + given
+                }
+            }
+        }
+
+        // Trigger backstory lookup automatically when the player asks about their story/hopes/past.
+        let storyAsk = #"(?i)\b(your\s+story|about\s+yourself|hopes?|dreams?|future|where\s+are\s+you\s+from|how\s+long\s+have\s+you|your\s+(past|life|family|work)|why\s+did\s+you\s+come)\b"#
+        if spoken.range(of: storyAsk, options: .regularExpression) != nil {
+            read.looks.append(Looks.Look(kind: .backstory, target: target, byCode: true))
+        }
+
+        return read
     }
 
     /// Someone here or in the story whom the player asks about in what they say, when they are

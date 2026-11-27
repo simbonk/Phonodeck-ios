@@ -14,7 +14,11 @@ import Speech
 @Observable
 @MainActor
 final class Dictation {
-    private(set) var listening = false
+    private(set) var listening = false {
+        didSet {
+            if listening != oldValue { AmbientSoundscape.shared.setMicMuted(listening) }
+        }
+    }
     private(set) var transcribing = false
     private(set) var text = ""
     /// Counts each message sent from here, so the screens can empty their text box after the send phrase.

@@ -36,10 +36,20 @@ final class Narrator: NSObject {
     private var streamDone = true
     private var appleOutstanding = 0
 
+    private struct QueuedUtterance {
+        let text: String
+        let speaker: VoiceCast.CharacterVoice?
+    }
+
+    // Multi-voice audio drama cast (empty in regular Chat or when disabled)
+    private var cast: VoiceCast = .empty
+    private var inQuote = false
+    private var currentSpeaker: String?
+
     // Neural voice
     private var ttsModel: SpeechGenerationModel?
     private var ttsModelID: String?
-    private var sentenceQueue: [String] = []
+    private var sentenceQueue: [QueuedUtterance] = []
     private var worker: Task<Void, Never>?
     /// True while a neural voice still has sentences to turn into speech (it needs the GPU for
     /// that; playing the finished audio does not). Background story work waits for this.
@@ -150,8 +160,27 @@ final class Narrator: NSObject {
     private(set) var auditioningID: String?
     /// Sound is actually coming out (not just being prepared).
     private(set) var playing = false {
-        // The thinking hum gives way as soon as the voice is heard, as on the web app.
-        didSet { if playing && !oldValue { ComputerSounds.shared.stopHum() } }
+        // The thinking hum gives way as soon as the voice is heard, and ambience gently ducks.
+        didSet {
+            if playing && !oldValue { ComputerSounds.shared.stopHum() }
+            if playing != oldValue { AmbientSoundscape.shared.setDucked(playing) }
+        }
+    }
+
+    /// Assigns distinct character voices for the current story cast (and who the player is talking to).
+    func setCast(_ people: [LoreEntry], facts: [String], defaultSpeaker: String = "") {
+        let narratorKokoro = activeVoiceModel.map { Self.neuralVoice(for: $0) } ?? "af_heart"
+        cast = VoiceCast.build(
+            cast: people,
+            facts: facts,
+            narratorKokoro: narratorKokoro,
+            narratorAppleID: appleVoice?.identifier,
+            defaultSpeaker: defaultSpeaker
+        )
+    }
+
+    func clearCast() {
+        cast = .empty
     }
 
     /// Plays a sample in one voice (nil for Apple's) without changing the chosen narrator.
@@ -217,6 +246,8 @@ final class Narrator: NSObject {
         lastError = nil
         streamDone = false
         buffer = ""
+        inQuote = false
+        currentSpeaker = nil
     }
 
     /// Adds newly written text; complete sentences are spoken right away.
@@ -262,6 +293,8 @@ final class Narrator: NSObject {
         synthChars = 0
         gaps = 0
         buffer = ""
+        inQuote = false
+        currentSpeaker = nil
         streamDone = true
         speaking = false
         preparing = false
@@ -297,21 +330,32 @@ final class Narrator: NSObject {
     }
 
     private func enqueue(_ sentence: String) {
-        let text = clean(sentence)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        speaking = true
-        if usingNeural {
-            sentenceQueue.append(text)
-            startWorker()
-        } else {
-            Self.configureSession()
-            let u = AVSpeechUtterance(string: text)
-            u.voice = appleVoice
-            u.rate = Self.rate
-            u.postUtteranceDelay = 0.05
-            appleOutstanding += 1
-            synth.speak(u)
-            playing = true
+        let useCast = VoiceCast.enabled && !cast.characters.isEmpty && auditionVoice == nil
+        let segments: [VoiceCast.Segment] = useCast
+            ? cast.segment(sentence, inQuote: &inQuote, currentSpeaker: &currentSpeaker)
+            : [VoiceCast.Segment(text: sentence, speaker: nil, isDialogue: false)]
+        for seg in segments {
+            let text = clean(seg.text).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            speaking = true
+            if usingNeural {
+                sentenceQueue.append(QueuedUtterance(text: text, speaker: seg.speaker))
+                startWorker()
+            } else {
+                Self.configureSession()
+                let u = AVSpeechUtterance(string: text)
+                if let sp = seg.speaker {
+                    u.voice = sp.appleVoiceID.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? appleVoice
+                    u.pitchMultiplier = sp.applePitch
+                } else {
+                    u.voice = appleVoice
+                }
+                u.rate = Self.rate
+                u.postUtteranceDelay = seg.isDialogue ? 0.08 : 0.04
+                appleOutstanding += 1
+                synth.speak(u)
+                playing = true
+            }
         }
     }
 
@@ -399,7 +443,9 @@ final class Narrator: NSObject {
                 let boxed = Unchecked(value: model)
                 let onCPU = Self.neuralOnCPU
                 while !self.sentenceQueue.isEmpty, !Task.isCancelled, self.generation == myGeneration {
-                    let sentence = self.sentenceQueue.removeFirst()
+                    let item = self.sentenceQueue.removeFirst()
+                    let sentence = item.text
+                    let segVoice: String? = item.speaker.map { isQwen ? $0.qwenVoice : $0.kokoroVoice } ?? voiceArg
                     // Synthesis runs in the background, one MLX job at a time, so it can never freeze the screen.
                     // Marked while a neural voice is working, so a crash here is noticed at the next launch.
                     UserDefaults.standard.set(entry.id, forKey: "voiceInFlight")
@@ -425,7 +471,7 @@ final class Narrator: NSObject {
                         return try await Self.onChosenDevice(onCPU) {
                             try await withError { error in
                                 let audio = try await boxed.value.generate(
-                                    text: sentence, voice: voiceArg, refAudio: nil, refText: nil, language: language)
+                                    text: sentence, voice: segVoice, refAudio: nil, refText: nil, language: language)
                                 audio.eval()
                                 try error.check()
                                 let samples = audio.asArray(Float.self)
@@ -458,9 +504,14 @@ final class Narrator: NSObject {
                 self.lastError = "The \(entry.name) voice failed (\(error.localizedDescription)); using Apple's voice instead."
                 let leftover = self.sentenceQueue
                 self.sentenceQueue.removeAll()
-                for s in leftover {
-                    let u = AVSpeechUtterance(string: s)
-                    u.voice = self.appleVoice
+                for item in leftover {
+                    let u = AVSpeechUtterance(string: item.text)
+                    if let sp = item.speaker {
+                        u.voice = sp.appleVoiceID.flatMap { AVSpeechSynthesisVoice(identifier: $0) } ?? self.appleVoice
+                        u.pitchMultiplier = sp.applePitch
+                    } else {
+                        u.voice = self.appleVoice
+                    }
                     u.rate = Self.rate
                     self.appleOutstanding += 1
                     self.synth.speak(u)
@@ -481,7 +532,7 @@ final class Narrator: NSObject {
         // Start once the speech ready lasts longer than making the rest is expected to take (with
         // room to spare), so playback never catches up with the voice. Until the reply is fully
         // written the rest can't be measured, so wait for a comfortable cushion instead.
-        let remainingChars = sentenceQueue.reduce(0) { $0 + $1.count } + buffer.count
+        let remainingChars = sentenceQueue.reduce(0) { $0 + $1.text.count } + buffer.count
         let perChar = synthChars > 0 ? synthSeconds / Double(synthChars) : 0
         let needed = streamDone ? Double(remainingChars) * perChar * 1.3 + 0.5 : max(8, Double(remainingChars) * perChar * 1.3)
         if heldSeconds >= needed {

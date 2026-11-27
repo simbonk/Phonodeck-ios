@@ -7,6 +7,8 @@ struct SettingsView: View {
     @AppStorage("playerInterest") private var playerInterest = ""
     @AppStorage("sendPhrase") private var sendPhrase = ""
     @AppStorage("computerSounds") private var computerSounds = true
+    @AppStorage("multiVoiceCast") private var multiVoiceCast = true
+    @AppStorage("ambientSoundscape") private var ambientSoundscape = true
     @AppStorage("doThenSay") private var doThenSay = true
     @AppStorage(Reading.textSizeKey) private var textSize: Double = Reading.defaultTextSize
     @State private var editingCode = false
@@ -61,6 +63,12 @@ struct SettingsView: View {
                         engine.narrate = on
                         if !on { app.chat.stopReading(); app.narrator.stop() }
                     }))
+                    Toggle("Character voices", isOn: $multiVoiceCast)
+                    Toggle("Ambient soundscape", isOn: $ambientSoundscape)
+                        .onChange(of: ambientSoundscape) { _, on in
+                            if !on { AmbientSoundscape.shared.stop() }
+                            else if let a = engine.adventure { AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a)) }
+                        }
                     Stepper(value: $textSize, in: Reading.minTextSize...Reading.maxTextSize, step: 1) {
                         LabeledContent("Text size", value: "\(Int(textSize)) pt")
                     }
@@ -68,9 +76,9 @@ struct SettingsView: View {
                         .font(.system(size: textSize, design: .serif))
                         .foregroundStyle(Theme.dim)
                 } header: {
-                    Text("Reading")
+                    Text("Reading & Audio")
                 } footer: {
-                    Text("Shared by the Phonodeck and Chat, and also in each one's ••• menu. Tap any reply to hear it again, or to stop the voice.")
+                    Text("Character voices casts each person in a story with their own voice distinct from the narrator. Ambient soundscape adds a subtle, ducked room/weather bed (rain on glass, hearth warmth, evening air) that pauses while the mic listens.")
                 }
 
                 Section {

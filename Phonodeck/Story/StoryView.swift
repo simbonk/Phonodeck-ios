@@ -10,6 +10,7 @@ struct StoryView: View {
     @State private var sayInput = ""
     /// Settings > Hands-free > Do, then say: keeps action and spoken dialogue cleanly separated.
     @AppStorage("doThenSay") private var doThenSay = true
+    @AppStorage("ambientSoundscape") private var ambientEnabled = true
     /// The story (the Phonodeck mark), the world (globe) and the live log, as three icons along the top.
     enum Tab: String, CaseIterable { case story, world, log }
     enum ComposerField: Hashable { case single, action, say }
@@ -63,13 +64,18 @@ struct StoryView: View {
             .onChange(of: dictation.text) { _, t in if dictation.listening { input = t } }
             // The send phrase sent what was said: empty the box for the next turn.
             .onChange(of: dictation.sent) { input = "" }
+            .onAppear { AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a)) }
+            .onChange(of: a.location) { AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a)) }
+            .onDisappear { AmbientSoundscape.shared.stop() }
         }
     }
 
     // MARK: Header: title, World and the menu
 
     private func header(_ a: Adventure) -> some View {
-        HStack(spacing: 10) {
+        let mood = AmbientSoundscape.mood(for: a)
+        let soundOn = ambientEnabled && AmbientSoundscape.shared.currentMood != .none
+        return HStack(spacing: 10) {
             Button { engine.close() } label: {
                 Image(systemName: "chevron.left").font(.title3.weight(.semibold)).frame(width: 32, height: 36)
             }
@@ -79,6 +85,20 @@ struct StoryView: View {
                 Text(a.title).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
             }
             Spacer(minLength: 6)
+            Button {
+                ambientEnabled.toggle()
+                if ambientEnabled {
+                    AmbientSoundscape.shared.setMood(mood)
+                } else {
+                    AmbientSoundscape.shared.stop()
+                }
+            } label: {
+                Image(systemName: ambientEnabled ? mood.symbol : "speaker.slash")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(soundOn ? Theme.accent : Theme.dim)
+                    .frame(width: 34, height: 34)
+            }
+            .accessibilityLabel(ambientEnabled ? "Mute ambient sound (\(mood.label))" : "Turn on ambient sound")
             menu(a)
         }
         .padding(.horizontal, 12)
@@ -296,6 +316,10 @@ struct StoryView: View {
         if app.narrator.speaking || app.narrator.preparing {
             app.narrator.stop()
         } else {
+            if let a = engine.adventure {
+                let speaker = a.whereabouts.first { $0.here != false && $0.engaged == true }?.name ?? ""
+                app.narrator.setCast(a.cast, facts: a.facts, defaultSpeaker: speaker)
+            }
             app.narrator.speak(text)
         }
     }

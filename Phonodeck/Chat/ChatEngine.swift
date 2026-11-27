@@ -85,6 +85,7 @@ final class ChatEngine {
         } else {
             dictation.stop()
             reading = true
+            narrator.clearCast()
             narrator.speak(text)
             if !narrator.speaking { reading = false }
         }
@@ -120,7 +121,7 @@ final class ChatEngine {
         generating = true
         turn += 1
         let myTurn = turn
-        if speak { narrator.begin(); reading = true }
+        if speak { narrator.clearCast(); narrator.begin(); reading = true }
         ComputerSounds.shared.startHum()
         task = Task {
             do {
