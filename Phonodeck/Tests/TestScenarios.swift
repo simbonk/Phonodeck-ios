@@ -34,6 +34,8 @@ import Foundation
 ///   known {ref}         their name is known now
 ///   mentions a|b        the reply says one of the words
 ///   mentions-present    the reply mentions everyone in the room with you
+///   recalls N           the reply shares a telling word with the reply N turns back
+///   opened {ref}        they opened up at least once (one more of what they keep close)
 enum TestScenarios {
     static let bank = #"""
 # newcomer-violin | Someone walks in
@@ -281,6 +283,22 @@ enum TestScenarios {
 ? mentions {other}
 > || <<Tell me about {other}.|How long have you known {other}?>>
 ? mentions {other}
+
+# w-remembers-thread | Coming back to something said earlier in a talk | wide
+> I turn to {host}. || <<What did you do before you worked here?|Where did you grow up?|Who taught you this trade?>>
+> || Huh. And do you like it here?
+> || What's the busiest night you've had?
+> || <<What do you do when it's quiet?|Do you ever close early?>>
+> || Going back to what you said earlier, about before. Tell me more about that.
+? recalls 4
+
+# w-opens-up | Showing real interest, turn after turn | wide
+> I turn to {host}. || How long have you been here?
+> || That sounds like a long time. Do you ever miss anything about before?
+> || Go on.
+> || I'm sorry. That must have been hard.
+> || What keeps you going, then?
+? opened {host}
 """#
 
     struct Line {

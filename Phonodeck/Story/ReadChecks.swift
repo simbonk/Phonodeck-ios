@@ -96,6 +96,15 @@ enum ReadChecks {
             check(!StoryEngine.asksWhoIsHere(q), "asksWhoIsHere(\"\(q)\") should be false")
         }
 
+        // Real interest in the person you talk with opens one more of what they keep close.
+        for q in ["How long have you lived here?", "Tell me more about that.", "Go on.", "That sounds hard.", "I'm sorry, that must have been lonely.",
+                  "What happened after that?", "Do you miss your brother?", "Could you tell me more about the war?"] {
+            check(StoryEngine.opensUp(q), "opensUp(\"\(q)\") should be true")
+        }
+        for q in ["Could you pour me another?", "Can you pass the salt?", "I sit down by the fire.", "Nice weather.", "Where is the door?"] {
+            check(!StoryEngine.opensUp(q), "opensUp(\"\(q)\") should be false")
+        }
+
         // Who the player speaks to, and who they only ask about (Nov 27: a question about the old
         // barber, put to his nephew, moved the talk to the barber).
         let earl = LoreEntry(name: "Earl Hollis", kind: .person, role: "the old barber")

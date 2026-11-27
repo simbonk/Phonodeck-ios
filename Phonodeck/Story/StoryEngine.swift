@@ -210,6 +210,8 @@ final class StoryEngine {
     /// A turn that is only you talking to one person, staying put: the reply and the rebuild look
     /// at nothing but the two of you (and the date, the city and the weather).
     private var talkThisTurn = false
+    /// Who the player talked with this turn (a talk turn only), for the rebuild's talk summary.
+    private var talkWithThisTurn = ""
     /// The plan's plain reading of what the player did ("turned toward Dolores and smiled at her"),
     /// so a dictation slip ("I turned it, Dolores") isn't taken literally by the reply.
     private var didThisTurn = ""
@@ -863,6 +865,39 @@ final class StoryEngine {
                 adventure = a
                 library.save(a)
             }
+            // Each person here, once: what they keep close, from easy to share to hardest (a small
+            // worry, a regret, what they'd tell almost nobody). The talk opens them one at a time as
+            // the player shows real interest, so there is something to find and it comes out
+            // earned. (Nov 26: one private sentence, given only when asked about their life, left
+            // little to reveal and one way to reach it.)
+            if source == nil {
+                let here = a.cast.filter { c in !c.isPlayer && !c.byPlayer && c.depths.isEmpty && Cards.first(c.name).lowercased() != me1
+                    && a.whereabouts.contains { $0.name == c.name && $0.here != false } }
+                for c in here.prefix(3) {
+                    stage = "What " + Cards.first(c.name) + " keeps close"
+                    let fixed = settled(c)
+                    let theirs = a.facts.filter { Cards.mentions(c, in: $0) && !$0.contains(" uses ") }.suffix(6)
+                    let q = "THE STORY: " + clip(a.bible, 500) + Self.castAsWritten(a) + "\nWHEN AND WHERE: " + Fovea.whenWhere(a)
+                        + "\nTHE PERSON: " + c.name + (c.role.isEmpty ? "" : " (" + c.role + ")") + ": " + clip(c.desc, 200)
+                        + (fixed.isEmpty ? "" : "\nSETTLED (true; every line must fit it):\n" + fixed.map { "- " + $0 }.joined(separator: "\n"))
+                        + (theirs.isEmpty ? "" : "\nTHEIR LIFE ON FILE:\n" + theirs.map { "- " + clip($0, 160) }.joined(separator: "\n"))
+                        + (c.wants.isEmpty ? "" : "\nWHAT THEY WANT: " + clip(c.wants, 160))
+                        + (c.privateLife.isEmpty ? "" : "\nPRIVATE: " + clip(c.privateLife, 200))
+                        + "\nQUESTION: What does " + Cards.first(c.name) + " keep close? Three things, from easiest to share to hardest: 1) a small worry or hope they'd admit to a friendly stranger; 2) a regret or a loss that still sits with them; 3) what they'd tell almost nobody" + (c.privateLife.isEmpty ? "" : " (it can be PRIVATE, said more fully)") + ". Concrete and human-scale, true to THEIR LIFE ON FILE, WHEN AND WHERE and SETTLED; each deeper than the one before, and the three of one life. No calendar years and no ages. Each a full sentence starting with their name, at most 22 words.\nOutput ONLY one JSON object:\n{\"depths\":[\"three sentences, easiest first\"]}\nThe form:"
+                    let q0 = Date()
+                    let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 200, temperature: 0.7, repetitionPenalty: 1.1,
+                                                                                         grammar: JSONGrammar.strings("depths", max: 3, chars: 150)))) ?? ""
+                    noteQ("cards", "What does " + Cards.first(c.name) + " keep close?", raw, since: q0)
+                    guard !Task.isCancelled else { return }
+                    let got = (((JSONExtract.object(raw) ?? Self.salvageJSON(raw))["depths"] as? [Any]) ?? []).map { JSONExtract.text($0) }
+                        .filter { $0.count > 12 && !Self.echoesPrompt($0) }
+                    guard let k = a.lore.firstIndex(where: { $0.id == c.id }), !a.lore[k].byPlayer, !got.isEmpty else { continue }
+                    a.lore[k].depths = Array(got.prefix(3)).map { clip($0, 180) }
+                }
+                stage = ""
+                adventure = a
+                library.save(a)
+            }
             // Before the opening, the model reads back what was just made against the story as
             // the player wrote it, the clock and each person's settled numbers. The settled lines
             // are shown but can't be picked: they are the yardstick, not suspects. A line that
@@ -1503,6 +1538,10 @@ final class StoryEngine {
 
     /// Kept free in every prompt, because token counts here are estimates.
     static let safetyTokens = 96
+    /// A talk turn's word-for-word history: the last 8 messages, at most about 1,200 tokens. What
+    /// is older is folded into `Adventure.talkSummary` by the rebuild.
+    static let talkWindow = 8
+    static let talkWindowTokens = 1200
     /// The most the rules, bible and briefing can be squeezed (see `systemPrompt` and `briefingText`).
     static let tightest = 3
     /// Shown in the story export, so a playthrough can be matched to the code that ran it.
@@ -2067,6 +2106,7 @@ final class StoryEngine {
         plannedThisTurn = [:]
         focusThisTurn = ""
         talkThisTurn = false
+        talkWithThisTurn = ""
         alsoThisTurn = ""
         didThisTurn = ""
         stayingThisTurn = false
@@ -2787,6 +2827,7 @@ final class StoryEngine {
             let talk = !arrivedNow && !(read?.to ?? "").isEmpty && (going.isEmpty || going == "staying")
                 && (read?.newPlace ?? "").isEmpty && !moves
             talkThisTurn = talk
+            talkWithThisTurn = talk ? (read?.to ?? "") : ""
             if talk { maxOut = 420 }
             // Arriving somewhere new asks for a lot (the time, the place, the weather, who is there):
             // 300 tokens cut the river scene off mid-sentence.
@@ -2950,6 +2991,11 @@ final class StoryEngine {
             if !alsoTo.isEmpty, !(read?.to ?? "").isEmpty {
                 events.append("The player speaks to both " + Cards.first(read?.to ?? "") + " and " + Cards.first(alsoTo) + ": both are in this moment. Each may answer, move or do what was asked (sit down, serve, join the player), in their own words and in turn.")
             }
+            if talk, let partner = read?.to, let sum = a.talkSummary[partner.lowercased()], !sum.isEmpty {
+                // Older than the messages sent word for word: what has passed in this talk, so the
+                // person builds on it instead of starting over.
+                events.insert("YOUR TALK WITH " + partner.uppercased() + " SO FAR (older than the lines above; they remember it and build on it): " + sum, at: 0)
+            }
             if talk {
                 events.append("Answer what the player said, directly, as the person's own spoken words in quotation marks, with real specifics (a place, a name). As long as the PLAN says: a few words, a sentence or two, or a short story. No scenery.")
                 let y = Fovea.year(a)
@@ -2980,12 +3026,17 @@ final class StoryEngine {
         var used = Self.tokens(system) + Self.tokens(lead)
         var kept: [StoryTurn] = []
         let past = hidden ? a.transcript : Array(a.transcript.dropLast())
-        // Talking to one person: only the last exchange goes along (what they said, and what you said).
-        for t in past.suffix(talkThisTurn ? 2 : 4).reversed() {
+        // Talking to one person: the last 8 messages go along word for word, up to about 1,200
+        // tokens (`talkWindow`, `talkWindowTokens`); anything older is in the talk summary (see the
+        // rebuild), so a long talk costs no more than a short one. (Nov 26: with only the last
+        // exchange, people forgot what they had said two turns before and felt like ghosts.)
+        var talkUsed = 0
+        for t in past.suffix(talkThisTurn ? Self.talkWindow : 4).reversed() {
             var t = t
             if t.text.count > 1400 { t.text = "…" + String(t.text.suffix(1400)) }
             let cost = Self.tokens(t.text) + 8
-            if !kept.isEmpty, used + cost > budget { break }
+            if !kept.isEmpty, used + cost > budget || (talkThisTurn && talkUsed + cost > Self.talkWindowTokens) { break }
+            talkUsed += cost
             kept.insert(t, at: 0)
             used += cost
         }
@@ -3494,6 +3545,51 @@ final class StoryEngine {
             }
             Self.updateFrame(&now, asked: asked, notes: notes, steps: stepChanges)
             adventure = now
+        }
+
+        // A talk turn: the messages that just left the word-for-word window are folded into the
+        // running summary of the talk with that person (at most about 80 words, so a long talk
+        // costs no more than a short one), and real interest from the player opens one more of
+        // what they keep close, at most one every third turn.
+        let talkedWith = talkWithThisTurn
+        if !talkedWith.isEmpty, let c = start.cast.first(where: { $0.name.caseInsensitiveCompare(talkedWith) == .orderedSame }) {
+            let key = c.name.lowercased()
+            let already = start.opened[key] ?? 0
+            if Self.opensUp(playerSaid), already + 1 < c.depths.count, start.playerTurns - (start.openedAt[key] ?? -99) >= 3 {
+                asked.append(c.name + " opens up? → yes, one step deeper (\(already + 2) of \(c.depths.count))")
+                filed.append(c.name + " can now share: " + c.depths[already + 1])
+                commit { now in
+                    now.opened[key] = already + 1
+                    now.openedAt[key] = start.playerTurns
+                }
+            }
+            let t = start.transcript
+            if t.count >= Self.talkWindow + 2 {
+                let gone = Array(t[(t.count - Self.talkWindow - 2)..<(t.count - Self.talkWindow)])
+                let old = start.talkSummary[key] ?? ""
+                let lines: String = gone.map { ($0.role == .player ? "THE PLAYER: " : "THE STORY: ") + clip($0.text, 700) }.joined(separator: "\n")
+                let label = "What has the talk with " + Cards.first(c.name) + " held so far?"
+                let q = "You keep a short running summary of a conversation in an audio story, between the player (\"you\") and " + c.name + roleOf(c) + "."
+                    + "\nTHE SUMMARY SO FAR: " + (old.isEmpty ? "(nothing yet)" : old)
+                    + "\nWHAT CAME NEXT:\n" + lines
+                    + "\nQUESTION: Rewrite the summary so it takes in what came next, in at most 80 words. Keep what matters later: what each asked and answered, what " + Cards.first(c.name) + " told about themselves or hinted at, anything promised or left hanging, and how things stand between you. Only what the lines say. Call the player \"you\" (\"you asked about...\"). When it runs long, drop small talk first.\nOutput ONLY one JSON object:\n{\"summary\":\"at most 80 words\"}\nThe form:"
+                let q0 = Date()
+                rebuildStep = label
+                let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 170, temperature: 0.2, repetitionPenalty: 1.1,
+                                                                                     grammar: JSONGrammar.text("summary", chars: 560)))) ?? ""
+                noteQ("rebuild", label, raw, since: q0)
+                guard !Task.isCancelled else { return }
+                var sum = JSONExtract.text(JSONExtract.plainKeys(JSONExtract.object(raw) ?? Self.salvageJSON(raw))["summary"])
+                sum = sum.split(separator: " ").prefix(90).joined(separator: " ")
+                // Only from what was said: a summary that drifts from the lines keeps the old one.
+                let source = Continuity.wordSet(old + " " + lines + " you your yourself " + c.name + " " + c.role)
+                if sum.count > 20, !Self.echoesPrompt(sum), Continuity.grounded(sum, in: source, share: 0.5) {
+                    asked.append(label + " → " + sum)
+                    commit { now in now.talkSummary[key] = sum }
+                } else {
+                    asked.append(label + " → kept the old one" + (sum.isEmpty ? "" : " (not in the talk's words: " + clip(sum, 120) + ")"))
+                }
+            }
         }
 
         // The state diff: one call for a quiet turn. Hands and clothes are sticky in code: they
@@ -4879,6 +4975,10 @@ final class StoryEngine {
         if let v = a.wants.removeValue(forKey: oldKey) { a.wants[newKey] = v }
         if let v = a.knows.removeValue(forKey: oldKey) { a.knows[newKey] = v }
         if let v = a.feelings.removeValue(forKey: oldKey) { a.feelings[newKey] = v }
+        if let v = a.between.removeValue(forKey: oldKey) { a.between[newKey] = v }
+        if let v = a.talkSummary.removeValue(forKey: oldKey) { a.talkSummary[newKey] = v }
+        if let v = a.opened.removeValue(forKey: oldKey) { a.opened[newKey] = v }
+        if let v = a.openedAt.removeValue(forKey: oldKey) { a.openedAt[newKey] = v }
         a.facts = a.facts.map { $0.hasPrefix(old + " ") ? name + String($0.dropFirst(old.count)) : $0 }
     }
 
@@ -5462,6 +5562,18 @@ final class StoryEngine {
         let first = Cards.first(a.playerName)
         guard first.count > 1, Self.asksMyName(input) else { return [] }
         return [first]
+    }
+
+    /// The player showing real interest in the person they talk with: a question about them, an
+    /// invitation to go on, or sympathy. A request ("Could you pour me another?") is not interest.
+    /// Each one can open one more of what that person keeps close.
+    static func opensUp(_ input: String) -> Bool {
+        let t = input.replacingOccurrences(of: "’", with: "'")
+        if t.range(of: #"(?i)\b(can|could|would|will) you (please )?(get|bring|give|pass|pour|hand|fetch|make|show|tell me where|call|top)\b"#, options: .regularExpression) != nil,
+           t.range(of: #"(?i)\btell me (more|about)\b"#, options: .regularExpression) == nil { return false }
+        let aboutThem = t.contains("?") && t.range(of: #"(?i)\b(you|your|yourself|you're|you've|you'd)\b"#, options: .regularExpression) != nil
+        let invites = t.range(of: #"(?i)\b(tell me (more|about)|go on|keep going|what happened|and then what|how come|why is that|that sounds|i'm sorry|i am sorry|must (have been|be) (hard|tough|lonely|difficult)|i understand|i know what you mean|me too|i'd like to hear|i want to hear)\b"#, options: .regularExpression) != nil
+        return aboutThem || invites
     }
 
     /// "Do you remember my name?", "What's my name?", "Who am I?".

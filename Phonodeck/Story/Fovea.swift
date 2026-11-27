@@ -200,11 +200,12 @@ enum Fovea {
             // Near-copies ("a crackling jazz record", "a cracking jazz record"; "You have: wet boots"
             // and "You are wearing wet boots") are offered once.
             let words = Cards.keywords(t)
-            if words.count >= 2, out.contains(where: { o in
+            if kind != "private", words.count >= 2, out.contains(where: { o in
                 let w = Cards.keywords(o.text)
                 return Double(words.intersection(w).count) >= Double(min(words.count, w.count)) * 0.6
             }) { return }
-            out.append(Item(kind: kind, text: clip(t, 170)))
+            // What someone keeps close can hold three sentences; everything else is one short line.
+            out.append(Item(kind: kind, text: clip(t, kind == "private" ? 600 : 170)))
         }
         let faced = facing(a)
         let facedCards: [LoreEntry] = faced.compactMap { Cards.card(for: $0, in: a) }
@@ -222,7 +223,17 @@ enum Fovea {
             // Their private life is always offered (hearing it is often why the player came); the
             // pass lets it in when the moment turns to their life, and they share only a little.
             if !c.ties.isEmpty { add("ties", c.name + " and the others here (it shows in how they act; unsaid unless asked): " + c.ties) }
-            if !c.privateLife.isEmpty { add("private", c.name + "'s private life (shared a little, only if the player asks about their life, work, hopes or plans): " + c.privateLife) }
+            // What they keep close, as deep as the talk has earned: the first always, one more each
+            // time the player showed real interest (see `StoryEngine.openUp`). Without that ladder
+            // (someone who came in later), the one private line, as before.
+            let key = c.name.lowercased()
+            let open = c.depths.prefix(1 + (a.opened[key] ?? 0))
+            if !open.isEmpty {
+                let newest = open.count > 1 ? " The last one has only just come within reach: it can come out now if the talk turns that way, in their own words and a little at a time." : ""
+                add("private", c.name + " keeps close (what the talk has earned so far; nothing deeper, and never all at once): " + open.joined(separator: " ") + newest)
+            } else if !c.privateLife.isEmpty {
+                add("private", c.name + "'s private life (shared a little, only if the player asks about their life, work, hopes or plans): " + c.privateLife)
+            }
         }
         // Everyone else keeps their own card; it is offered as one item each.
         let me = Cards.first(a.playerName).lowercased()
