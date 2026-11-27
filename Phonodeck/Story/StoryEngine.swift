@@ -2866,8 +2866,8 @@ final class StoryEngine {
                 && (read?.newPlace ?? "").isEmpty && !moves
             talkThisTurn = talk
             talkWithThisTurn = talk ? (read?.to ?? "") : ""
-            if talk { maxOut = 380 }
-            if arrivedNow { maxOut = max(maxOut, 480) }
+            if talk { maxOut = 500 }
+            if arrivedNow { maxOut = max(maxOut, 500) }
             var keep: [Bool] = []
             if !items.isEmpty, !talk {
                 var intent = Fovea.PlayerIntent()
@@ -2892,7 +2892,7 @@ final class StoryEngine {
             if talk {
                 let first = Cards.first(read?.to ?? "").lowercased()
                 if first.count > 1 {
-                    kept = items.filter { !$0.text.hasPrefix("Toward what you came for") && $0.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil }
+                    kept = items.filter { $0.kind != "other" && !$0.text.hasPrefix("Toward what you came for") && $0.text.lowercased().range(of: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b", options: .regularExpression) != nil }
                 }
             }
             let said = input.lowercased()
@@ -2969,7 +2969,7 @@ final class StoryEngine {
             var roomAsked = playerAsks && (read?.plan["asks_room"] ?? "") == "yes" && (read?.looks ?? []).contains(where: { roomKinds.contains($0.kind) })
                 && !looked.contains(where: { $0.look.kind == .remember })
             if !roomAsked, playerAsks, Self.asksWhoIsHere(input) { roomAsked = true }
-            if !roomAsked, playerAsks, (read?.looks ?? []).contains(where: { $0.kind == .whoIsHere }), !looked.contains(where: { $0.look.kind == .remember }) {
+            if !roomAsked, playerAsks, Continuity.asksName(input) != "you", (read?.looks ?? []).contains(where: { $0.kind == .whoIsHere }), !looked.contains(where: { $0.look.kind == .remember }) {
                 let yes = "asks who is here", no = "asks something else"
                 let q = "THE PLAYER SAYS: " + clip(input, 300) + "\nQUESTION: Is the player asking who is here (or who else is around)?\nCHOICES: " + yes + "; " + no
                     + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
@@ -5510,7 +5510,23 @@ final class StoryEngine {
         t = t.replacingOccurrences(of: #"(?m)^\s*(#+ .*|\*\*?(Game Master|GM|Narrator)\*?\*?:?\s*)$"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"^(Game Master|GM|Narrator):\s*"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\[GAME MASTER BRIEFING[\s\S]*?END OF BRIEFING\]"#, with: "", options: .regularExpression)
-        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        t = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        // If generation ever hits maxTokens mid-sentence, trim back cleanly to the last finished sentence
+        // (balancing any open quote) so audio narration never cuts off mid-word.
+        if t.count > 80, let last = t.last, !".!?…\"”'’".contains(last),
+           let end = t.lastIndex(where: { ".!?…".contains($0) }) {
+            let cut = t.index(after: end)
+            var prefix = String(t[..<cut])
+            if cut < t.endIndex, "\"”".contains(t[cut]) {
+                prefix.append(t[cut])
+            }
+            if prefix.count * 2 >= t.count {
+                let lastPara = prefix.components(separatedBy: "\n").last ?? prefix
+                if lastPara.filter({ $0 == "\"" }).count % 2 == 1 { prefix.append("\"") }
+                t = prefix
+            }
+        }
+        return t
     }
 
     /// The player asks something ("I ask how I got here", "what happened to my ship?").
