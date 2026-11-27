@@ -583,7 +583,35 @@ final class StoryEngine {
         return out
     }
 
-    func create(_ e: Experience, player: PlayerDetails, source: Adventure? = nil, link: String = "") {
+    func create(_ e: Experience, player: PlayerDetails, source: Adventure? = nil, link: String = "", usePrebuilt: Bool = false) {
+        if usePrebuilt, source == nil, let ready = PrebuiltWorlds.adventure(for: e, player: player) {
+            stopAll()
+            busy = true
+            building = false
+            forge = nil
+            error = nil
+            adventure = ready
+            undoSnapshot = nil
+            clockFromPremise = true
+            roomDrawnBeforeReply = nil
+            refreshVocabulary()
+            library.save(ready)
+            stage = "Opening the scene"
+            thinkingSince = Date()
+            ComputerSounds.shared.startHum()
+            currentTask = Task {
+                defer { busy = false; stage = ""; thinkingSince = nil }
+                do { try await llm.load() } catch {
+                    self.error = error.localizedDescription
+                    ComputerSounds.shared.stopHum()
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                let opening = Prompts.openingInstruction(simulator: e.simulator, short: ready.isShort)
+                await runTurn(input: opening, hidden: true)
+            }
+            return
+        }
         stopAll()
         busy = true
         building = true
