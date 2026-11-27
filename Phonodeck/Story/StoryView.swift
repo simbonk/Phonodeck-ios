@@ -64,8 +64,14 @@ struct StoryView: View {
             .onChange(of: dictation.text) { _, t in if dictation.listening { input = t } }
             // The send phrase sent what was said: empty the box for the next turn.
             .onChange(of: dictation.sent) { input = "" }
-            .onAppear { AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a)) }
+            .onAppear {
+                AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a))
+                AmbientSoundscape.shared.setStoryActive(engine.busy || app.narrator.playing)
+            }
             .onChange(of: a.location) { AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a)) }
+            .onChange(of: engine.busy || app.narrator.playing) { _, active in
+                AmbientSoundscape.shared.setStoryActive(active)
+            }
             .onDisappear { AmbientSoundscape.shared.stop() }
         }
     }
@@ -74,6 +80,7 @@ struct StoryView: View {
 
     private func header(_ a: Adventure) -> some View {
         let mood = AmbientSoundscape.mood(for: a)
+        let hasAudio = AmbientSoundscape.bundleURL(for: mood) != nil
         let soundOn = ambientEnabled && AmbientSoundscape.shared.currentMood != .none
         return HStack(spacing: 10) {
             Button { engine.close() } label: {
@@ -85,20 +92,22 @@ struct StoryView: View {
                 Text(a.title).font(.subheadline).foregroundStyle(Theme.dim).lineLimit(1)
             }
             Spacer(minLength: 6)
-            Button {
-                ambientEnabled.toggle()
-                if ambientEnabled {
-                    AmbientSoundscape.shared.setMood(mood)
-                } else {
-                    AmbientSoundscape.shared.stop()
+            if hasAudio {
+                Button {
+                    ambientEnabled.toggle()
+                    if ambientEnabled {
+                        AmbientSoundscape.shared.setMood(mood)
+                    } else {
+                        AmbientSoundscape.shared.stop()
+                    }
+                } label: {
+                    Image(systemName: ambientEnabled ? mood.symbol : "speaker.slash")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(soundOn ? Theme.accent : Theme.dim)
+                        .frame(width: 34, height: 34)
                 }
-            } label: {
-                Image(systemName: ambientEnabled ? mood.symbol : "speaker.slash")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(soundOn ? Theme.accent : Theme.dim)
-                    .frame(width: 34, height: 34)
+                .accessibilityLabel(ambientEnabled ? "Mute ambient sound (\(mood.label))" : "Turn on ambient sound")
             }
-            .accessibilityLabel(ambientEnabled ? "Mute ambient sound (\(mood.label))" : "Turn on ambient sound")
             menu(a)
         }
         .padding(.horizontal, 12)

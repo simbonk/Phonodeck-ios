@@ -64,11 +64,13 @@ struct SettingsView: View {
                         if !on { app.chat.stopReading(); app.narrator.stop() }
                     }))
                     Toggle("Character voices", isOn: $multiVoiceCast)
-                    Toggle("Ambient soundscape", isOn: $ambientSoundscape)
-                        .onChange(of: ambientSoundscape) { _, on in
-                            if !on { AmbientSoundscape.shared.stop() }
-                            else if let a = engine.adventure { AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a)) }
-                        }
+                    if AmbientSoundscape.hasBundledAudio {
+                        Toggle("Ambient soundscape", isOn: $ambientSoundscape)
+                            .onChange(of: ambientSoundscape) { _, on in
+                                if !on { AmbientSoundscape.shared.stop() }
+                                else if let a = engine.adventure { AmbientSoundscape.shared.setMood(AmbientSoundscape.mood(for: a)) }
+                            }
+                    }
                     Stepper(value: $textSize, in: Reading.minTextSize...Reading.maxTextSize, step: 1) {
                         LabeledContent("Text size", value: "\(Int(textSize)) pt")
                     }
@@ -78,7 +80,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Reading & Audio")
                 } footer: {
-                    Text("Character voices casts each person in a story with their own voice distinct from the narrator. Ambient soundscape adds a subtle, ducked room/weather bed (rain on glass, hearth warmth, evening air) that pauses while the mic listens.")
+                    Text("Character voices casts each person in a story with their own voice distinct from the narrator. Tap any reply to hear it again, or to stop the voice.")
                 }
 
                 Section {

@@ -137,13 +137,30 @@ struct VoiceCast {
         return VoiceCast(characters: assigned, defaultSpeakerName: defaultSpeaker)
     }
 
-    /// Finds a character matching a speaker attribution phrase (e.g. "Walter says", "the regular chuckles", "she whispers").
+    /// Finds the acting/speaking character in a narration cue (e.g. "Walter says", "the regular chuckles",
+    /// "she whispers"), ignoring characters mentioned only as the object of a glance or preposition
+    /// ("She glances briefly toward the bartender" -> Dolores, not Walter).
     func matchSpeaker(in narration: String) -> CharacterVoice? {
-        let low = narration.lowercased()
+        var low = narration.lowercased()
         guard low.count >= 2 else { return nil }
+
+        // Remove character references that are merely the object of a preposition ("toward the bartender",
+        // "at Dolores", "past Walter", "to the regular") so glancing at someone never steals the voice.
+        let prep = #"\b(?:toward|towards|at|past|behind|beside|near|about|to|for|with|from|than|like)\s+(?:the\s+|a\s+|an\s+)?"#
+        for c in characters {
+            var targets = [c.name.lowercased()]
+            if c.firstName.count >= 3 { targets.append(c.firstName) }
+            if c.fullRole.count >= 4 { targets.append(c.fullRole) }
+            if !c.roleHead.isEmpty { targets.append(c.roleHead) }
+            for t in targets {
+                let pat = prep + NSRegularExpression.escapedPattern(for: t) + #"\b"#
+                low = low.replacingOccurrences(of: pat, with: " ", options: .regularExpression)
+            }
+        }
+
         let words = Continuity.wordSet(low)
 
-        // 1. Direct name match (take the last-mentioned character in the narration cue before/after dialogue).
+        // 1. Direct name or role match (take the last remaining subject mention in the narration).
         var best: (CharacterVoice, String.Index)? = nil
         func consider(_ c: CharacterVoice, range: Range<String.Index>?) {
             guard let r = range else { return }

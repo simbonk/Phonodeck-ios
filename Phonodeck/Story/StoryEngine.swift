@@ -5847,7 +5847,7 @@ final class StoryEngine {
         // 3. Build a clean, zero-latency PlayerRead.
         var read = PlayerRead()
         read.to = target
-        read.going = "staying"
+        read.going = ""
         read.plan = [
             "avoids": "no",
             "gets_up": "no",
