@@ -2921,8 +2921,19 @@ final class StoryEngine {
             physicalThisTurn = !talk || !(read?.takes ?? "").isEmpty || !(read?.putsDown ?? "").isEmpty || !(read?.spot ?? "").isEmpty
                 || (read?.plan["gets_up"] ?? "") == "yes" || !["", "empty", "none", "nothing", "n/a", "no"].contains(needSaid)
             if let r = a.room, !a.location.isEmpty, r.name.caseInsensitiveCompare(a.location) != .orderedSame { a.syncGrid() }
+            let preMovePos = a.room?.player.map { Cell(x: $0.x, y: $0.y) }
+            let preMoveSpot = a.spot
             let plan = await planMoment(&a, input: input, walk: spotSaid, to: read?.to ?? "", body: read?.body ?? "", pre: read?.plan ?? [:])
             guard !Task.isCancelled else { adventure = snapshot; return }
+            let postMovePos = a.room?.player.map { Cell(x: $0.x, y: $0.y) }
+            if moves || walkedThisTurn || preMovePos != postMovePos || preMoveSpot != a.spot {
+                // Prune pre-move location & nearby-object cards so the storyteller only sees the fresh post-move grid.
+                kept.removeAll { $0.text.hasPrefix("Where you are in the room:") || $0.text.hasPrefix("Around you:") }
+                foveaYes = Set(kept.map(\.kind))
+                foveaView = items.map { item in
+                    (kept.contains(where: { $0.text == item.text }) ? "  + " : "  - ") + Fovea.clip(item.text, 90)
+                }
+            }
             adventure?.room = a.room
             adventure?.spot = a.spot
             adventure?.whereabouts = a.whereabouts
@@ -4701,13 +4712,35 @@ final class StoryEngine {
             noteQ("plan", "Do you sit down?", sraw, since: sitAsked)
             if ((JSONExtract.object(sraw)?["answer"] as? String) ?? "") == sits, let me1 = r.player {
                 let anchor: Thing? = target.flatMap { r.named($0.name) }
-                let taken = Set(r.people.compactMap(\.on))
+                let takenIDs = Set(r.people.filter { $0.id != me1.id }.compactMap(\.on))
+                let occupiedCells = Set(r.people.filter { $0.id != me1.id }.map { Cell(x: $0.x, y: $0.y) })
                 let near = anchor ?? me1
-                // Sitting down next to someone: only seats beside them (a stool 3 m off left you
-                // across the room from the waitress you walked over to); otherwise a stool is brought.
-                let seats = r.objects.filter { Rules.seats.contains($0.icon) && !taken.contains($0.id) && (anchor == nil || RoomGrid.distance($0, near) <= 2.2) }
-                    .sorted { RoomGrid.distance($0, near) < RoomGrid.distance($1, near) }.prefix(4)
-                var opts: [String] = seats.map { s in "the " + Fovea.bare(s.name).replacingOccurrences(of: #"(?i)^(the|a|an) "#, with: "", options: .regularExpression) + String(format: ", %.0f m from ", RoomGrid.distance(s, near)) + (anchor.map { Cards.first($0.name) } ?? "you") }
+                func freeCell(on seat: Thing) -> Cell? {
+                    let cells = seat.cells
+                    if cells.count <= 1 && takenIDs.contains(seat.id) { return nil }
+                    let open = cells.filter { !occupiedCells.contains($0) }
+                    return open.min {
+                        hypot(Double($0.x) + 0.5 - near.centre.x, Double($0.y) + 0.5 - near.centre.y)
+                            < hypot(Double($1.x) + 0.5 - near.centre.x, Double($1.y) + 0.5 - near.centre.y)
+                    }
+                }
+                // Sitting down next to someone: only seats beside them (including an open cushion on
+                // a multi-seat booth/sofa/bench they're sitting on); otherwise a stool is brought.
+                let seatPairs: [(seat: Thing, cell: Cell, dist: Double)] = r.objects.compactMap { s in
+                    guard Rules.seats.contains(s.icon), let cell = freeCell(on: s) else { return nil }
+                    let dist = hypot(Double(cell.x) + 0.5 - near.centre.x, Double(cell.y) + 0.5 - near.centre.y)
+                    guard anchor == nil || dist <= 2.2 else { return nil }
+                    return (s, cell, dist)
+                }
+                .sorted { $0.dist < $1.dist }
+                let seats = Array(seatPairs.prefix(4))
+                var opts: [String] = seats.map { pair in
+                    let clean = Fovea.bare(pair.seat.name).replacingOccurrences(of: #"(?i)^(the|a|an) "#, with: "", options: .regularExpression)
+                    if let a0 = anchor, a0.on == pair.seat.id {
+                        return "the " + clean + " right beside " + Cards.first(a0.name)
+                    }
+                    return "the " + clean + String(format: ", %.0f m from ", pair.dist) + (anchor.map { Cards.first($0.name) } ?? "you")
+                }
                 let bring = anchor.map { "bring a stool over beside " + Cards.first($0.name) }
                 if let b = bring { opts.append(b) }
                 if !opts.isEmpty {
@@ -4717,11 +4750,12 @@ final class StoryEngine {
                     noteQ("plan", "Which seat do you take?", craw, since: seatAsked)
                     let said = (JSONExtract.object(craw)?["answer"] as? String) ?? opts[0]
                     if let i = opts.firstIndex(of: said), i < seats.count {
-                        let seat = Array(seats)[i]
-                        // By the seat itself, not its name: several can be called "stool".
-                        if let k = r.index(me1.id) { r.things[k].x = seat.x; r.things[k].y = seat.y; r.things[k].on = seat.id }
-                        r.log.append("move: you → on " + Fovea.bare(seat.name))
-                        a.spot = "on " + Fovea.bare(seat.name)
+                        let pick = seats[i]
+                        // Place on the specific unoccupied cell (so a 2-seat booth puts you beside them, not on top of them).
+                        if let k = r.index(me1.id) { r.things[k].x = pick.cell.x; r.things[k].y = pick.cell.y; r.things[k].on = pick.seat.id }
+                        let sharing = anchor.map { $0.on == pick.seat.id ? " beside " + $0.name : "" } ?? ""
+                        r.log.append("move: you → on " + Fovea.bare(pick.seat.name) + sharing)
+                        a.spot = "on " + Fovea.bare(pick.seat.name) + sharing
                     } else if let p = anchor {
                         let stool = Thing(kind: .object, name: "stool", icon: "stool")
                         if Placer.place(&r, stool, zone: .beside(p.name)).placed, let placed = r.objects.last(where: { $0.icon == "stool" }) {

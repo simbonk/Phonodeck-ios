@@ -368,6 +368,21 @@ enum Fovea {
         """
         if nameless { s += "\n- " + Prompts.namelessRule }
         if playerNamed, !a.playerName.isEmpty { s += "\n- The player's name is \(a.playerName) (that is \"you\"; use the name only in other characters' spoken dialogue)." }
+        let saved = PlayerDetails.saved
+        let pGender = saved.gender.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pRomance = a.setup.romance.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pInterest = saved.interest.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !pGender.isEmpty {
+            s += "\n- The player is \(pGender); characters see and address them naturally as such."
+        }
+        if pRomance.caseInsensitiveCompare("No romance") == .orderedSame {
+            s += "\n- Keep the story strictly non-romantic."
+        } else {
+            let drawn = !pRomance.isEmpty ? pRomance : (!pInterest.isEmpty ? "attracted to \(pInterest)" : "")
+            if !drawn.isEmpty {
+                s += "\n- Quiet background about the player (never mention directly or push romance): \(drawn). Stay natural and platonic unless the player steers toward flirtation or romance; if they do, let any chemistry match this."
+            }
+        }
         let feeling = a.setup.feeling.isEmpty ? "whatever the player came for" : a.setup.feeling
         s += "\n\nFEELING TO ACHIEVE: " + feeling
         if age > 0 { s += "\n\n" + Prompts.ageRules(age) }

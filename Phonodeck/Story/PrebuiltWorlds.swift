@@ -166,6 +166,10 @@ enum PrebuiltWorlds {
         var a = Adventure(setup: setup, title: setup.title.isEmpty ? "Untitled" : setup.title, minutes: max(5, setup.minutes))
         a.nameless = true
         a.playerName = player.name
+        let interest = player.interest.trimmingCharacters(in: .whitespacesAndNewlines)
+        if a.setup.romance.isEmpty, !interest.isEmpty {
+            a.setup.romance = "attracted to \(interest)"
+        }
         a.bible = bible
         a.location = location
         a.visit(location, from: "")
