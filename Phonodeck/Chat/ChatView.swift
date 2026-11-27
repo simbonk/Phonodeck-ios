@@ -189,6 +189,7 @@ struct ChatView: View {
                     .buttonStyle(.bordered)
                     .accessibilityLabel("Stop reading")
                 }
+                Spacer(minLength: 4)
                 HandsFreeButton(on: chat.handsFree, listening: dictation.listening) {
                     typing = false
                     if !chat.handsFree { app.engine.setHandsFree(false) }

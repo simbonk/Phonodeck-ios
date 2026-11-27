@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The Hands-free button, shared by the story and the Chat tab.
-/// Off: a glowing teal outline with a light sweeping across it, so it stands out until used.
-/// On and listening: solid red and pulsing. On but paused (narrator speaking, reply loading): red outline.
+/// Compact circular microphone button for Hands-free mode, tucked beside the Send button.
+/// Off: calm circular mic with a subtle shimmer. On and listening: solid red and pulsing.
+/// On but paused (narrator speaking, reply loading): tinted red outline.
 struct HandsFreeButton: View {
     let on: Bool
     let listening: Bool
@@ -11,17 +11,17 @@ struct HandsFreeButton: View {
     var body: some View {
         let live = on && listening
         Button(action: toggle) {
-            Label(on ? "Hands-free ON" : "Hands-free", systemImage: "headphones")
-                .font(.body.bold())
-                .frame(maxWidth: .infinity, minHeight: 40)
+            Image(systemName: on ? "mic.fill" : "mic")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 40, height: 40)
                 .foregroundStyle(live ? .white : on ? Theme.rec : Theme.accent)
-                .background(live ? Theme.rec : Color.clear, in: Capsule())
-                .overlay(Capsule().stroke(on ? Theme.rec : Theme.accent, lineWidth: 2))
-                .shadow(color: on ? .clear : Theme.accent.opacity(0.45), radius: 8)
+                .background(live ? Theme.rec : (on ? Theme.rec.opacity(0.12) : Theme.panel), in: Circle())
+                .overlay(Circle().stroke(on ? Theme.rec : Theme.accent.opacity(0.45), lineWidth: on ? 1.5 : 1))
                 .modifier(Sheen(active: !on))
                 .modifier(Pulse(active: live))
         }
         .buttonStyle(.plain)
-        .accessibilityHint("The microphone stays on; say \(Dictation.sendPhrase) to send")
+        .accessibilityLabel(on ? "Hands-free microphone ON" : "Hands-free microphone")
+        .accessibilityHint("Tap to toggle hands-free listening; say \(Dictation.sendPhrase) to send")
     }
 }

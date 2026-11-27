@@ -380,6 +380,7 @@ struct StoryView: View {
                 .buttonStyle(.bordered)
                 .disabled(!engine.canUndo)
                 .accessibilityLabel("Undo last turn")
+                Spacer(minLength: 4)
                 handsFreeButton
                 if engine.busy {
                     Button { engine.stopAll() } label: {
@@ -387,6 +388,8 @@ struct StoryView: View {
                     }
                     .buttonStyle(.bordered)
                 } else {
+                    let hfActionStep = engine.handsFree && StoryEngine.doThenSay && !engine.saying
+                    let hfCanSendEmpty = engine.handsFree && StoryEngine.doThenSay && (!engine.saying || !engine.heldDo.isEmpty)
                     Button {
                         if splitTyping {
                             sendSplit()
@@ -394,12 +397,14 @@ struct StoryView: View {
                             sendSingle()
                         }
                     } label: {
-                        Text("Send").bold().frame(minWidth: 70, minHeight: 40)
+                        Text(hfActionStep ? "Next" : "Send").bold().frame(minWidth: 70, minHeight: 40)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.accent)
                     .foregroundStyle(Theme.onAccent)
-                    .disabled(splitTyping ? !hasSplitText : input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(splitTyping
+                              ? !hasSplitText
+                              : (!hfCanSendEmpty && input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                 }
             }
         }
@@ -563,31 +568,51 @@ struct StoryView: View {
     private var handsFreeStatus: some View {
         Group {
             if engine.busy && !app.narrator.playing {
-                HStack(spacing: 8) { HoloCore(size: 22); Text("Hands-free ON: the story is being prepared…") }
+                HStack(spacing: 8) { HoloCore(size: 18); Text("Preparing reply…") }
             } else if (app.narrator.preparing || app.narrator.speaking) && !app.narrator.playing {
-                HStack(spacing: 8) { HoloCore(size: 22); Text("Hands-free ON: getting the voice ready…") }
+                HStack(spacing: 8) { HoloCore(size: 18); Text("Preparing voice…") }
             } else if app.narrator.speaking || app.narrator.preparing {
-                Text("Hands-free ON: narrator speaking (mic paused).")
+                HStack(spacing: 6) {
+                    Image(systemName: "speaker.wave.2.fill").font(.caption).foregroundStyle(Theme.accent)
+                    Text("Speaking (mic paused)")
+                }
             } else if dictation.listening {
                 if dictation.transcribing {
-                    Text("Hands-free ON: hearing you…")
+                    Text("Transcribing…")
+                } else if StoryEngine.doThenSay {
+                    HStack(spacing: 6) {
+                        Text(engine.saying ? "2/2 Say" : "1/2 Action")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.bg)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(engine.saying ? Theme.accent : Theme.rec, in: Capsule())
+                        Text("Say")
+                        MagicPhrase(phrase: Dictation.sendPhrase)
+                        if !engine.saying {
+                            Spacer(minLength: 4)
+                            Button("Skip") {
+                                dictation.stop(send: false)
+                                input = ""
+                                engine.part("")
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                        }
+                    }
                 } else {
                     HStack(spacing: 4) {
-                        if StoryEngine.doThenSay {
-                            Text(engine.saying ? "Now what you say. Then" : "What you do. Then")
-                        } else {
-                            Text("Hands-free ON: listening. Say")
-                        }
+                        Text("Listening · say")
                         MagicPhrase(phrase: Dictation.sendPhrase)
-                        Text(StoryEngine.doThenSay ? "(or \"nothing\")." : "to send.")
+                        Text("to send")
                     }
                 }
             } else {
-                Text("Hands-free ON: starting the microphone…")
+                Text("Starting microphone…")
             }
         }
-        .font(.callout)
-        .foregroundStyle(Theme.fg)
+        .font(.footnote)
+        .foregroundStyle(Theme.dim)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 2)
     }
