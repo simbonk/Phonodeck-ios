@@ -1690,7 +1690,15 @@ final class StoryEngine {
             for k in ["going", "new_place", "spot", "takes", "puts_down", "body"] { m[k] = "" }
         }
         let also = Looks.person(s("also_to"), in: cast)
-        read.alsoTo = also.caseInsensitiveCompare(read.to) == .orderedSame || also.caseInsensitiveCompare(Looks.person(to, in: cast)) == .orderedSame ? "" : also
+        let alsoDiff = also.caseInsensitiveCompare(read.to) == .orderedSame || also.caseInsensitiveCompare(Looks.person(to, in: cast)) == .orderedSame ? "" : also
+        if !alsoDiff.isEmpty {
+            let groupCue = input.range(of: #"(?i)\b(both|everyone|everybody|all of (you|them)|you two|you guys|y'all|folks|either of you)\b"#, options: .regularExpression) != nil
+            let mentionsAlso = a.lore.first { !$0.isPlayer && $0.name.caseInsensitiveCompare(alsoDiff) == .orderedSame }
+                .map { Cards.mentions($0, in: input) || Self.addresses($0, in: input) } ?? false
+            read.alsoTo = (groupCue || mentionsAlso) ? alsoDiff : ""
+        } else {
+            read.alsoTo = ""
+        }
         let going = s("going")
         if Looks.bare(going) == "somewhere new" { read.going = "somewhere new" }
         else { read.going = Looks.place(going, in: places) }
@@ -4646,18 +4654,20 @@ final class StoryEngine {
         // Whenever you engage someone in the room you aren't currently facing, rotate to face them
         // on the grid (unless you explicitly say you don't look at them), so they are in front of
         // you instead of stuck "behind you, heard not seen".
+        let alreadyAtSpot = walkZone.map { already($0) } ?? false
+        let actuallyMoved = !walk.isEmpty && !alreadyAtSpot
         let avoidsLooking = input.range(of: #"(?i)\b(without (looking|turning)|don't look|doesn't look|looking away|not looking|eyes away)\b"#, options: .regularExpression) != nil
-        if walk.isEmpty, !avoidsLooking, let w = target, let me = r.player, let t = r.named(w.name), t.isPerson, !RoomGrid.faces(me, t) {
+        if !actuallyMoved, !avoidsLooking, let w = target, let me = r.player, let t = r.named(w.name), t.isPerson, !RoomGrid.faces(me, t) {
             Placer.turn(&r, me.id, toward: w.name)
             r.log.append("turn: you → toward " + w.name)
             log.append("you turn to " + w.name)
             placedByPlan = true
         }
-        if !walk.isEmpty { placedByPlan = true }
-        // 1a. Getting up: seated, no walk heard, only ask when the player's words or body actually
+        if actuallyMoved { placedByPlan = true }
+        // 1a. Getting up: seated, only ask when the player actually moved or their words/body
         // suggest standing, rising, stretching, or moving off their seat.
         let standCue = #"(?i)\b(stand|stands|standing|stood|get up|gets up|getting up|got up|rise|rises|rising|rose|stretch|stretches|stretching|step|steps|walk|walks|leave|leaves|head|heads|slide off|climb off|hop off|push back|off the stool|off my stool|off the chair|on my feet)\b"#
-        if (!walk.isEmpty || (input + " " + body).range(of: standCue, options: .regularExpression) != nil),
+        if (actuallyMoved || (input + " " + body).range(of: standCue, options: .regularExpression) != nil),
            let meS = r.player, let seatID = meS.on, let seat = r.thing(seatID) {
             let up = "the player stands up"
             let stay = "the player stays sitting"

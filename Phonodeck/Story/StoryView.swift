@@ -402,7 +402,8 @@ struct StoryView: View {
                         }()
                         Button {
                             if !isActive {
-                                actionInput = "I turn to " + label
+                                let target = label.hasPrefix("The ") ? "the " + String(label.dropFirst(4)) : label
+                                actionInput = "I turn to " + target
                             }
                             focused = .say
                         } label: {

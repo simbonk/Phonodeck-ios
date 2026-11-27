@@ -210,12 +210,12 @@ enum Fovea {
         let faced = facing(a)
         let facedCards: [LoreEntry] = faced.compactMap { Cards.card(for: $0, in: a) }
         for c in facedCards {
-            // Core lore first (two lines from the cards they were made with), then the latest
+            // Core lore first (including age, tenure, and origin), then the latest
             // three things learned in talk: what is learned never pushes out who they are.
             let key = c.name.lowercased()
             let theirs = Cards.facts(about: c, in: a)
             let core = Set(a.coreFacts)
-            for f in theirs.filter({ core.contains($0) }).prefix(2) { add("person", f) }
+            for f in theirs.filter({ core.contains($0) }).prefix(5) { add("person", f) }
             for f in theirs.filter({ !core.contains($0) }).suffix(3) { add("person", f) }
             if let x = a.feelings[key] { add("feeling", c.name + " feels " + x + " about you") }
             if let x = a.wants[key] ?? (c.wants.isEmpty ? nil : c.wants) {
