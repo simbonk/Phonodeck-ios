@@ -474,6 +474,18 @@ enum Continuity {
             let start = m.range.location + m.range.length
             var window = ns.substring(with: NSRange(location: start, length: min(160, ns.length - start)))
             if let p = window.range(of: "\n\n") { window = String(window[..<p.lowerBound]) }
+            // Named inside someone's speech ("Walter's right there behind you," she says): the he or
+            // she after the closing quote is the speaker, so the window ends at the quote. Named in
+            // the telling, another person's speech in the window is skipped. (Nov 27: a bartender's
+            // "she says" and "She's got her sketchbook" were counted for Walter.)
+            let before = ns.substring(to: m.range.location)
+            let inSpeech = before.filter { $0 == "\"" || $0 == "“" || $0 == "”" }.count % 2 == 1
+            if inSpeech {
+                if let q = window.firstIndex(where: { $0 == "\"" || $0 == "”" || $0 == "“" }) { window = String(window[..<q]) }
+            } else {
+                window = window.replacingOccurrences(of: #""[^"]*"|“[^”]*”"#, with: " ", options: .regularExpression)
+                if let q = window.firstIndex(where: { $0 == "\"" || $0 == "“" }) { window = String(window[..<q]) }
+            }
             for o in others where o != first { if let r = window.range(of: o) { window = String(window[..<r.lowerBound]) } }
             for w in window.lowercased().split(whereSeparator: { !$0.isLetter }) {
                 switch w {

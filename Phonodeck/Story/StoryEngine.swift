@@ -1148,9 +1148,16 @@ final class StoryEngine {
     @discardableResult
     static func rejoin(_ a: inout Adventure) -> [String] {
         var back: [String] = []
+        // The map of the room you come back to still holds whoever you left there: they count as
+        // here even when their note of where they were left was lost. (Nov 27: back in the Great
+        // Room, the lodge owner was still on its map but missing from who is here.)
+        let stored = a.rooms.first { $0.name.caseInsensitiveCompare(a.location) == .orderedSame }
+            ?? a.rooms.first { Continuity.names(place: $0.name, in: a.location) && Continuity.names(place: a.location, in: $0.name) }
         for i in a.whereabouts.indices where a.whereabouts[i].here == false && a.whereabouts[i].at != "gone out" {
-            guard let at = a.whereabouts[i].leftAt, !at.isEmpty,
-                  at.caseInsensitiveCompare(a.location) == .orderedSame || Continuity.names(place: at, in: a.location) else { continue }
+            let at = a.whereabouts[i].leftAt ?? ""
+            let leftHere = !at.isEmpty && (at.caseInsensitiveCompare(a.location) == .orderedSame || Continuity.names(place: at, in: a.location))
+            let onMap = at.isEmpty && stored?.named(a.whereabouts[i].name)?.isPerson == true
+            guard leftHere || onMap else { continue }
             a.whereabouts[i].here = true
             a.whereabouts[i].engaged = false
             a.whereabouts[i].leftAt = nil
@@ -1717,6 +1724,7 @@ final class StoryEngine {
     /// plan the storyteller follows, with the WHO line written from the settled scene.
     private func settle(_ a: inout Adventure, read given: PlayerRead, input: String) {
         var read = given
+        if !read.newPlace.isEmpty { read.newPlace = Self.knownPlace(read.newPlace, in: a) }
         let said = Continuity.wordSet(input)
         let knownPlaces: [String] = a.lore.filter { $0.kind == .place }.map(\.name) + a.places
         var backInside = false
@@ -2300,7 +2308,11 @@ final class StoryEngine {
             let spellable: (String) -> Bool = { n in n.count <= 60 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
             // The message names someone here ("I turn to the old barber") while the look heard
             // someone else: that one is asked about too, the same way as a second person addressed.
-            func namedHere(_ n: String) -> Bool { a.lore.first { !$0.isPlayer && $0.name.caseInsensitiveCompare(n) == .orderedSame }.map { Cards.mentions($0, in: input) } ?? false }
+            // Only a name the player turns or calls to counts: in their own narration ("I turn to the
+            // old barber") or called at the start of what they say ("Earl, ..."). Someone asked about
+            // ("How long have you known the old barber?") is not who they speak to. (Nov 27: that
+            // question to Marcus moved the talk to Earl, who answered about "him".)
+            func namedHere(_ n: String) -> Bool { a.lore.first { !$0.isPlayer && $0.name.caseInsensitiveCompare(n) == .orderedSame }.map { Self.addresses($0, in: input) } ?? false }
             var rival = ""
             if let r = read, !r.to.isEmpty, r.alsoTo.isEmpty, !namedHere(r.to) {
                 let named = a.whereabouts.filter { $0.here != false && $0.name.caseInsensitiveCompare(r.to) != .orderedSame && namedHere($0.name) }.map(\.name)
@@ -2392,7 +2404,13 @@ final class StoryEngine {
             // Going out through one of this room's doors, and the look missed it ("I step out through
             // the door to outside for some air" read as staying by the door) or gave no place: the
             // model picks from this room's doors, or says the player stays.
-            if var r = read, leaverThisTurn.isEmpty, r.newPlace.isEmpty, r.going.isEmpty || r.going == "somewhere new", !newPlaceRefused, !a.location.isEmpty,
+            // Told about someone else, with no "I" in it ("A girl selling newspapers pokes her head in
+            // the door and comes inside"), it is never the player going out. (Nov 27: that line sent
+            // the player outside, away from the old man who had just come in.)
+            let aboutSomeoneElse = Self.speechAndNarration(input).narration
+                .range(of: #"(?i)\b(i|i'm|i've|i'll|i'd|me|my|myself|we|we're|let's|us|our)\b"#, options: .regularExpression) == nil
+                && input.range(of: #"^\W*([Aa]n?|[Tt]he|[Ss]omeone|[Ss]omebody|[Ss]ome|[Aa]nother|[Tt]wo|[Tt]hree|[A-Z][a-z]+ [A-Z][a-z]+)\b"#, options: .regularExpression) != nil
+            if var r = read, leaverThisTurn.isEmpty, !aboutSomeoneElse, r.newPlace.isEmpty, r.going.isEmpty || r.going == "somewhere new", !newPlaceRefused, !a.location.isEmpty,
                let room = a.room, input.range(of: #"(?i)\b(out|outside|leave|leaves|leaving|exit|exits|head|heads|go|goes|step|steps|walk|walks)\b"#, options: .regularExpression) != nil {
                 let ok: (String) -> Bool = { n in n.count > 2 && n.count <= 50 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
                 var doors: [String] = []
@@ -2413,7 +2431,7 @@ final class StoryEngine {
                     let picked = (JSONExtract.object(raw)?["answer"] as? String) ?? ""
                     if doors.contains(picked) {
                         r.going = "somewhere new"
-                        r.newPlace = Self.ownPlace(picked)
+                        r.newPlace = Self.knownPlace(Self.ownPlace(picked), in: a)
                         r.spot = ""
                         read = r
                         step("Do you go out through a door? → " + picked)
@@ -2829,6 +2847,12 @@ final class StoryEngine {
             // The notes that only apply now (the final reply, the player moving, phrases that keep
             // coming back) still go with the moment.
             var events: [String] = extra + notes
+            // Asked about someone else by name or role ("Is the grown daughter all right?"): the
+            // answer is about them and says who. (Nov 27: four of five such answers said only "her".)
+            if let c = Self.askedAbout(a, input: input, to: read?.to ?? "") {
+                let call = (!a.nameless || c.known || c.byPlayer) ? Cards.first(c.name) : Continuity.roleLabel(c.role.isEmpty ? c.name : c.role)
+                events.append("THE PLAYER ASKS ABOUT " + call.uppercased() + ": answer about them, and name them as " + call + " in the answer, not only \"he\" or \"she\".")
+            }
             if !foveaTold.isEmpty { events.insert(foveaTold + " Say it in this reply.", at: 0) }
             // The moment is planned on the map first: you walk over if you said so, and the person
             // you face stays or gets up, with what is in their reach.
@@ -3036,7 +3060,11 @@ final class StoryEngine {
         // was shown or spoken yet, so the player only notices the wait.
         // The same when the filter let nothing through for any reason (someone not here speaking
         // in every sentence): the turn used to end with no reply at all.
-        if !interrupted, !Task.isCancelled, presence != nil, Self.tidy(reply).isEmpty {
+        // And when what is left says nearly what the last reply said ("Sam it is." twice, the rest
+        // cut as copies): only when it was not spoken aloud yet. (Nov 27.)
+        let lastGM = a.transcript.last { $0.role == .gm }?.text ?? ""
+        let leftRepeats = !narrate && (presence?.echoes ?? 0) > 0 && !lastGM.isEmpty && !Self.tidy(reply).isEmpty && Self.similar(lastGM, Self.tidy(reply))
+        if !interrupted, !Task.isCancelled, presence != nil, Self.tidy(reply).isEmpty || leftRepeats {
             redrawn = true
             var f = PresenceFilter(absent: absentPeople(a, input: input, plan: moment),
                                    earlier: a.transcript.filter { $0.role == .gm }.suffix(3).map(\.text), player: input,
@@ -4473,9 +4501,25 @@ final class StoryEngine {
             let c = Placer.centroid(Placer.cells(z, in: r, forPeople: true))
             return hypot(c.0 - me0.centre.x, c.1 - me0.centre.y) <= 1.6
         }
-        if !walk.isEmpty, let z = Adventure.zone(from: walk, in: r), already(z) {
+        // "I walk over to the night waitress" read as "near Sal and Marlene": the zone fell on Sal,
+        // whom you already stood by, so you never moved. The one your own words walk to wins.
+        // (Nov 27: left 2 squares from the waitress.)
+        var walkZone: Zone? = walk.isEmpty ? nil : Adventure.zone(from: walk, in: r)
+        if case .beside(let n)? = walkZone, let w = target, n.caseInsensitiveCompare(w.name) != .orderedSame,
+           let c = a.cast.first(where: { $0.name.caseInsensitiveCompare(w.name) == .orderedSame }), Cards.mentions(c, in: input),
+           !(a.cast.first(where: { $0.name.caseInsensitiveCompare(n) == .orderedSame }).map({ Cards.mentions($0, in: input) }) ?? false),
+           r.named(w.name)?.isPerson == true {
+            walkZone = .beside(w.name)
+        }
+        if let z = walkZone, already(z) {
             log.append("you are already " + z.text)
-        } else if !walk.isEmpty, let z = Adventure.zone(from: walk, in: r), !walk.lowercased().contains(Cards.first(target?.name ?? "\u{0}").lowercased()) {
+        } else if case .beside(let n)? = walkZone, let w = target, n.caseInsensitiveCompare(w.name) == .orderedSame, let t = r.named(w.name), t.isPerson {
+            let note = Placer.placePerson(&r, me0, zone: .beside(w.name))
+            Placer.turn(&r, me0.id, toward: w.name)
+            r.log.append("move: you → beside " + w.name + (note.isEmpty ? "" : " (" + note + ")"))
+            a.spot = "beside " + w.name
+            log.append("you walk over beside " + w.name)
+        } else if let z = walkZone, !walk.lowercased().contains(Cards.first(target?.name ?? "\u{0}").lowercased()) {
             // "I sit on the warm stool": you go to the thing you named, and face whoever you turned to.
             var note = Placer.placePerson(&r, me0, zone: z)
             var went = z.text
@@ -4496,6 +4540,16 @@ final class StoryEngine {
             r.log.append("move: you → beside " + w.name + (note.isEmpty ? "" : " (" + note + ")"))
             a.spot = "beside " + w.name
             log.append("you walk over beside " + w.name)
+        }
+        // "I turn toward the woman in the red coat": no walk, but you face them on the map, and the
+        // look after the reply doesn't turn you back to whoever it thinks spoke. (Nov 27: still
+        // facing the counter, with the woman behind you.)
+        if walk.isEmpty, let w = target, let me = r.player, let t = r.named(w.name), t.isPerson, !RoomGrid.faces(me, t),
+           input.range(of: #"(?i)\b(turn|turns|turning|swivel|swivels|spin|spins|face|faces|facing|look over at|look at|looks at|glance at|glances at)\b"#, options: .regularExpression) != nil {
+            Placer.turn(&r, me.id, toward: w.name)
+            r.log.append("turn: you → toward " + w.name)
+            log.append("you turn to " + w.name)
+            placedByPlan = true
         }
         if !walk.isEmpty { placedByPlan = true }
         // 1a. Getting up: seated, no walk heard, but the body says something ("standing and
@@ -5490,6 +5544,16 @@ final class StoryEngine {
                 out.append(says("That's " + Cards.first(c.name)))
             }
         }
+        // The person the player asked about, when the reply never says who ("Is the grown
+        // daughter all right?" answered with "her chair"): a glance toward them names them.
+        if !roomAskedThisTurn, Continuity.asksName(input) != "other", let c = Self.askedAbout(a, input: input, to: to), !Cards.mentions(c, in: reply) {
+            let who = Zone.the(label(c))
+            let here = a.whereabouts.contains { $0.here != false && Cards.card(for: $0, in: a)?.id == c.id }
+            let by = speaker.isEmpty ? "" : speaker.prefix(1).uppercased() + speaker.dropFirst()
+            if !by.isEmpty {
+                out.append(here ? by + " glances toward " + who + "." : by + " thinks of " + who + " a moment.")
+            }
+        }
         // The player's own name, when they ask if it is remembered.
         let mine = Cards.first(a.playerName)
         if mine.count > 1, Self.asksMyName(input), nameTold(a), !words.contains(mine.lowercased()) {
@@ -5502,6 +5566,67 @@ final class StoryEngine {
             if !low.contains(stem) { out.append("It was only the " + noun + ".") }
         }
         return out
+    }
+
+    /// What the player says aloud (the quoted parts), and what they tell outside the quotes.
+    static func speechAndNarration(_ input: String) -> (speech: String, narration: String) {
+        let quote = #""[^"]*"|“[^”]*”"#
+        guard let re = try? NSRegularExpression(pattern: quote) else { return ("", input) }
+        let ns = input as NSString
+        let spans = re.matches(in: input, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range) }
+        let speech = spans.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"“” ")) }.joined(separator: " ")
+        let narration = input.replacingOccurrences(of: quote, with: " ", options: .regularExpression)
+        return (speech, narration)
+    }
+
+    /// Whether the player turns or speaks to this person, not only about them: named in their own
+    /// narration ("I turn to the old barber"), or called at the start of what they say ("Earl, ...",
+    /// "Hey, barber!"). A typed line with no quotes counts whole.
+    static func addresses(_ c: LoreEntry, in input: String) -> Bool {
+        let (speech, narration) = speechAndNarration(input)
+        // "I say:" and "Then" are the turn's own frame, not the player naming anyone.
+        let told = narration.replacingOccurrences(of: #"(?i)\b(then )?i say:"#, with: " ", options: .regularExpression)
+        if Cards.mentions(c, in: told) { return true }
+        guard !speech.isEmpty else { return false }
+        var words = [Cards.first(c.name).lowercased()]
+        let role = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
+        if role.count >= 4 { words.append(role) }
+        if let last = role.split(separator: " ").last, last.count >= 4 { words.append(String(last)) }
+        let low = speech.lowercased()
+        return words.filter { $0.count >= 3 }.contains { w in
+            low.range(of: #"^\W*((hey|hi|oh|well|so|say|excuse me|sorry|listen|evening|morning|hello),?\s+)?(mr\.?\s+|mrs\.?\s+|miss\s+|old\s+)?"# + NSRegularExpression.escapedPattern(for: w) + #"\b\s*[,!?]"#, options: .regularExpression) != nil
+        }
+    }
+
+    /// Someone here or in the story whom the player asks about in what they say, when they are
+    /// not the one being spoken to ("Is the grown daughter all right?" to the keeper). Nil when
+    /// nobody, or more than one, is named that way.
+    static func askedAbout(_ a: Adventure, input: String, to: String) -> LoreEntry? {
+        let (speech, _) = speechAndNarration(input)
+        guard !speech.isEmpty else { return nil }
+        let me = Cards.first(a.playerName).lowercased()
+        let named = a.cast.filter { c in
+            !c.isPlayer && c.name.caseInsensitiveCompare(to) != .orderedSame && Cards.first(c.name).lowercased() != me
+                && Cards.mentions(c, in: speech) && !addresses(c, in: input)
+        }
+        return named.count == 1 ? named[0] : nil
+    }
+
+    /// A place name as the story already knows it: "inside the barber shop" or "back into the
+    /// great room" is The Barber Shop or The Great Room when those exist. (Nov 27: a door read
+    /// "inside the barber shop" built a second room beside the one the player had left.)
+    static func knownPlace(_ raw: String, in a: Adventure) -> String {
+        var s = raw.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .\"'"))
+        var cut = true
+        while cut {
+            cut = false
+            for p in ["back inside ", "back into ", "back in ", "back to ", "inside of ", "inside ", "into ", "in ", "the ", "a ", "an "] where s.hasPrefix(p) {
+                s = String(s.dropFirst(p.count)); cut = true
+            }
+        }
+        guard !s.isEmpty else { return raw }
+        let names = a.rooms.map(\.name) + a.lore.filter { $0.kind == .place }.map(\.name) + a.places
+        return names.first { Zone.short($0) == s } ?? raw
     }
 
     /// The person here whom the message shows leaving, when the message is told about them and not
