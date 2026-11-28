@@ -2,11 +2,14 @@ import Foundation
 
 /// Templates for every type of room, and building a room from a template or from the model's answers.
 enum RoomBuilder {
-    static let types = ["bar", "bakery", "café", "kitchen", "bedroom", "office", "shop", "hall", "corridor", "ship's deck", "street", "garden",
-                        "clearing", "riverbank", "open air", "other"]
+    static let types = [
+        "bar", "bakery", "café", "dining room", "kitchen", "living room", "bedroom", "office",
+        "library", "shop", "workshop", "lobby", "chapel", "train car", "hall", "corridor",
+        "ship's deck", "street", "porch", "garden", "clearing", "riverbank", "open air", "other"
+    ]
     static let sizes: [(String, Int, Int)] = [("small", 4, 4), ("medium", 7, 6), ("large", 10, 8), ("huge", 14, 12)]
     /// In the open air: no walls, no windows, no doors drawn (the ways on are just directions).
-    static let outdoor: Set<String> = ["street", "garden", "clearing", "ship's deck", "riverbank", "open air"]
+    static let outdoor: Set<String> = ["street", "porch", "garden", "clearing", "ship's deck", "riverbank", "open air"]
 
     /// One object of a template: its name, kind and zone.
     struct Piece { var name: String; var icon: String; var zone: Zone }
@@ -27,16 +30,43 @@ enum RoomBuilder {
         case "café":
             return ("medium", [p("the counter", "counter", .wall(.north)), p("a small table", "table", .window), p("a chair", "chair", .beside("a small table")),
                                p("another table", "table", .centre), p("a plant", "plant", .doorCorner)])
+        case "dining room":
+            return ("medium", [p("the dining table", "table", .centre), p("a dining chair", "chair", .beside("the dining table")),
+                               p("another dining chair", "chair", .beside("the dining table")), p("a sideboard", "shelf", .wall(.north)),
+                               p("a floor lamp", "lamp", .farCorner)])
         case "kitchen":
             return ("medium", [p("the stove", "fireplace", .wall(.north)), p("the kitchen table", "table", .centre), p("a chair", "chair", .beside("the kitchen table")),
                                p("a cupboard", "shelf", .wall(.east))])
+        case "living room":
+            return ("medium", [p("the fireplace", "fireplace", .wall(.north)), p("a sofa", "sofa", .wall(.west)),
+                               p("a coffee table", "table", .centre), p("an armchair", "chair", .window),
+                               p("a rug", "rug", .centre), p("a floor lamp", "lamp", .farCorner)])
         case "bedroom":
             return ("medium", [p("the bed", "bed", .wall(.north)), p("a wardrobe", "shelf", .wall(.east)), p("a chair", "chair", .window), p("a lamp", "lamp", .farCorner)])
         case "office":
             return ("medium", [p("the desk", "desk", .window), p("a chair", "chair", .beside("the desk")), p("a bookshelf", "shelf", .wall(.east)),
                                p("a lamp", "lamp", .farCorner)])
+        case "library":
+            return ("large", [p("tall bookshelves", "shelf", .wall(.west)), p("more bookshelves", "shelf", .wall(.east)),
+                              p("a reading table", "table", .centre), p("a reading chair", "chair", .beside("a reading table")),
+                              p("a desk", "desk", .wall(.north)), p("a reading lamp", "lamp", .farCorner)])
         case "shop":
             return ("medium", [p("the counter", "counter", .wall(.north)), p("shelves", "shelf", .wall(.east)), p("more shelves", "shelf", .wall(.west))])
+        case "workshop":
+            return ("medium", [p("the workbench", "desk", .wall(.north)), p("a work stool", "stool", .beside("the workbench")),
+                               p("tool shelves", "shelf", .wall(.east)), p("wooden crates", "crate", .wall(.west)),
+                               p("a work lamp", "lamp", .farCorner)])
+        case "lobby":
+            return ("large", [p("the front desk", "counter", .wall(.north)), p("a waiting bench", "sofa", .wall(.west)),
+                              p("a side table", "table", .window), p("a chair", "chair", .beside("a side table")),
+                              p("a potted plant", "plant", .doorCorner)])
+        case "chapel":
+            return ("large", [p("the altar table", "table", .wall(.north)), p("a wooden pew", "sofa", .wall(.west)),
+                              p("another wooden pew", "sofa", .wall(.east)), p("a stone pillar", "pillar", .centre),
+                              p("a tall candle stand", "lamp", .farCorner)])
+        case "train car":
+            return ("medium", [p("a cushioned bench", "sofa", .wall(.west)), p("another cushioned bench", "sofa", .wall(.east)),
+                               p("a small window table", "table", .window), p("luggage crates", "crate", .doorCorner)])
         case "hall":
             return ("huge", [p("a long table", "table", .centre), p("a bench", "sofa", .wall(.north)), p("the fireplace", "fireplace", .wall(.east)),
                              p("a pillar", "pillar", .centre)])
@@ -46,6 +76,9 @@ enum RoomBuilder {
             return ("large", [p("the mast", "pillar", .centre), p("crates", "crate", .wall(.east)), p("barrels", "crate", .wall(.west))])
         case "street":
             return ("large", [p("a lamp post", "lamp", .farCorner), p("a bench", "sofa", .wall(.north))])
+        case "porch":
+            return ("medium", [p("a wooden bench", "sofa", .wall(.north)), p("a small table", "table", .centre),
+                               p("a chair", "chair", .beside("a small table")), p("a lantern", "lamp", .farCorner)])
         case "garden":
             return ("large", [p("a bench", "sofa", .wall(.north)), p("a tree", "plant", .farCorner), p("flower beds", "plant", .doorCorner)])
         case "clearing":
@@ -63,18 +96,26 @@ enum RoomBuilder {
     static func type(for text: String) -> String {
         let w = Set(text.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "'" }).map(String.init))
         let table: [(String, [String])] = [
-            ("bar", ["bar", "pub", "tavern", "saloon", "speakeasy", "inn", "lounge", "club", "cantina"]),
+            ("bar", ["bar", "pub", "tavern", "saloon", "speakeasy", "inn", "club", "cantina"]),
             ("bakery", ["bakery", "boulangerie", "patisserie", "pastry", "pieshop"]),
-            ("café", ["café", "cafe", "coffee", "tearoom", "diner", "restaurant", "bistro"]),
-            ("kitchen", ["kitchen", "galley", "scullery"]),
-            ("bedroom", ["bedroom", "bedchamber", "cabin", "quarters", "dormitory", "suite", "hotel"]),
-            ("office", ["office", "study", "library", "station", "precinct", "lab", "laboratory", "bridge"]),
-            ("shop", ["shop", "store", "market", "boutique", "pharmacy", "bookshop", "stall"]),
-            ("hall", ["hall", "ballroom", "church", "chapel", "temple", "throne", "lobby", "foyer", "museum", "gallery", "warehouse", "barn"]),
-            ("corridor", ["corridor", "hallway", "passage", "tunnel", "stairs", "staircase", "alley"]),
+            ("café", ["café", "cafe", "coffee", "tearoom", "diner", "bistro"]),
+            ("dining room", ["dining", "restaurant", "banquet", "mess", "supper"]),
+            ("kitchen", ["kitchen", "galley", "scullery", "pantry"]),
+            ("living room", ["living", "parlour", "parlor", "lounge", "den", "sitting", "drawing", "flat", "apartment", "cottage", "lodge"]),
+            ("bedroom", ["bedroom", "bedchamber", "cabin", "quarters", "dormitory", "suite", "hotel", "bunkhouse"]),
+            ("library", ["library", "bookshop", "bookstore", "archive", "reading"]),
+            ("office", ["office", "study", "precinct", "lab", "laboratory", "bridge", "newsroom"]),
+            ("workshop", ["workshop", "garage", "forge", "smithy", "studio", "atelier", "shed", "boathouse", "cellar", "basement", "warehouse", "barn"]),
+            ("lobby", ["lobby", "foyer", "reception", "waiting", "station", "terminal", "clinic", "hospital"]),
+            ("chapel", ["chapel", "church", "cathedral", "shrine", "temple", "sanctuary"]),
+            ("train car", ["train", "carriage", "compartment", "coach", "tram", "trolley", "subway"]),
+            ("shop", ["shop", "store", "market", "boutique", "pharmacy", "barbershop", "tailor", "florist", "grocer", "stall"]),
+            ("hall", ["hall", "ballroom", "throne", "museum", "gallery", "theatre", "theater"]),
+            ("corridor", ["corridor", "hallway", "passage", "tunnel", "stairs", "staircase"]),
             ("ship's deck", ["deck", "ship", "boat", "pier", "dock", "docks", "wharf", "harbour", "harbor"]),
-            ("street", ["street", "road", "avenue", "boulevard", "square", "plaza", "platform", "town", "city", "village"]),
-            ("garden", ["garden", "park", "courtyard", "yard", "terrace", "rooftop", "balcony", "orchard"]),
+            ("porch", ["porch", "veranda", "balcony", "patio", "terrace", "rooftop", "courtyard"]),
+            ("street", ["street", "road", "avenue", "boulevard", "alley", "lane", "sidewalk", "square", "plaza", "platform", "town", "city", "village", "lot", "highway"]),
+            ("garden", ["garden", "park", "yard", "orchard"]),
             ("riverbank", ["river", "riverbank", "riverside", "quay", "quayside", "embankment", "canal", "towpath"]),
             ("clearing", ["clearing", "forest", "woods", "beach", "field", "meadow", "camp", "cave", "desert", "shore", "hill", "mountain"]),
         ]
@@ -94,7 +135,7 @@ enum RoomBuilder {
         if let m = metres, m.0 >= 2, m.1 >= 2 { (w, d) = (min(16, m.0), min(14, m.1)) }
         // A public room is never a cupboard: a bar, café, shop or hall is at least medium, and any room
         // grows until it has about four square metres for each person and piece in it.
-        let roomy: Set<String> = ["bar", "bakery", "café", "shop", "hall", "kitchen", "street", "garden", "clearing", "ship's deck", "riverbank", "open air"]
+        let roomy: Set<String> = ["bar", "bakery", "café", "dining room", "living room", "library", "shop", "workshop", "lobby", "chapel", "hall", "kitchen", "street", "garden", "clearing", "ship's deck", "riverbank", "open air"]
         // Only when the model gave no size of its own: a 4 m lighthouse kitchen stays 4 m.
         if metres == nil, roomy.contains(type) { w = max(w, 7); d = max(d, 6) }
         for s in sizes where w * d < crowd * 4 && s.1 * s.2 > w * d { (w, d) = (s.1, s.2); if w * d >= crowd * 4 { break } }

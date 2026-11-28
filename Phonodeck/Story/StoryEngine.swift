@@ -7295,9 +7295,14 @@ extension StoryEngine {
         // grammar holds every value to its list, so the model spends its tokens on the answers.
         let who: [String] = ["nobody", "you"] + a0.cast.filter { !$0.isPlayer }.map(\.name)
         let wallLabels = Self.wallLabels
+        let useTemplateFast = previous != nil && about.isEmpty && !openAir && !tp.pieces.isEmpty
+        let inventForUnknownRoom = previous != nil && about.isEmpty && !useTemplateFast
+        let q2Question = inventForUnknownRoom
+            ? "QUESTION: The player just stepped into " + placeName + ", which has not been described yet. Invent 3 to 5 realistic solid pieces of furniture or physical fixtures that genuinely belong in a real " + placeName + " in this era (concrete objects that sit on the floor or a surface; never people, walls, floors, ceilings, weather, or smells).\n"
+            : "QUESTION: List every thing the story names in this room, at most 7, each once, in the story's own words (two only if the story says there are two): furniture (a staircase or ladder inside the room too), small things on it, and things people wear or carry; plus the one or two pieces of furniture the scene can't do without (a bar to sit at, a bed to sleep in). Leave out lamps, plants, rugs and decoration unless the story names them.\n"
         let q2Parts: [String] = [
             base + "THE ROOM SO FAR: a " + type + ", \(r.width) by \(r.depth) metres.\n",
-            "QUESTION: List every thing the story names in this room, at most 7, each once, in the story's own words (two only if the story says there are two): furniture (a staircase or ladder inside the room too), small things on it, and things people wear or carry; plus the one or two pieces of furniture the scene can't do without (a bar to sit at, a bed to sleep in). Leave out lamps, plants, rugs and decoration unless the story names them.\n",
+            q2Question,
             "name: the thing itself, a few plain words (a gramophone, not \"jazz playing on the gramophone\"). Where it is, or what it hangs on or sits in, is never part of its name: \"a brass hat on a hook\" is a brass hat; \"a plant near the aisle\" is a small potted plant. A plant or a small object is never part of the building. A sound, music or a smell is not solid; if the story has a thing making it (music from a gramophone or a radio), list that thing on its own too.\n",
             "For each thing:\n",
             "sort: not solid = a smell, smoke, steam, sound, light, feeling, or stuff like wood, water or dust; body = part of a person (hands, eyes, a smile); building = a wall, window, door, beam or the sky; furniture = big and heavy, on the floor, too big to lift with one hand (a table, a stool, a piano, a bar, a gramophone, a staircase or ladder inside the room); worn = on someone's body (a dress, glasses, a hat, a ring, a coat); small = picked up with one hand and set on a table, bar or shelf (a glass, a drink, a key, a cloth, a book, a record)\n",
@@ -7309,13 +7314,13 @@ extension StoryEngine {
             "KINDS: " + Rules.kinds.joined(separator: "; ") + "\nWHO: " + who.joined(separator: "; "),
             "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"sort\":\"one sort\",\"kind\":\"one of KINDS\",\"wall\":\"one wall answer\",\"len\":2,\"stools\":0,\"who\":\"one of WHO\"}]}\nThe form:",
         ]
-        let useTemplateFast = previous != nil && about.isEmpty && !openAir && !tp.pieces.isEmpty
         let m2: [String: Any]
         if useTemplateFast {
             m2 = [:]
         } else {
             let q2 = q2Parts.joined()
-            m2 = await ask("What does the story name in this room?", q2,
+            let askTitle = inventForUnknownRoom ? "What belongs in " + placeName + "?" : "What does the story name in this room?"
+            m2 = await ask(askTitle, q2,
                            JSONGrammar.roomEntities(sorts: Self.sortLabels.map(\.1), kinds: Rules.kinds,
                                                     walls: wallLabels.map(\.0), who: who, max: 7), 420)
             guard !Task.isCancelled else { return }
@@ -7323,7 +7328,7 @@ extension StoryEngine {
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
         let listed: [[String: Any]] = ((m2["things"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
         if !useTemplateFast {
-            r.log.append("ask: what does the story name here? → " + (listed.isEmpty ? "nothing" : listed.map { str($0, "name") + " (" + str($0, "sort") + ")" }.joined(separator: ", ")))
+            r.log.append("ask: " + (inventForUnknownRoom ? "what belongs in " + placeName + "?" : "what does the story name here?") + " → " + (listed.isEmpty ? "nothing" : listed.map { str($0, "name") + " (" + str($0, "sort") + ")" }.joined(separator: ", ")))
         }
         var wanted: [Thing] = []
         var worn: [(String, String)] = []
@@ -7398,6 +7403,16 @@ extension StoryEngine {
             // A newly visited indoor room ("We walk into the bakery") hasn't been described yet, so
             // furnish it cleanly from its room-type template rather than leaving an empty box.
             RoomBuilder.furnish(&r, tp.pieces)
+            await show(r)
+        } else if wanted.isEmpty, !openAir, r.objects.isEmpty {
+            // Safety net for an untemplated indoor room ("other") if the model returned no valid solid pieces.
+            let minimal: [RoomBuilder.Piece] = [
+                .init(name: "a table", icon: "table", zone: .centre),
+                .init(name: "a chair", icon: "chair", zone: .beside("a table")),
+                .init(name: "a lamp", icon: "lamp", zone: .farCorner),
+            ]
+            RoomBuilder.furnish(&r, minimal)
+            r.log.append("fallback: minimal indoor set placed for untemplated room")
             await show(r)
         } else if !leadFound, let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
             // Asked two ways: one "no" alone doesn't leave a bar without its bar.
