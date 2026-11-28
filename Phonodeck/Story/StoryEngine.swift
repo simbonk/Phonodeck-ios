@@ -2586,6 +2586,12 @@ final class StoryEngine {
             // Arriving somewhere with no description yet: the place is built before the reply, so
             // the reply can bring it to life.
             let arrived = !a.location.isEmpty && a.location.caseInsensitiveCompare(placeBeforeTurn) != .orderedSame
+            if arrived {
+                a.spot = ""
+                for idx in a.whereabouts.indices where a.whereabouts[idx].here != false {
+                    a.whereabouts[idx].at = a.location
+                }
+            }
             // Arriving somewhere with no map yet: the room is drawn first (you watch it go up), from
             // what the player said and the place itself, and the reply is then told from that map.
             if arrived, !a.rooms.contains(where: { $0.name.caseInsensitiveCompare(a.location) == .orderedSame }) {
@@ -2838,9 +2844,10 @@ final class StoryEngine {
                 walkedThisTurn = true
             }
             let movingWords = #"(?i)\b(walk|walks|go|goes|step|steps|move|moves|head|heads|cross|crosses|come|comes|wander|wanders|join|joins|approach|approaches|stroll|strolls)\b"#
+            let actionText = Self.speechAndNarration(input).narration
             if spotSaid.isEmpty, !arrivedNow, (read?.newPlace ?? "").isEmpty, let to = read?.to, !to.isEmpty,
                let r = a.room, let me = r.player, let them = r.named(to), them.isPerson, RoomGrid.distance(me, them) > 1.6,
-               input.range(of: movingWords, options: .regularExpression) != nil {
+               actionText.range(of: movingWords, options: .regularExpression) != nil {
                 let role = a.cast.first { $0.name.caseInsensitiveCompare(to) == .orderedSame }?.role ?? ""
                 let who = to + (role.isEmpty ? "" : " (" + role + ")")
                 let goes = "walks over to them"
@@ -3913,19 +3920,41 @@ final class StoryEngine {
         let shown: [String] = ((lm?["people"] as? [Any]) ?? []).compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { $0.count > 2 }
         asked.append("Who does the moment show? → " + (shown.isEmpty ? "nobody" : shown.joined(separator: "; ")))
         let me1 = Cards.first(start.playerName).lowercased()
+        let distinctRoles: Set<String> = [
+            "baker", "bartender", "waiter", "waitress", "cook", "chef", "barber", "clerk", "cashier",
+            "shopkeeper", "proprietor", "innkeeper", "host", "hostess", "driver", "cabby", "officer",
+            "policeman", "constable", "detective", "doctor", "nurse", "pharmacist", "tailor", "butcher",
+            "florist", "grocer", "postman", "librarian", "concierge", "porter", "pianist", "musician",
+            "singer", "priest", "captain", "sailor", "guard", "doorman", "barista", "server", "patroller"
+        ]
         for who in shown {
             let l = who.lowercased()
             if ["you", "the player", "yourself"].contains(l) || (!me1.isEmpty && l.contains(me1)) { continue }
             // Named as someone on file: nothing to ask.
             if start.cast.contains(where: { c in l.contains(c.name.lowercased()) || Continuity.wordSet(who).contains(Cards.first(c.name).lowercased()) }) { continue }
-            let castList = start.cast.map { $0.name + roleOf($0) }.joined(separator: "; ")
-            let pm = await ask("Who is " + clip(who, 40) + "?",
-                               "In this moment the story shows \"" + who + "\". Is that one of these people, or someone new?\nPEOPLE: " + castList
-                               + "\nAnswer with their name, or \"someone new\". If someone new, role: what they are, two or three plain words (e.g. 'police inspector'); otherwise empty.",
-                               JSONGrammar.pickOne("who", from: start.cast.map(\.name) + ["someone new"], free: "role", chars: 40), 50)
-            guard pm != nil else { return }
-            guard (pm?["who"] as? String) == "someone new" else { asked.append("Who is " + who + "? → " + ((pm?["who"] as? String) ?? "?")); continue }
-            let roleSaid = ((pm?["role"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let whoWords = Continuity.wordSet(who)
+            // A distinct occupation not held by anyone on file ("the baker" when the cast is a bookshop
+            // owner and a poet) is unambiguously someone new — never let a 4B model merge them into Margot.
+            let hasDistinctRole = !whoWords.isDisjoint(with: distinctRoles)
+                && !start.cast.contains { c in !whoWords.intersection(distinctRoles).isDisjoint(with: Continuity.wordSet(c.role + " " + c.name)) }
+            var isNew = hasDistinctRole
+            var roleSaid = hasDistinctRole ? who : ""
+            if !hasDistinctRole {
+                let castList = start.cast.map { $0.name + roleOf($0) }.joined(separator: "; ")
+                let pm = await ask("Who is " + clip(who, 40) + "?",
+                                   "In this moment the story shows \"" + who + "\". Is that someone new, or one of PEOPLE?\nPEOPLE: " + castList
+                                   + "\nIf their job or description does not match any role in PEOPLE, answer \"someone new\".\nOutput ONLY one JSON object:\n{\"who\":\"someone new or exact name from PEOPLE\",\"role\":\"2-3 plain words if someone new, else empty\"}",
+                                   JSONGrammar.pickOne("who", from: ["someone new"] + start.cast.map(\.name), free: "role", chars: 40), 50)
+                guard pm != nil else { return }
+                let picked = ((pm?["who"] as? String) ?? (pm?["answer"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if picked.lowercased() != "someone new" {
+                    asked.append("Who is " + who + "? → " + (picked.isEmpty ? "?" : picked))
+                    continue
+                }
+                isNew = true
+                roleSaid = ((pm?["role"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard isNew else { continue }
             asked.append("Who is " + who + "? → someone new" + (roleSaid.isEmpty ? "" : " (" + roleSaid + ")"))
             // Their name if the story gives one ("Mr. Elias"), otherwise what they are ("The police inspector").
             let named = who.first?.isUppercase == true && !["the ", "a ", "an "].contains { who.lowercased().hasPrefix($0) }
@@ -5004,17 +5033,30 @@ final class StoryEngine {
         var e = LoreEntry(name: name, kind: .person, desc: clip(line.trimmingCharacters(in: .whitespacesAndNewlines), 200), role: clip(role, 60), known: true)
         e.updatedTurn = a.playerTurns
         _ = addLore(&a, e)
-        if !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
-            a.whereabouts.append(Whereabout(name: name, at: a.location.isEmpty ? (a.room?.name ?? "here") : a.location, here: true, engaged: engaged))
+        // Infer pronoun fact from the introducing sentence so VoiceCast immediately assigns a matching voice.
+        let lowLine = line.lowercased()
+        let looksFemale = lowLine.range(of: #"\b(she|her|hers|woman|wife|girl|lady|mother|daughter|waitress|hostess|madame)\b"#, options: .regularExpression) != nil
+        let looksMale = lowLine.range(of: #"\b(he|him|his|man|husband|boy|gentleman|father|son|waiter|monsieur)\b"#, options: .regularExpression) != nil
+        if looksFemale && !looksMale, !a.facts.contains(where: { $0.hasPrefix(name + " uses ") }) {
+            a.facts.append("\(name) uses she/her.")
+        } else if looksMale && !looksFemale, !a.facts.contains(where: { $0.hasPrefix(name + " uses ") }) {
+            a.facts.append("\(name) uses he/him.")
         }
-        // On the map too: they have just come in, so they stand by the door, facing the player.
-        // (Without this, someone new had a card but never a place in the room.)
-        // Between places (the place not settled yet), the room the player still stands in counts.
+        let staffRoles: Set<String> = ["baker", "bartender", "waitress", "waiter", "cook", "chef", "barber", "clerk", "cashier", "shopkeeper", "proprietor", "owner", "barista", "librarian"]
+        let isStaff = !Continuity.wordSet(name + " " + role).isDisjoint(with: staffRoles)
+        if !a.whereabouts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            let spotAt = (isStaff ? a.room?.objects.first(where: { Rules.staffed.contains($0.icon) }).map { "behind the " + Zone.short($0.name) } : nil)
+                ?? (a.location.isEmpty ? (a.room?.name ?? "here") : a.location)
+            a.whereabouts.append(Whereabout(name: name, at: spotAt, here: true, engaged: engaged))
+        }
+        // On the map too: staff go behind the counter when there is one; guests enter by the door.
         if var r = a.room, a.location.isEmpty || r.name.caseInsensitiveCompare(a.location) == .orderedSame, r.named(name) == nil {
             let p = Thing(kind: .person, name: name)
-            let note = Placer.placePerson(&r, p, zone: r.doors.isEmpty ? .anywhere : .doorCorner)
+            let counter = isStaff ? r.objects.first(where: { Rules.staffed.contains($0.icon) }) : nil
+            let zone: Zone = counter.map { .behind($0.name) } ?? (r.doors.isEmpty ? .anywhere : .doorCorner)
+            let note = Placer.placePerson(&r, p, zone: zone)
             Placer.turn(&r, p.id, toward: "you")
-            r.log.append("enter: " + name + " by the door" + (note.isEmpty ? "" : " (" + note + ")"))
+            r.log.append("enter: " + name + " " + zone.text + (note.isEmpty ? "" : " (" + note + ")"))
             a.room = r
         }
         return name
@@ -7172,7 +7214,9 @@ extension StoryEngine {
         let m1 = await ask("How big is this room, in metres?", q1, JSONGrammar.roomShell(types: RoomBuilder.types), 260)
         guard !Task.isCancelled else { return }
         var type = str(m1, "type").lowercased()
-        if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: placeName + " " + about) }
+        let namedType = RoomBuilder.type(for: placeName)
+        if namedType != "other" { type = namedType }
+        else if !RoomBuilder.types.contains(type) { type = RoomBuilder.type(for: placeName + " " + about) }
         // The model says it is in the open air: then it is an outdoor place, whatever type it picked
         // (a riverbank drawn as a shop got walls, a door and windows).
         // The long form answers "where" first, before it has thought about the place, and called
@@ -7265,14 +7309,22 @@ extension StoryEngine {
             "KINDS: " + Rules.kinds.joined(separator: "; ") + "\nWHO: " + who.joined(separator: "; "),
             "\nOutput ONLY one JSON object:\n{\"things\":[{\"name\":\"a short name\",\"sort\":\"one sort\",\"kind\":\"one of KINDS\",\"wall\":\"one wall answer\",\"len\":2,\"stools\":0,\"who\":\"one of WHO\"}]}\nThe form:",
         ]
-        let q2 = q2Parts.joined()
-        let m2 = await ask("What does the story name in this room?", q2,
+        let useTemplateFast = previous != nil && about.isEmpty && !openAir && !tp.pieces.isEmpty
+        let m2: [String: Any]
+        if useTemplateFast {
+            m2 = [:]
+        } else {
+            let q2 = q2Parts.joined()
+            m2 = await ask("What does the story name in this room?", q2,
                            JSONGrammar.roomEntities(sorts: Self.sortLabels.map(\.1), kinds: Rules.kinds,
                                                     walls: wallLabels.map(\.0), who: who, max: 7), 420)
-        guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return }
+        }
         let castNames = Set(a0.cast.map { $0.name.lowercased() })
         let listed: [[String: Any]] = ((m2["things"] as? [Any]) ?? []).compactMap { $0 as? [String: Any] }
-        r.log.append("ask: what does the story name here? → " + (listed.isEmpty ? "nothing" : listed.map { str($0, "name") + " (" + str($0, "sort") + ")" }.joined(separator: ", ")))
+        if !useTemplateFast {
+            r.log.append("ask: what does the story name here? → " + (listed.isEmpty ? "nothing" : listed.map { str($0, "name") + " (" + str($0, "sort") + ")" }.joined(separator: ", ")))
+        }
         var wanted: [Thing] = []
         var worn: [(String, String)] = []
         // Small things (a glass, a tray of coins) go on a surface once the furniture is down.
@@ -7342,7 +7394,12 @@ extension StoryEngine {
                 }
             }
         }
-        if !leadFound, let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
+        if wanted.isEmpty, !openAir, !tp.pieces.isEmpty {
+            // A newly visited indoor room ("We walk into the bakery") hasn't been described yet, so
+            // furnish it cleanly from its room-type template rather than leaving an empty box.
+            RoomBuilder.furnish(&r, tp.pieces)
+            await show(r)
+        } else if !leadFound, let lead = tp.pieces.first, !wanted.contains(where: { $0.icon == lead.icon }) {
             // Asked two ways: one "no" alone doesn't leave a bar without its bar.
             let q1 = "Does this story need " + lead.name + " in this room?"
             let nm = await ask("Does it need " + lead.name + "?", base + "QUESTION: " + q1 + "\nOutput ONLY one JSON object:\n{\"answer\":\"yes or no\"}\nThe form:", JSONGrammar.one("answer", from: ["yes", "no"]), 24)

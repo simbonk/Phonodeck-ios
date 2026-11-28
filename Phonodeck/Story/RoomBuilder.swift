@@ -2,7 +2,7 @@ import Foundation
 
 /// Templates for every type of room, and building a room from a template or from the model's answers.
 enum RoomBuilder {
-    static let types = ["bar", "café", "kitchen", "bedroom", "office", "shop", "hall", "corridor", "ship's deck", "street", "garden",
+    static let types = ["bar", "bakery", "café", "kitchen", "bedroom", "office", "shop", "hall", "corridor", "ship's deck", "street", "garden",
                         "clearing", "riverbank", "open air", "other"]
     static let sizes: [(String, Int, Int)] = [("small", 4, 4), ("medium", 7, 6), ("large", 10, 8), ("huge", 14, 12)]
     /// In the open air: no walls, no windows, no doors drawn (the ways on are just directions).
@@ -19,6 +19,11 @@ enum RoomBuilder {
             return ("large", [p("the bar", "bar", .wall(.north)), p("bar stool", "stool", .beside("the bar")), p("another bar stool", "stool", .beside("the bar")),
                               p("a table", "table", .centre), p("a chair", "chair", .beside("a table")), p("a corner table", "table", .farCorner),
                               p("bottles", "small", .on("the bar"))])
+        case "bakery":
+            return ("medium", [p("the front counter", "counter", .wall(.north)), p("pastry display case", "shelf", .wall(.east)),
+                               p("bread shelves", "shelf", .wall(.west)), p("the baking oven", "fireplace", .farCorner),
+                               p("a small café table", "table", .window), p("a chair", "chair", .beside("a small café table")),
+                               p("baskets of warm loaves", "small", .on("the front counter"))])
         case "café":
             return ("medium", [p("the counter", "counter", .wall(.north)), p("a small table", "table", .window), p("a chair", "chair", .beside("a small table")),
                                p("another table", "table", .centre), p("a plant", "plant", .doorCorner)])
@@ -59,7 +64,8 @@ enum RoomBuilder {
         let w = Set(text.lowercased().split(whereSeparator: { !$0.isLetter && $0 != "'" }).map(String.init))
         let table: [(String, [String])] = [
             ("bar", ["bar", "pub", "tavern", "saloon", "speakeasy", "inn", "lounge", "club", "cantina"]),
-            ("café", ["café", "cafe", "coffee", "tearoom", "diner", "restaurant", "bistro", "bakery"]),
+            ("bakery", ["bakery", "boulangerie", "patisserie", "pastry", "pieshop"]),
+            ("café", ["café", "cafe", "coffee", "tearoom", "diner", "restaurant", "bistro"]),
             ("kitchen", ["kitchen", "galley", "scullery"]),
             ("bedroom", ["bedroom", "bedchamber", "cabin", "quarters", "dormitory", "suite", "hotel"]),
             ("office", ["office", "study", "library", "station", "precinct", "lab", "laboratory", "bridge"]),
@@ -88,7 +94,7 @@ enum RoomBuilder {
         if let m = metres, m.0 >= 2, m.1 >= 2 { (w, d) = (min(16, m.0), min(14, m.1)) }
         // A public room is never a cupboard: a bar, café, shop or hall is at least medium, and any room
         // grows until it has about four square metres for each person and piece in it.
-        let roomy: Set<String> = ["bar", "café", "shop", "hall", "kitchen", "street", "garden", "clearing", "ship's deck", "riverbank", "open air"]
+        let roomy: Set<String> = ["bar", "bakery", "café", "shop", "hall", "kitchen", "street", "garden", "clearing", "ship's deck", "riverbank", "open air"]
         // Only when the model gave no size of its own: a 4 m lighthouse kitchen stays 4 m.
         if metres == nil, roomy.contains(type) { w = max(w, 7); d = max(d, 6) }
         for s in sizes where w * d < crowd * 4 && s.1 * s.2 > w * d { (w, d) = (s.1, s.2); if w * d >= crowd * 4 { break } }
