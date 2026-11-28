@@ -2487,11 +2487,20 @@ final class StoryEngine {
             // Told about someone else, with no "I" in it ("A girl selling newspapers pokes her head in
             // the door and comes inside"), it is never the player going out. (Nov 27: that line sent
             // the player outside, away from the old man who had just come in.)
-            let aboutSomeoneElse = Self.speechAndNarration(input).narration
+            let splitInput = Self.speechAndNarration(input)
+            let aboutSomeoneElse = splitInput.narration
                 .range(of: #"(?i)\b(i|i'm|i've|i'll|i'd|me|my|myself|we|we're|let's|us|our)\b"#, options: .regularExpression) == nil
                 && input.range(of: #"^\W*([Aa]n?|[Tt]he|[Ss]omeone|[Ss]omebody|[Ss]ome|[Aa]nother|[Tt]wo|[Tt]hree|[A-Z][a-z]+ [A-Z][a-z]+)\b"#, options: .regularExpression) != nil
+            // Only ask about leaving through a door when the player's physical action (narration)
+            // actually moves/exits, OR when spoken dialogue states an explicit departure (not a question
+            // or invitation like "Do you wanna step outside with me?" or "What brings you out here?").
+            let exitActionInNarration = splitInput.narration.range(of: #"(?i)\b(out|outside|leave|leaves|leaving|exit|exits|head|heads|go|goes|step|steps|walk|walks)\b"#, options: .regularExpression) != nil
+            let speechIsQuestion = splitInput.speech.contains("?")
+                || splitInput.speech.range(of: #"(?i)\b(do you|would you|want to|wanna|care to|feel like|should we|shall we|can we|could we|what brings|all alone)\b"#, options: .regularExpression) != nil
+            let explicitDepartureInSpeech = !speechIsQuestion
+                && splitInput.speech.range(of: #"(?i)\b(i'm going|i'm heading|i'm stepping|i'm leaving|let's go|let's head|let's step|going outside|heading outside|stepping outside|walk outside|go outside)\b"#, options: .regularExpression) != nil
             if var r = read, leaverThisTurn.isEmpty, !aboutSomeoneElse, r.newPlace.isEmpty, r.going.isEmpty || r.going == "somewhere new", !newPlaceRefused, !a.location.isEmpty,
-               let room = a.room, input.range(of: #"(?i)\b(out|outside|leave|leaves|leaving|exit|exits|head|heads|go|goes|step|steps|walk|walks)\b"#, options: .regularExpression) != nil {
+               let room = a.room, (exitActionInNarration || explicitDepartureInSpeech) {
                 let ok: (String) -> Bool = { n in n.count > 2 && n.count <= 50 && n.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || " -.',".unicodeScalars.contains($0) } }
                 var doors: [String] = []
                 for d in room.doors {
@@ -2501,7 +2510,7 @@ final class StoryEngine {
                 if !doors.isEmpty {
                     let stay = "stays in this room"
                     let q = "THE PLAYER IS IN: " + a.location + "\nTHE DOORS LEAD TO: " + doors.joined(separator: "; ") + "\nTHE PLAYER SAYS: " + clip(input, 300)
-                        + "\nQUESTION: Does the player leave the room now through one of its doors? Walking over to someone or something in the room, or standing by a door, is staying.\nCHOICES: " + ([stay] + doors).joined(separator: "; ")
+                        + "\nQUESTION: Does the player leave the room right now through one of its doors? Asking or inviting someone to step outside ('Do you want to go outside?'), walking over to someone inside, or standing by a door is staying.\nCHOICES: " + ([stay] + doors).joined(separator: "; ")
                         + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
                     let q0 = Date()
                     let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 40, temperature: 0.1, repetitionPenalty: 1.0,
@@ -2811,7 +2820,7 @@ final class StoryEngine {
                 walkConfirmed = true
                 walkedThisTurn = true
             }
-            let movingWords = #"(?i)\b(walk|walks|go|goes|step|steps|move|moves|head|heads|cross|crosses|come|comes|wander|wanders|join|joins|approach|approaches|stroll|strolls|over to|up to)\b"#
+            let movingWords = #"(?i)\b(walk|walks|go|goes|step|steps|move|moves|head|heads|cross|crosses|come|comes|wander|wanders|join|joins|approach|approaches|stroll|strolls)\b"#
             if spotSaid.isEmpty, !arrivedNow, (read?.newPlace ?? "").isEmpty, let to = read?.to, !to.isEmpty,
                let r = a.room, let me = r.player, let them = r.named(to), them.isPerson, RoomGrid.distance(me, them) > 1.6,
                input.range(of: movingWords, options: .regularExpression) != nil {
@@ -2948,12 +2957,16 @@ final class StoryEngine {
                 if a.ambience[key] == nil, !folk.isEmpty {
                     stage = "What goes on here"
                     let things = room.objects.filter { $0.icon != "rug" }.map { Fovea.bare($0.name) }.prefix(8).joined(separator: ", ")
-                    let q = "THE STORY: " + clip(a.bible, 400) + "\nWHEN: " + Fovea.whenWhere(a) + "\nTHE ROOM: " + a.location + " (" + things + ")"
+                    let isOpeningRoom = a.rooms.first?.id == room.id
+                    let placeContext = isOpeningRoom
+                        ? "THE STORY: " + clip(a.bible, 400)
+                        : "THIS PLACE: " + [room.inside, room.outside].filter { !$0.isEmpty }.joined(separator: " ")
+                    let q = placeContext + "\nWHEN: " + Fovea.whenWhere(a) + "\nTHE ROOM: " + a.location + (things.isEmpty ? "" : " (" + things + ")")
                         + "\nTHE PEOPLE HERE: " + folk.map { n in
                             let role = a.cast.first { $0.name.caseInsensitiveCompare(n) == .orderedSame }?.role ?? ""
                             return n + (role.isEmpty ? "" : " (" + role + ")")
                         }.joined(separator: ", ")
-                        + "\nQUESTION: Name three small, ordinary things the people here get on with over the next while, in order. Each fits that person's work and uses only what is in THE ROOM. Each one sentence starting with a person's name, at most 12 words. Never the player, never \"you\".\nOutput ONLY one JSON object:\n{\"steps\":[\"three sentences\"]}\nThe form:"
+                        + "\nQUESTION: Name three small, ordinary things the people here get on with over the next while, in order. Each fits THIS PLACE and uses only what is in THE ROOM. Each one sentence starting with a person's name, at most 12 words. Never the player, never \"you\".\nOutput ONLY one JSON object:\n{\"steps\":[\"three sentences\"]}\nThe form:"
                     let q0 = Date()
                     let raw = (try? await llm.complete(system: nil, prompt: q, options: .init(maxTokens: 120, temperature: 0.6, repetitionPenalty: 1.1,
                                                                                          grammar: JSONGrammar.strings("steps", max: 3, chars: 90)))) ?? ""
@@ -6054,8 +6067,14 @@ final class StoryEngine {
             said.contains(Cards.first(c.name).lowercased()) || Continuity.wordSet(c.role).contains(where: { $0.count > 3 && said.contains($0) })
         }
         guard !namesSomeone, let lastGM = a.transcript.last(where: { $0.role == .gm })?.text else { return nil }
-        let common: Set<String> = ["about", "there", "their", "would", "could", "should", "where", "which", "while", "these", "those",
-                                   "thing", "things", "something", "doing", "think", "right", "today", "tonight", "again", "other"]
+        let common: Set<String> = [
+            "about", "there", "their", "would", "could", "should", "where", "which", "while", "these", "those",
+            "thing", "things", "something", "doing", "think", "right", "today", "tonight", "again", "other",
+            "still", "never", "always", "really", "maybe", "going", "being", "after", "before", "since",
+            "every", "little", "first", "around", "behind", "under", "place", "story", "sorry", "thank",
+            "thanks", "please", "hello", "might", "better", "leave", "leaving", "staying", "waiting", "nothing",
+            "alone", "outside", "inside", "years", "night", "morning", "someone", "anyone", "nobody"
+        ]
         func stems(_ t: String) -> Set<String> {
             Set(t.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
                 .filter { $0.count >= 5 && !common.contains($0) }.map { String($0.prefix(5)) })
@@ -7112,15 +7131,18 @@ extension StoryEngine {
         } else if !fromName.isEmpty {
             base += "\nTHE PLAYER CAME FROM: " + fromName
         }
-        // The set-up's place is the opening room only: a room further on is not another copy of it.
+        // The set-up's place, premise, and workplace facts belong to the opening room only: a room
+        // further on (like stepping outside to a gravel parking lot) must never clone the starting room.
         let world = [a0.setup.world, previous == nil ? a0.setup.place : ""].filter { !$0.isEmpty }.joined(separator: ". ")
         if !world.isEmpty { base += "\nTHE WORLD: " + clip(world, 200) }
-        // What is already true (the premise, the time, the facts): the room, its weather, doors and
-        // seats keep to it ("July, late afternoon, a moving train heading north, a window seat").
-        base += "\nTHE PREMISE (keep to it): " + clip(Cards.premise(a0), 400)
+        if previous == nil {
+            base += "\nTHE PREMISE (keep to it): " + clip(Cards.premise(a0), 400)
+            let known = a0.facts.filter { !$0.contains(" uses ") }.suffix(8)
+            if !known.isEmpty { base += "\nFACTS (keep to them):\n" + known.map { "- " + clip($0, 140) }.joined(separator: "\n") }
+        } else {
+            base += "\nNOTE: The player just left " + fromName + " and entered a DIFFERENT place (" + placeName + "). Describe and furnish ONLY " + placeName + " — do NOT copy counters, chairs, food, or indoor fixtures from " + fromName + "."
+        }
         base += "\nWHEN: " + Fovea.whenWhere(a0)
-        let known = a0.facts.filter { !$0.contains(" uses ") }.suffix(8)
-        if !known.isEmpty { base += "\nFACTS (keep to them):\n" + known.map { "- " + clip($0, 140) }.joined(separator: "\n") }
         base += "\n\n" + story + "\n\n"
 
         // 1. The shell.
@@ -7466,11 +7488,27 @@ extension StoryEngine {
             for name in here {
                 guard !Task.isCancelled else { return }
                 let card = a0.cast.first { $0.name == name }
-                let workSpots = ["nothing"] + r.objects.filter { $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" }.map { Zone.short($0.name) }
+                // Someone who just walked here with you from the previous room arrives standing beside
+                // you — never re-seated behind a phantom counter or handed a ledger from the old room.
+                if previous != nil, let prev = previous?.named(name), prev.isPerson {
+                    var p = Thing(kind: .person, name: name)
+                    p.wearing = prev.wearing
+                    p.holding = prev.holding
+                    let anchorName = r.player?.name ?? "you"
+                    let note = Placer.placePerson(&r, p, zone: .beside(anchorName))
+                    p = r.thing(p.id) ?? p
+                    r.log.append("enter: " + name + " beside you" + (note.isEmpty ? "" : " (" + note + ")"))
+                    facing.append((p.id, "you"))
+                    await show(r, pause: 0.2)
+                    continue
+                }
+                let workSpots = openAir
+                    ? ["nothing"]
+                    : ["nothing"] + r.objects.filter { $0.on == nil && !Rules.rule($0.icon).small && $0.icon != "rug" }.map { Zone.short($0.name) }
                 var who = name + ((card?.role ?? "").isEmpty ? "" : " (" + Continuity.roleLabel(card!.role) + ")")
                 // Where the story itself puts them ("at a corner table with her sketchbook") goes with
-                // every question about them.
-                if let told = (adventure ?? a0).whereabouts.first(where: { $0.name == name })?.at, told.count > 3 {
+                // every question about them (opening room only, never stale spots from another room).
+                if previous == nil, let told = (adventure ?? a0).whereabouts.first(where: { $0.name == name })?.at, told.count > 3 {
                     who += ", whom the story puts " + clip(told, 80)
                 }
                 // And their card ("She sits in a corner, humming"), so posture and things fit it.
@@ -7693,8 +7731,9 @@ extension StoryEngine {
                 }
             }
         }
-        // You start where the opening puts you ("on a stool at the long mahogany bar").
-        if let a = adventure, let me = r.player {
+        // You start where the opening puts you ("on a stool at the long mahogany bar") — opening room only;
+        // when walking into a new room (previous != nil), you arrive standing by the way you came in.
+        if previous == nil, let a = adventure, let me = r.player {
             let opening = [a.spot, a.scene].first { !$0.isEmpty } ?? ""
             // Where: read off the opening's own words when they name a thing on the map, or else the
             // model picks from the places.

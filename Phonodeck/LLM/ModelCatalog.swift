@@ -77,8 +77,8 @@ enum ModelCatalog {
         ModelEntry(
             id: "mlx-community/Kokoro-82M-bf16", name: "Kokoro",
             blurb: "Medium: a natural, pleasant narrator that keeps up with the story. Small download.",
-            kind: .voice, approxGB: 0.35, paramsB: 0.08, tier: .medium, defaultVoice: "af_heart",
-            voices: ["af_heart", "af_bella", "af_nicole", "af_sarah", "am_michael", "am_adam", "am_fenrir",
+            kind: .voice, approxGB: 0.35, paramsB: 0.08, tier: .medium, defaultVoice: "am_michael",
+            voices: ["am_michael", "af_heart", "af_bella", "af_nicole", "af_sarah", "am_adam", "am_fenrir",
                      "bf_emma", "bf_isabella", "bm_george", "bm_fable", "bm_lewis"]),
         ModelEntry(
             id: "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16", name: "Qwen3-TTS",

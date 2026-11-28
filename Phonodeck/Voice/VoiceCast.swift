@@ -47,7 +47,7 @@ struct VoiceCast {
         let femaleUS = ["af_bella", "af_sarah", "af_nicole", "af_heart"]
         let femaleUK = ["bf_emma", "bf_isabella"]
         let maleDeep = ["am_adam", "bm_george", "am_fenrir", "am_michael"]
-        let maleLight = ["am_michael", "bm_fable", "bm_lewis", "am_adam"]
+        let maleLight = ["bm_fable", "bm_lewis", "am_adam", "am_michael"]
 
         var usedKokoro: Set<String> = [narratorKokoro]
         let installedApple = Narrator.appleVoices.filter { $0.identifier != narratorAppleID }

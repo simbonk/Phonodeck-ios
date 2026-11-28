@@ -170,7 +170,7 @@ final class Narrator: NSObject {
 
     /// Assigns distinct character voices for the current story cast (and who the player is talking to).
     func setCast(_ people: [LoreEntry], facts: [String], defaultSpeaker: String = "") {
-        let narratorKokoro = activeVoiceModel.map { Self.neuralVoice(for: $0) } ?? "af_heart"
+        let narratorKokoro = activeVoiceModel.map { Self.neuralVoice(for: $0) } ?? "am_michael"
         cast = VoiceCast.build(
             cast: people,
             facts: facts,
