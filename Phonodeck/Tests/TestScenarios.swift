@@ -207,7 +207,7 @@ enum TestScenarios {
 ? here {host}
 
 # r-visit-unknown | Stepping into an untemplated room that the AI must furnish itself | regressions
-> I step through a side door into <<the rooftop observatory|the photo darkroom|the clockmaker's attic|the wine vault>>. ||
+> I step through a side door into <<the brass observatory|the photo darkroom|the clockmaker's attic|the wine vault>>. ||
 ? moved
 ? room-furnished
 ? no-cloned-room

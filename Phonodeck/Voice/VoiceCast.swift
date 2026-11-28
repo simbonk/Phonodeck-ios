@@ -15,6 +15,7 @@ struct VoiceCast {
     struct CharacterVoice: Equatable {
         let name: String
         let firstName: String
+        let lastName: String
         let fullRole: String
         let roleHead: String
         let gender: Gender
@@ -121,9 +122,13 @@ struct VoiceCast {
             let fullRole = Continuity.roleLabel(c.role).lowercased().replacingOccurrences(of: #"^(the|a|an)\s+"#, with: "", options: .regularExpression)
             let rawHead = fullRole.split(separator: " ").last.map(String.init) ?? ""
             let roleHead = (rawHead.count >= 4 && !genericRoles.contains(rawHead)) ? rawHead : ""
+            let nameWords = c.name.split(separator: " ").map { String($0).lowercased() }
+            let rawLast = (nameWords.count >= 2 && !["the", "a", "an"].contains(nameWords[0])) ? (nameWords.last ?? "") : ""
+            let lastName = (rawLast.count >= 4 && !genericRoles.contains(rawLast)) ? rawLast : ""
             assigned.append(CharacterVoice(
                 name: c.name,
                 firstName: Cards.first(c.name).lowercased(),
+                lastName: lastName,
                 fullRole: fullRole,
                 roleHead: roleHead,
                 gender: g,
@@ -152,6 +157,9 @@ struct VoiceCast {
         if c.firstName.count >= 3 {
             pats.append(#"\b"# + NSRegularExpression.escapedPattern(for: c.firstName) + #"\b"#)
         }
+        if !c.lastName.isEmpty, characters.filter({ $0.lastName == c.lastName }).count == 1 {
+            pats.append(#"\b"# + NSRegularExpression.escapedPattern(for: c.lastName) + #"\b"#)
+        }
         if c.fullRole.count >= 4 {
             pats.append(#"\b(?:the\s+)?"# + NSRegularExpression.escapedPattern(for: c.fullRole) + #"\b"#)
         }
@@ -171,6 +179,7 @@ struct VoiceCast {
     private func targetPatterns(for c: CharacterVoice) -> [String] {
         var pats = [NSRegularExpression.escapedPattern(for: c.name.lowercased())]
         if c.firstName.count >= 3 { pats.append(NSRegularExpression.escapedPattern(for: c.firstName)) }
+        if !c.lastName.isEmpty { pats.append(NSRegularExpression.escapedPattern(for: c.lastName)) }
         if c.fullRole.count >= 4 { pats.append(NSRegularExpression.escapedPattern(for: c.fullRole)) }
         if !c.roleHead.isEmpty { pats.append(NSRegularExpression.escapedPattern(for: c.roleHead)) }
         return pats
@@ -279,6 +288,28 @@ struct VoiceCast {
             if hasHer && !hasHis {
                 let fem = characters.filter { $0.gender == .female }
                 if fem.count == 1 { return fem[0] }
+            }
+            // 4. Shared-surname fallback ("Inside, Hollis watches you..." when Earl & Marcus Hollis share a surname):
+            // prefer defaultSpeakerName if they share it, otherwise the senior/proprietor role (or first match).
+            let seniorWords = ["owner", "barber", "keeper", "boss", "old", "elder", "father", "mother", "captain", "proprietor"]
+            for surname in Set(characters.map(\.lastName).filter { !$0.isEmpty }) {
+                let pat = #"\b"# + NSRegularExpression.escapedPattern(for: surname) + #"\b"#
+                if skeleton.range(of: pat, options: .regularExpression) != nil {
+                    let group = characters.filter { $0.lastName == surname }
+                    if let def = group.first(where: { $0.name.caseInsensitiveCompare(defaultSpeakerName) == .orderedSame }) { return def }
+                    if let senior = group.first(where: { c in seniorWords.contains { c.fullRole.contains($0) } }) { return senior }
+                    if let first = group.first { return first }
+                }
+            }
+            // 5. Unambiguous single-character mention anywhere in the sentence (e.g. "as you approach
+            // the stool where the old barber sits"), used only when no main-clause character subject matched.
+            if !isPostQuoteTag {
+                let mentioned = characters.filter { c in
+                    subjectPatterns(for: c).contains { pat in
+                        pat != #"\bhe\b"# && pat != #"\bshe\b"# && sent.range(of: pat, options: .regularExpression) != nil
+                    }
+                }
+                if mentioned.count == 1 { return mentioned[0] }
             }
         }
         return nil

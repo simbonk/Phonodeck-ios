@@ -119,8 +119,15 @@ enum ReadChecks {
         check(walter.she == 0, "the speaker's \"she says\" was counted for Walter (\(walter.she))")
         let elias = Continuity.pronounCounts(in: "Elias sets down the tool. \"Fine,\" he says, and he turns back.", for: "Elias Crane", others: ["Elias"])
         check(elias.he == 2, "Elias's own \"he says\" should count (\(elias.he))")
+        // Role-named newcomer ("The old man") must never match bare "The" or steal the speaker's "she/her".
+        let oldMan = Continuity.pronounCounts(in: "She pushes it across the counter, then spins back to face the old man, gesturing with her free hand. \"If he starts talking,\" she says.", for: "The old man", others: ["Marlene", "Sal", "man"])
+        check(oldMan.she == 0, "Marlene's \"she/her\" was counted for The old man (\(oldMan.she))")
 
-        // VoiceCast clause-aware speaker attribution & distinct voice assignment.
+        // speaksForPlayer must never flag an NPC saying "You said earlier..." inside spoken quotes.
+        check(!Continuity.speaksForPlayer("She leans forward. \"You said earlier you didn't have much.\" Her eyes search yours."), "NPC quote starting with \"You said\" should not trigger speaksForPlayer")
+        check(Continuity.speaksForPlayer("\"I'll take coffee,\" you say softly."), "narration tag \"you say\" after quote should trigger speaksForPlayer")
+
+        // VoiceCast clause-aware speaker attribution, shared surname, & distinct voice assignment.
         let vcCast = [
             LoreEntry(name: "Walter Pruitt", kind: .person, role: "the bartender"),
             LoreEntry(name: "Dolores Reyes", kind: .person, role: "the friendly regular"),
@@ -136,6 +143,19 @@ enum ReadChecks {
         let segs = vc.segment("\"My name's Dolores,\" the friendly regular says.", inQuote: &inQ, currentSpeaker: &curSp)
         check(segs.first(where: \.isDialogue)?.speaker?.name == "Dolores Reyes", "post-quote tag should attribute quote to Dolores")
 
+        // Two-male shared-surname cast (Earl Hollis & Marcus Hollis) with empty defaultSpeaker.
+        let hollisCast = [
+            LoreEntry(name: "Earl Hollis", kind: .person, role: "the old barber"),
+            LoreEntry(name: "Marcus Hollis", kind: .person, role: "the young apprentice"),
+        ]
+        let hollisFacts = ["Earl Hollis uses he/him.", "Marcus Hollis uses he/him."]
+        let hvc = VoiceCast.build(cast: hollisCast, facts: hollisFacts, narratorKokoro: "am_michael", narratorAppleID: nil, defaultSpeaker: "")
+        check(hvc.matchSpeaker(in: "Inside, Hollis watches you settle back into the leather.")?.name == "Earl Hollis", "shared surname Hollis should resolve to senior barber Earl Hollis")
+        check(hvc.matchSpeaker(in: "You step across the linoleum as you approach the stool where the old barber sits.")?.name == "Earl Hollis", "single unambiguous character mention should resolve to Earl Hollis")
+
+        // Fire hydrant must not map to indoor fireplace.
+        check(Rules.icon(for: "a fire hydrant") != "fireplace", "fire hydrant should not map to fireplace (got \(Rules.icon(for: "a fire hydrant")))")
+
         // RoomBuilder room-type library & unknown-room fallback detection.
         for (place, wantType) in [
             ("La Boulangerie", "bakery"), ("The Little Bakery", "bakery"),
@@ -143,7 +163,7 @@ enum ReadChecks {
             ("The Public Library", "library"), ("The Clockmaker's Workshop", "workshop"),
             ("The Grand Lobby", "lobby"), ("The Stone Chapel", "chapel"),
             ("The Train Car", "train car"), ("The Back Porch", "porch"),
-            ("The Rooftop Observatory", "other"), ("The Photo Darkroom", "other"),
+            ("The Brass Observatory", "other"), ("The Photo Darkroom", "other"),
         ] {
             let got = RoomBuilder.type(for: place)
             check(got == wantType, "RoomBuilder.type(for: \"\(place)\") gave \"\(got)\", wanted \"\(wantType)\"")

@@ -186,6 +186,7 @@ enum Rules {
     static func icon(for name: String) -> String {
         let words = Set(name.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init))
         let table: [(String, [String])] = [
+            ("pillar", ["hydrant"]),
             ("bar", ["bar", "bartop"]), ("counter", ["counter", "till", "register", "reception"]),
             ("piano", ["piano", "harpsichord", "organ"]), ("fireplace", ["fireplace", "hearth", "stove", "fire"]),
             ("bed", ["bed", "cot", "bunk", "hammock"]), ("sofa", ["sofa", "couch", "settee", "divan", "bench", "pew"]),

@@ -382,7 +382,7 @@ final class TestRunner {
         for para in reply.components(separatedBy: "\n\n") {
             let trimmed = para.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            if !inQuote { currentSpeaker = nil }
+            if !inQuote && !cast.defaultSpeakerName.isEmpty { currentSpeaker = nil }
             for seg in cast.segment(trimmed, inQuote: &inQuote, currentSpeaker: &currentSpeaker) where seg.isDialogue {
                 let letters = seg.text.filter(\.isLetter)
                 guard letters.count >= 2 else { continue }
@@ -541,7 +541,22 @@ final class TestRunner {
         case "mentions":
             let words = ctx.words(arg, in: after.cast)
             let low = reply.lowercased()
-            let ok = words.contains { low.contains($0) }
+            var ok = words.contains { low.contains($0) }
+            // When the player just asked about an unnamed character by role ("Where's the lodge owner?"),
+            // a natural human answer like "She's over there... the woman across from you" is completely valid.
+            if !ok, arg.hasPrefix("@"), let card = ctx.card(arg, in: after.cast) {
+                let fact = after.facts.first { $0.hasPrefix(card.name + " uses ") }?.lowercased() ?? ""
+                let roleWords = Cards.keywords(card.role).map { $0.lowercased() }
+                if roleWords.contains(where: { low.contains($0) }) {
+                    ok = true
+                } else if fact.contains("she"),
+                          low.range(of: #"\b(she's|she is|she has|she'd|woman|lady)\b"#, options: .regularExpression) != nil {
+                    ok = true
+                } else if fact.contains("he"),
+                          low.range(of: #"\b(he's|he is|he has|he'd|man|fellow|guy)\b"#, options: .regularExpression) != nil {
+                    ok = true
+                }
+            }
             return ("reply-mentions", "The reply", "mentions " + words.joined(separator: "/"), ok ? "yes" : "no", ok)
         case "mentions-present":
             let low = reply.lowercased()

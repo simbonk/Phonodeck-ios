@@ -1814,24 +1814,45 @@ final class StoryEngine {
         if let k = knownPlaces.first(where: { $0.caseInsensitiveCompare(a.location) != .orderedSame && Self.goesTo($0, in: input) }) {
             read.going = k
         }
-        // "Let's head back inside", "I go back in": back to the place the player came here from.
-        let backIn = #"(?i)\b(back (inside|indoors|in there|in)|(go|goes|head|heads|step|steps|come|comes|walk|walks|get|gets) (back )?(inside|indoors))\b"#
-        if read.going.isEmpty || read.going == "somewhere new", read.newPlace.isEmpty, !a.location.isEmpty,
-           input.range(of: backIn, options: .regularExpression) != nil {
+        // "Let's head back inside", "I go back in", "I head back to where I came from / where we started":
+        // resolve deterministically to the room the player came here from, overriding any hallucinated
+        // newPlace (like "the wine vault (returning)" or "the flower shop front") when the player didn't
+        // actually name a different room.
+        let splitForBack = Self.speechAndNarration(input)
+        let backIn = #"(?i)\b(back (inside|indoors|in there|in|to where (i|we) (came from|was before|were before|started))|(go|goes|head|heads|step|steps|come|comes|walk|walks|get|gets|return|returns)\s+(back\s+)?(inside|indoors|back\s+to\s+where\s+(i|we)\s+(came from|was before|were before|started)))\b"#
+        let genericBack = #"(?i)\b(go|goes|head|heads|step|steps|come|comes|walk|walks|return|returns)\s+back\b(?!\s+(down|up|at|on|to\s+the\s+\w+\s+(seat|stool|chair|booth|bar|counter|table)))"#
+        let wantsInside = splitForBack.narration.range(of: #"(?i)\b(inside|indoors|back in)\b"#, options: .regularExpression) != nil
+        let isReturnPhrase = splitForBack.narration.range(of: backIn, options: .regularExpression) != nil
+            || splitForBack.narration.range(of: genericBack, options: .regularExpression) != nil
+        let namedDifferentNewPlace = !read.newPlace.isEmpty
+            && !read.newPlace.lowercased().contains("returning")
+            && Continuity.names(place: read.newPlace, in: splitForBack.narration)
+        if !a.location.isEmpty, isReturnPhrase, !namedDifferentNewPlace,
+           (read.going.isEmpty || read.going == "somewhere new" || !knownPlaces.contains { $0.caseInsensitiveCompare(read.going) == .orderedSame }) {
             let here = a.location
             let ties = a.links.filter { $0.from.caseInsensitiveCompare(here) == .orderedSame || $0.to.caseInsensitiveCompare(here) == .orderedSame }
             let ends: [String] = ties.map { $0.from.caseInsensitiveCompare(here) == .orderedSame ? $0.to : $0.from }
-            // Back to where the player came here from, not whichever way out was drawn last. (Nov 26:
-            // "We come back inside together" from the street went on to a place called Outside.)
-            let open = #"(?i)\b(outside|street|road|lane|alley|yard|garden|porch|dock|pier|beach|shore|square|sidewalk|courtyard|field|park)\b"#
-            let indoor = ends.filter { $0.range(of: open, options: .regularExpression) == nil }
-            let visited: [String] = a.frames.reversed().map(\.place)
+            let otherRooms: [String] = a.rooms.map(\.name).filter { $0.caseInsensitiveCompare(here) != .orderedSame }
+            var candidates: [String] = []
+            for n in ends + otherRooms where !candidates.contains(where: { $0.caseInsensitiveCompare(n) == .orderedSame }) { candidates.append(n) }
+            let open = #"(?i)\b(outside|street|road|lane|alley|yard|garden|porch|dock|pier|beach|shore|square|sidewalk|courtyard|field|park|passage)\b"#
+            let indoor = candidates.filter { name in
+                if let r = a.rooms.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+                    return !RoomBuilder.outdoor.contains(r.type)
+                }
+                return name.range(of: open, options: .regularExpression) == nil
+            }
+            let visited: [String] = a.frames.reversed().map(\.place).filter { $0.caseInsensitiveCompare(here) != .orderedSame }
             func recent(_ xs: [String]) -> String? {
                 for v in visited { if let x = xs.first(where: { $0.caseInsensitiveCompare(v) == .orderedSame }) { return x } }
                 return nil
             }
-            if let back = recent(indoor) ?? indoor.last ?? recent(ends) ?? ends.last {
+            let picked: String? = wantsInside
+                ? (recent(indoor) ?? indoor.first ?? recent(candidates) ?? candidates.first)
+                : (recent(candidates) ?? recent(indoor) ?? otherRooms.first ?? ends.last)
+            if let back = picked {
                 read.going = back
+                read.newPlace = ""
                 backInside = true
             }
         }
@@ -2508,13 +2529,27 @@ final class StoryEngine {
             let aboutSomeoneElse = splitInput.narration
                 .range(of: #"(?i)\b(i|i'm|i've|i'll|i'd|me|my|myself|we|we're|let's|us|our)\b"#, options: .regularExpression) == nil
                 && input.range(of: #"^\W*([Aa]n?|[Tt]he|[Ss]omeone|[Ss]omebody|[Ss]ome|[Aa]nother|[Tt]wo|[Tt]hree|[A-Z][a-z]+ [A-Z][a-z]+)\b"#, options: .regularExpression) != nil
+            // If the player is clearly returning to where they came from ("go back inside", "head back to
+            // where I came from") and has a visited room to return to, let settle() resolve it directly
+            // without letting the door-picker guess a brand-new room (like "flower shop front room").
+            let pureReturnCue = #"(?i)\b(back (inside|indoors|in there|in|to where (i|we) (came from|was before|were before|started))|(go|goes|head|heads|step|steps|come|comes|walk|walks|return|returns)\s+back\b)"#
+            let isPureReturn = a.rooms.count >= 2
+                && splitInput.narration.range(of: pureReturnCue, options: .regularExpression) != nil
             // Only ask about leaving through a door when the player's physical action (narration)
-            // actually moves/exits, OR when spoken dialogue states an explicit departure (not a question
-            // or invitation like "Do you wanna step outside with me?" or "What brings you out here?").
-            let exitActionInNarration = splitInput.narration.range(of: #"(?i)\b(out|outside|leave|leaves|leaving|exit|exits|head|heads|go|goes|step|steps|walk|walks)\b"#, options: .regularExpression) != nil
+            // actually mentions exiting/leaving/a threshold/a door destination (NEVER bare "I walk over
+            // to the old barber"), OR when spoken dialogue states an explicit non-question departure.
+            let doorDestinationWords: [String] = (a.room?.doors ?? [])
+                .flatMap { Continuity.wordSet($0.leadsTo) }
+                .filter { $0.count >= 4 && !["door", "room", "back", "side", "front", "main"].contains($0) }
+            let mentionsDoorTarget = !doorDestinationWords.isEmpty
+                && !Continuity.wordSet(splitInput.narration).isDisjoint(with: Set(doorDestinationWords))
+            let exitActionInNarration = !isPureReturn && (mentionsDoorTarget || splitInput.narration.range(
+                of: #"(?i)\b(out|outside|leave|leaves|leaving|exit|exits|door|doorway|through the|upstairs|downstairs|street|alley|sidewalk|porch|yard|patio|balcony|hallway|corridor|back inside|back in|head into|go into|step into|walk into|head off)\b"#,
+                options: .regularExpression
+            ) != nil)
             let speechIsQuestion = splitInput.speech.contains("?")
                 || splitInput.speech.range(of: #"(?i)\b(do you|would you|want to|wanna|care to|feel like|should we|shall we|can we|could we|what brings|all alone)\b"#, options: .regularExpression) != nil
-            let explicitDepartureInSpeech = !speechIsQuestion
+            let explicitDepartureInSpeech = !isPureReturn && !speechIsQuestion
                 && splitInput.speech.range(of: #"(?i)\b(i'm going|i'm heading|i'm stepping|i'm leaving|let's go|let's head|let's step|going outside|heading outside|stepping outside|walk outside|go outside)\b"#, options: .regularExpression) != nil
             if var r = read, leaverThisTurn.isEmpty, !aboutSomeoneElse, r.newPlace.isEmpty, r.going.isEmpty || r.going == "somewhere new", !newPlaceRefused, !a.location.isEmpty,
                let room = a.room, (exitActionInNarration || explicitDepartureInSpeech) {
@@ -2659,7 +2694,7 @@ final class StoryEngine {
         // Is the player bringing someone new in? Skip on pure spoken turns or actions with no
         // arrival/person cues, so ordinary conversation doesn't pay an extra blocking GPU call.
         let actionForArrival: String = partsThisTurn.map(\.did) ?? Self.speechAndNarration(input).narration
-        let arrivalCue = #"(?i)\b(walks?|steps?|comes?|enters?|shuffles?|pokes?|pushes?|opens?|knocks?|arrives?|joins?|meets?|door|bell|stranger|visitor|customer|guest|newcomer|someone|somebody|man|woman|girl|boy|lady|gentleman|inspector|officer|sailor|nurse|doctor|captain|priest|child|person)\b"#
+        let arrivalCue = #"(?i)\b(walks?|steps?|comes?|enters?|shuffles?|pokes?|pushes?|opens?|knocks?|arrives?|joins?|meets?|door|bell|stranger|visitor|customer|guest|newcomer|someone|somebody|man|woman|girl|boy|lady|gentleman|inspector|officer|sailor|nurse|doctor|captain|priest|child|person|baker|barista|librarian|craftsman|bartender|waitress|waiter|clerk|cashier|shopkeeper|cook|chef|barber|host|hostess|attendant|porter|teller|proprietor)\b"#
         let mightHaveNewcomer = !actionForArrival.isEmpty
             && (Self.describedArrival(input) != nil || actionForArrival.range(of: arrivalCue, options: .regularExpression) != nil)
         if !hidden, !playerNarrates, mightHaveNewcomer {
@@ -4760,21 +4795,33 @@ final class StoryEngine {
             }
         }
         // 1b. Sitting down: only ask when standing and the player's words actually mention sitting
-        // or taking a seat/stool/chair/booth.
+        // or taking a seat/stool/chair/booth. If their narration explicitly says "sit down" / "take a seat"
+        // (and not "stand up"), honour it directly instead of risking a flaky yes/no override.
         let sitCue = #"(?i)\b(sit|sits|sitting|sat|seat|stool|chair|booth|bench|settle|perch|pull up|take a|join)\b"#
         if let meNow = r.player, meNow.on == nil, !log.contains("you stand up"),
            (input + " " + body + " " + walk).range(of: sitCue, options: .regularExpression) != nil {
-            // Two pictures, not yes or no: "I walk over and sit down next to the bartender" got a
-            // "no" (the model read "sitting at the bar" as already seated, so not sitting down now).
-            let sits = "the player ends this moment sitting on a seat"
-            let standsThere = "the player ends this moment standing"
-            let sq = "THE PLAYER JUST SAID: \"" + clip(input, 200) + "\"" + (body.isEmpty ? "" : " (their body: " + clip(body, 60) + ")")
-                + "\nThe player is standing right now. QUESTION: Which is it, from the player's words?\nCHOICES: " + sits + "; " + standsThere
-                + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
-            let sitAsked = Date()
-            let sraw = (try? await llm.complete(system: nil, prompt: sq, options: .init(maxTokens: 40, temperature: 0.1, repetitionPenalty: 1.0, grammar: JSONGrammar.one("answer", from: [sits, standsThere])))) ?? ""
-            noteQ("plan", "Do you sit down?", sraw, since: sitAsked)
-            if ((JSONExtract.object(sraw)?["answer"] as? String) ?? "") == sits, let me1 = r.player {
+            let actNarration = Self.speechAndNarration(input).narration
+            let explicitSit = actNarration.range(
+                of: #"(?i)\b(sit|sits|sitting|sat)\s+(down|back down|beside|next to|on|in|at)\b|\b(take|takes|have|pull up)\s+a\s+(seat|stool|chair)\b|\bsettle\s+(into|onto|down)\b"#,
+                options: .regularExpression
+            ) != nil && actNarration.range(of: #"(?i)\b(stand|get)\s+up\b"#, options: .regularExpression) == nil
+            let wantsSit: Bool
+            if explicitSit {
+                wantsSit = true
+            } else {
+                // Two pictures, not yes or no: "I walk over and sit down next to the bartender" got a
+                // "no" (the model read "sitting at the bar" as already seated, so not sitting down now).
+                let sits = "the player ends this moment sitting on a seat"
+                let standsThere = "the player ends this moment standing"
+                let sq = "THE PLAYER JUST SAID: \"" + clip(input, 200) + "\"" + (body.isEmpty ? "" : " (their body: " + clip(body, 60) + ")")
+                    + "\nThe player is standing right now. QUESTION: Which is it, from the player's words?\nCHOICES: " + sits + "; " + standsThere
+                    + "\nOutput ONLY one JSON object:\n{\"answer\":\"one of CHOICES\"}\nThe form:"
+                let sitAsked = Date()
+                let sraw = (try? await llm.complete(system: nil, prompt: sq, options: .init(maxTokens: 40, temperature: 0.1, repetitionPenalty: 1.0, grammar: JSONGrammar.one("answer", from: [sits, standsThere])))) ?? ""
+                noteQ("plan", "Do you sit down?", sraw, since: sitAsked)
+                wantsSit = ((JSONExtract.object(sraw)?["answer"] as? String) ?? "") == sits
+            }
+            if wantsSit, let me1 = r.player {
                 let anchor: Thing? = target.flatMap { r.named($0.name) }
                 let takenIDs = Set(r.people.filter { $0.id != me1.id }.compactMap(\.on))
                 let occupiedCells = Set(r.people.filter { $0.id != me1.id }.map { Cell(x: $0.x, y: $0.y) })

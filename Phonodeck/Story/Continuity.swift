@@ -391,13 +391,38 @@ enum Continuity {
     }
 
     /// The reply writes the player's own words: a quote tagged "you say", "you whisper" and the
-    /// like, before or after it.
+    /// like, before or after it (strictly in narration outside spoken quotes, so an NPC saying
+    /// "You said earlier..." inside quotes never false-triggers).
     static func speaksForPlayer(_ reply: String) -> Bool {
         let verbs = "say|said|whisper|whispered|murmur|murmured|admit|admitted|reply|replied|answer|answered|ask|asked|tell|echo|echoed|add|added|call|called|offer|offered|confess|confessed|laugh|laughed"
-        let after = #"["”]\s*,?\s*you\s+(softly\s+|quietly\s+|gently\s+)?("# + verbs + #")\b"#
-        let before = #"\byou\s+(softly\s+|quietly\s+|gently\s+)?("# + verbs + #")\b[^."“]{0,30}[,:]\s*["“]"#
-        return reply.range(of: after, options: [.regularExpression, .caseInsensitive]) != nil
-            || reply.range(of: before, options: [.regularExpression, .caseInsensitive]) != nil
+        var spans: [(text: String, isQuote: Bool)] = []
+        var buf = ""
+        var inQ = false
+        for ch in reply {
+            if ch == "\"" {
+                spans.append((buf, inQ)); buf = ""; inQ.toggle()
+            } else if ch == "“" {
+                spans.append((buf, inQ)); buf = ""; inQ = true
+            } else if ch == "”" {
+                spans.append((buf, inQ)); buf = ""; inQ = false
+            } else {
+                buf.append(ch)
+            }
+        }
+        if !buf.isEmpty { spans.append((buf, inQ)) }
+        let afterPat = #"^\s*,?\s*you\s+(softly\s+|quietly\s+|gently\s+)?("# + verbs + #")\b"#
+        let beforePat = #"\byou\s+(softly\s+|quietly\s+|gently\s+)?("# + verbs + #")\b[^.?!\n]{0,30}[,:]\s*$"#
+        for i in spans.indices where spans[i].isQuote {
+            if i + 1 < spans.count, !spans[i + 1].isQuote,
+               spans[i + 1].text.range(of: afterPat, options: [.regularExpression, .caseInsensitive]) != nil {
+                return true
+            }
+            if i > 0, !spans[i - 1].isQuote,
+               spans[i - 1].text.range(of: beforePat, options: [.regularExpression, .caseInsensitive]) != nil {
+                return true
+            }
+        }
+        return false
     }
 
     // MARK: Things the player never had
@@ -463,14 +488,24 @@ enum Continuity {
 
     // MARK: Pronouns
 
-    /// The he/she words right after each mention of a person's first name, up to the next
+    /// The he/she words right after each subject mention of a person, up to the next
     /// person's name or paragraph.
     static func pronounCounts(in text: String, for name: String, others: [String]) -> (he: Int, she: Int) {
-        let first = name.split(separator: " ").first.map(String.init) ?? name
-        guard first.count > 1, let re = try? NSRegularExpression(pattern: "\\b" + NSRegularExpression.escapedPattern(for: first) + "\\b") else { return (0, 0) }
+        let parts = name.split(separator: " ").map(String.init)
+        let roleNamed = parts.count >= 2 && ["the", "a", "an"].contains(parts[0].lowercased())
+        let target = roleNamed ? name : (parts.first ?? name)
+        guard target.count > 1,
+              let re = try? NSRegularExpression(pattern: "\\b" + NSRegularExpression.escapedPattern(for: target) + "\\b",
+                                                options: roleNamed ? [.caseInsensitive] : []) else { return (0, 0) }
+        let objectCue = #"(?i)\b(at|to|toward|towards|face|faces|faced|facing|beside|behind|past|with|for|of|from|watch|watches|watched|watching|see|sees|saw|seeing|glance|glances|glanced|glancing|nod|nods|nodded|nodding|tell|tells|told|ask|asks|asked|against|near)\s*$"#
         let ns = text as NSString
         var he = 0, she = 0
         for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let before = ns.substring(to: m.range.location)
+            // Skip mentions where this person is only the object of someone else's gaze or action
+            // ("She spins back to face the old man, gesturing with her free hand").
+            let lead = String(before.suffix(32))
+            if lead.range(of: objectCue, options: .regularExpression) != nil { continue }
             let start = m.range.location + m.range.length
             var window = ns.substring(with: NSRange(location: start, length: min(160, ns.length - start)))
             if let p = window.range(of: "\n\n") { window = String(window[..<p.lowerBound]) }
@@ -478,7 +513,6 @@ enum Continuity {
             // she after the closing quote is the speaker, so the window ends at the quote. Named in
             // the telling, another person's speech in the window is skipped. (Nov 27: a bartender's
             // "she says" and "She's got her sketchbook" were counted for Walter.)
-            let before = ns.substring(to: m.range.location)
             let inSpeech = before.filter { $0 == "\"" || $0 == "“" || $0 == "”" }.count % 2 == 1
             if inSpeech {
                 if let q = window.firstIndex(where: { $0 == "\"" || $0 == "”" || $0 == "“" }) { window = String(window[..<q]) }
@@ -486,7 +520,9 @@ enum Continuity {
                 window = window.replacingOccurrences(of: #""[^"]*"|“[^”]*”"#, with: " ", options: .regularExpression)
                 if let q = window.firstIndex(where: { $0 == "\"" || $0 == "“" }) { window = String(window[..<q]) }
             }
-            for o in others where o != first { if let r = window.range(of: o) { window = String(window[..<r.lowerBound]) } }
+            for o in others where o.caseInsensitiveCompare(target) != .orderedSame && o.count >= 3 {
+                if let r = window.range(of: o) { window = String(window[..<r.lowerBound]) }
+            }
             for w in window.lowercased().split(whereSeparator: { !$0.isLetter }) {
                 switch w {
                 case "he", "him", "his", "himself": he += 1

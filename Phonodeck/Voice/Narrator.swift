@@ -274,7 +274,7 @@ final class Narrator: NSObject {
             endedWithNewline = raw.hasSuffix("\n")
             let sentence = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !sentence.isEmpty {
-                if paragraphBreak && !inQuote { currentSpeaker = nil }
+                if paragraphBreak && !inQuote && !cast.defaultSpeakerName.isEmpty { currentSpeaker = nil }
                 enqueue(sentence)
             }
         }
@@ -293,7 +293,7 @@ final class Narrator: NSObject {
         endedWithNewline = false
         let rest = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !rest.isEmpty {
-            if paragraphBreak && !inQuote { currentSpeaker = nil }
+            if paragraphBreak && !inQuote && !cast.defaultSpeakerName.isEmpty { currentSpeaker = nil }
             enqueue(rest)
         }
         streamDone = true
