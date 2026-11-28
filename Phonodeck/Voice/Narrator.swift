@@ -46,6 +46,8 @@ final class Narrator: NSObject {
     private var inQuote = false
     private var currentSpeaker: String?
     private var endedWithNewline = false
+    /// Compact record of which character voice spoke each quoted segment in the latest reply (for traces).
+    private(set) var lastCastLog: [String] = []
 
     // Neural voice
     private var ttsModel: SpeechGenerationModel?
@@ -184,6 +186,15 @@ final class Narrator: NSObject {
         cast = .empty
     }
 
+    /// Short description of the active narrator voice for session trace headers.
+    var voiceSummary: String {
+        if let entry = activeVoiceModel {
+            let v = Self.neuralVoice(for: entry)
+            return v.isEmpty ? entry.name : "\(entry.name) (\(v))"
+        }
+        return "Apple (\(appleVoice?.name ?? "default"))"
+    }
+
     /// Plays a sample in one voice (nil for Apple's) without changing the chosen narrator.
     func audition(_ entry: ModelEntry?, text: String = "The rain eases. Somewhere below, a door opens, and a voice you almost recognise calls your name.") {
         begin()
@@ -250,6 +261,7 @@ final class Narrator: NSObject {
         inQuote = false
         currentSpeaker = nil
         endedWithNewline = false
+        lastCastLog = []
     }
 
     /// Adds newly written text; complete sentences are spoken right away.
@@ -352,6 +364,16 @@ final class Narrator: NSObject {
         for seg in segments {
             let text = clean(seg.text).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
+            if useCast, seg.isDialogue, let sp = seg.speaker {
+                let voiceTag: String = {
+                    if let entry = activeVoiceModel {
+                        return entry.id.contains("Kokoro") ? sp.kokoroVoice : String(sp.qwenVoice.prefix(18))
+                    }
+                    return sp.appleVoiceID.flatMap { AVSpeechSynthesisVoice(identifier: $0)?.name } ?? String(format: "pitch %.2f", sp.applePitch)
+                }()
+                let snippet = text.count > 28 ? String(text.prefix(28)) + "…" : text
+                lastCastLog.append("\(sp.name) (\(voiceTag)): \"\(snippet)\"")
+            }
             speaking = true
             if usingNeural {
                 sentenceQueue.append(QueuedUtterance(text: text, speaker: seg.speaker))

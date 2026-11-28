@@ -163,6 +163,7 @@ final class StoryEngine {
         case "MAP": marker = "📍 MAP"
         case "SENT TO STORYTELLER": marker = "📝 PROMPT SENT TO THE STORYTELLER"
         case "TURN NOTE": marker = "ℹ️ NOTE"
+        case "VOICE": marker = "🎙️ VOICES"
         case "FLAGGED": marker = "🚩 FLAGGED"
         default: marker = kind
         }
@@ -1330,7 +1331,21 @@ final class StoryEngine {
                 let items = part.components(separatedBy: "\n").filter { $0.range(of: #"^\d+\. "#, options: .regularExpression) != nil }.count
                 out.append("YES/NO PASS: asked first, over \(items) card items (\(tokens(part)) tokens); its marks are under WHAT MATTERS.")
             } else if part.hasPrefix("SYSTEM:\n") {
-                if part == lastSystem { out.append("SYSTEM: the same rules as before (\(tokens(part)) tokens).") } else { out.append(part); lastSystem = part }
+                if let cut = part.range(of: "\n\n## RIGHT NOW\n") {
+                    let rules = String(part[..<cut.lowerBound])
+                    let dynamic = String(part[cut.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if rules == lastSystem {
+                        out.append("SYSTEM RULES: same as above (\(tokens(rules)) tokens).\n\n" + dynamic)
+                    } else {
+                        out.append(part)
+                        lastSystem = rules
+                    }
+                } else if part == lastSystem {
+                    out.append("SYSTEM: the same rules as before (\(tokens(part)) tokens).")
+                } else {
+                    out.append(part)
+                    lastSystem = part
+                }
             } else if i == lastUser {
                 if !history.isEmpty {
                     out.append("PLUS THE LAST \(history.count) TURNS OF THE STORY, as written above (\(history.reduce(0) { $0 + tokens($1) }) tokens).")
@@ -1393,6 +1408,8 @@ final class StoryEngine {
         if !a.setup.feeling.isEmpty { out.append("Feeling: " + a.setup.feeling) }
         if !a.setup.goal.isEmpty { out.append("Goal: " + a.setup.goal) }
         out.append("Foveated story (read, yes/no pass, paint, lean rebuild) · " + Self.build)
+        let modelLabel = (llm.loadedID ?? UserDefaults.standard.string(forKey: "selectedModel") ?? "none").components(separatedBy: "/").last ?? "none"
+        out.append("Model: \(modelLabel) · Voice: \(narrator.voiceSummary) · Character voices: \(VoiceCast.enabled ? "on" : "off")")
         let qs: [String] = questionLogFor == a.id ? questionLog : []
         if !qs.isEmpty {
             var perTurn: [String: Int] = [:]
@@ -3277,11 +3294,16 @@ final class StoryEngine {
         let took = String(format: "%.1fs", Date().timeIntervalSince(turnBegan))
         before.append("TIMES: " + times.joined(separator: " · ") + " · total " + took + " before the rebuild")
         if Self.tracing {
-            for b in before { trace("TURN NOTE", b) }
+            for b in before where !b.hasPrefix("THE ROOM AS TOLD") && !b.hasPrefix("NOTES:") {
+                trace("TURN NOTE", b)
+            }
             var sys = traceSystem
             trace("SENT TO STORYTELLER", "\n" + Self.compactPrompt(sentPrompt, lastSystem: &sys))
             traceSystem = sys
             traceBlock("STORY SAID", reply)
+            if narrate, !narrator.lastCastLog.isEmpty {
+                trace("VOICE", narrator.lastCastLog.joined(separator: " · "))
+            }
         }
         let activePartner = (focusThisTurn.isEmpty ? (read?.to ?? "") : focusThisTurn).lowercased()
         let turnPartner: String? = activePartner.isEmpty ? nil : activePartner
