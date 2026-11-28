@@ -10,9 +10,15 @@ struct TestRunView: View {
         Form {
             Section {
                 DatePicker("Stop at", selection: $runner.stopAt, displayedComponents: [.date, .hourAndMinute])
+                Picker("Test suite", selection: $runner.suite) {
+                    ForEach(TestRunner.Suite.allCases) { s in
+                        Text(s.label).tag(s)
+                    }
+                }
                 Stepper(value: $runner.turnsPerBlock, in: 5...50, step: 5) {
                     LabeledContent("Turns per room", value: "\(runner.turnsPerBlock)")
                 }
+                Toggle("Fast prebuilt openings", isOn: $runner.usePrebuilt)
                 Toggle("Improvised turns", isOn: $runner.improvise)
                 Toggle("Judge each reply", isOn: $runner.judge)
                 if runner.isRunning {
@@ -24,7 +30,7 @@ struct TestRunView: View {
             } header: {
                 Text("Overnight tests")
             } footer: {
-                Text("Plays the six sample stories by itself on the Thinking model, checks the world after every turn and writes a report. Each room starts fresh from its story's opening and plays up to \(runner.turnsPerBlock) turns before the next one; a failed check ends the room early, so one slip doesn't spoil the turns after it. Leave Phonodeck open and plugged in; nothing is spoken aloud and the test stories are deleted as it goes. Improvised turns: a simulated player makes up some turns between the scripted ones. Judge: one extra yes/no question per turn on whether the reply answered you.")
+                Text("Plays the six sample stories by itself on the active storyteller model, checks the room grid, voice cast, and story state after every turn, and writes a morning report you can share straight back for review. Fast prebuilt openings starts in seconds instead of rebuilding all 6 openings from scratch. Regressions focuses specifically on room transitions, unknown rooms, false door exits, outdoor visits, newcomers, and multi-voice dialogue.")
             }
 
             if runner.isRunning || runner.turns > 0 {

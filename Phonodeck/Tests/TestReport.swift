@@ -14,7 +14,7 @@ enum TestReport {
     }
 
     @discardableResult
-    static func write(folder: URL, began: Date, blocks: Int, turns: Int) -> URL? {
+    static func write(folder: URL, began: Date, blocks: Int, turns: Int, model: String = "", suite: String = "all", usePrebuilt: Bool = true) -> URL? {
         guard let data = try? String(contentsOf: folder.appending(path: "results.jsonl"), encoding: .utf8) else { return nil }
         let dec = JSONDecoder()
         let results: [TestRunner.Result] = data.split(separator: "\n").compactMap { try? dec.decode(TestRunner.Result.self, from: Data($0.utf8)) }
@@ -36,12 +36,26 @@ enum TestReport {
         let hours = Date().timeIntervalSince(began) / 3600
         out.append("# Phonodeck overnight tests")
         out.append("")
+        let meta = [
+            model.isEmpty ? nil : "Model: \(model)",
+            "Suite: \(suite)",
+            "Openings: \(usePrebuilt ? "prebuilt" : "fresh")",
+            StoryEngine.build,
+        ].compactMap { $0 }.joined(separator: " · ")
+        out.append(meta)
         out.append("\(df.string(from: began)), \(String(format: "%.1f", hours)) hours. \(blocks) blocks, \(turns) turns, \(results.count) checks: \(results.count - fails.count) passed, \(fails.count) failed (\(pct(results.count - fails.count, results.count))).")
-        if turns > 0 { out.append(String(format: "About %.0f seconds a turn.", Date().timeIntervalSince(began) / Double(turns))) }
+        let latencies = results.compactMap(\.seconds).sorted()
+        if !latencies.isEmpty {
+            let avg = latencies.reduce(0, +) / Double(latencies.count)
+            let p95 = latencies[min(latencies.count - 1, Int(Double(latencies.count - 1) * 0.95))]
+            out.append(String(format: "Turn speed: avg %.1fs, p95 %.1fs.", avg, p95))
+        } else if turns > 0 {
+            out.append(String(format: "About %.0f seconds a turn.", Date().timeIntervalSince(began) / Double(turns)))
+        }
         out.append("")
 
-        // The checks that should always pass (the reply is there, no metres, you're on the map...)
-        // are counted apart, so they don't make the pass rate look better than the play was.
+        // The checks that should always pass (the reply is there, no metres, you're on the map,
+        // grid/voice/room invariants...) are counted apart so they don't inflate the scenario score.
         let scenarioResults = results.filter { !alwaysPass.contains($0.check) && !$0.check.hasPrefix("build-") }
         let coreResults = results.filter { alwaysPass.contains($0.check) || $0.check.hasPrefix("build-") }
         out.append("**Scenario checks: \(pct(scenarioResults.filter(\.pass).count, scenarioResults.count)) passed** (\(scenarioResults.filter(\.pass).count) of \(scenarioResults.count)). These are the ones that matter.")
@@ -55,18 +69,18 @@ enum TestReport {
         }
         out.append("By set: " + bySet.sorted { $0.key < $1.key }.map { "\($0.key) \(pct($0.value[0], $0.value[1])) of \($0.value[1])" }.joined(separator: ", "))
         let coreFails = coreResults.filter { !$0.pass }.count
-        out.append("Always-pass checks: \(coreResults.count - coreFails) of \(coreResults.count)" + (coreFails == 0 ? ", all passed." : ", \(coreFails) failed (listed below)."))
+        out.append("Engine invariants: \(coreResults.count - coreFails) of \(coreResults.count)" + (coreFails == 0 ? ", all passed." : ", **\(coreFails) failed** (listed below)."))
         let inputs = results.compactMap(\.input).filter { !$0.isEmpty }
         var seenTurns = Set<String>()
         var turnsPlayed = 0
         for r in results where r.check == "replied" { turnsPlayed += 1; if let i = r.input { seenTurns.insert(i) } }
         if !inputs.isEmpty { out.append("Variety: \(seenTurns.count) different turns out of \(turnsPlayed) played.") }
-        // Code alone, no model: how answers written every which way are read, and what the player
-        // picks up. Run fresh here, so a run on a release build reports them too.
+        // Code alone, no model: how answers written every which way are read, voice casting, room types,
+        // prebuilt worlds, and pick-ups. Run fresh here, so a run on a release build reports them too.
         PickUpChecks.run()
         ReadChecks.run()
         let codeFails = PickUpChecks.failures + ReadChecks.failures
-        out.append("Code checks (no model): " + (codeFails.isEmpty ? "all \(ReadChecks.count) reading checks and the pick-up checks passed." : "**\(codeFails.count) failed.**"))
+        out.append("Code checks (no model): " + (codeFails.isEmpty ? "all \(ReadChecks.count) code checks and the pick-up checks passed." : "**\(codeFails.count) failed.**"))
         for f in codeFails { out.append("- " + f) }
         out.append("")
 
@@ -157,7 +171,8 @@ enum TestReport {
 
     /// Checks that should pass every time: counted apart from the scenario checks.
     static let alwaysPass: Set<String> = ["replied", "no-metres", "no-prompt-echo", "player-on-map", "map-people-have-cards",
-                                          "clock-forward", "clock-sane", "full-sentence"]
+                                          "clock-forward", "clock-sane", "full-sentence",
+                                          "grid-hard", "indoor-furnished", "voice-cast"]
 
     static func rate(_ c: [Int]) -> Double { c[1] == 0 ? 0 : Double(c[0]) / Double(c[1]) }
     static func pct(_ a: Int, _ b: Int) -> String { b == 0 ? "–" : String(format: "%.0f%%", Double(a) / Double(b) * 100) }

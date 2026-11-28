@@ -35,6 +35,11 @@ import Foundation
 ///   mentions a|b        the reply says one of the words
 ///   mentions-present    the reply mentions everyone in the room with you
 ///   recalls N           the reply shares a telling word with the reply N turns back
+///   stayed              you stayed in the same room as before this turn (no accidental exit)
+///   room-furnished      current indoor room has real furniture (at least 2 placed objects)
+///   no-cloned-room      new room is distinct from opening room (different name and furniture)
+///   outdoor-clean       outdoor room is open air with no indoor-only fixtures (bars, beds, counters)
+///   voice-cast-ok       quoted dialogue in the reply matched real character voices (not narrator)
 ///   opened {ref}        they opened up at least once (one more of what they keep close)
 enum TestScenarios {
     static let bank = #"""
@@ -172,6 +177,79 @@ enum TestScenarios {
 ? seated
 """#
 
+    /// Targeted scenarios covering the real bugs hit in live play: false door exits on spoken questions,
+    /// sliding objects without false movement, templated & unknown ("other") new rooms, outdoor transitions
+    /// with a companion, distinct staff newcomers, seating next to someone, and multi-voice banter.
+    static let regressions = #"""
+# r-stay-on-question | Asking to step out should not move you yet | regressions
+> I smile at {host}. || <<Want to step outside for some fresh air with me?|Should we head down to the bakery down the street?|Feel like taking a walk outside for a minute?>>
+? stayed
+? here {host}
+
+# r-slide-no-move | Sliding something across to someone should not move you | regressions
+> I sit down on {seat}. ||
+? seated
+> I slide a folded note over to {host}. || Keep this for me, would you?
+? stayed
+? seated
+
+# r-visit-templated | Visiting a new named indoor room with a companion and meeting staff | regressions
+> {host} and I head out the door and walk into <<the little bakery down the street|the corner café|the quiet library across the street|the old workshop next door>>. ||
+? moved
+? room-furnished
+? no-cloned-room
+? here {host}
+> I look around and nod to the <<baker|barista|librarian|craftsman>> behind the counter. || Good evening, busy night?
+? newcomer <<baker|barista|librarian|craftsman>>
+? here {host}
+> {host} and I head back to where we started. ||
+? back
+? here {host}
+
+# r-visit-unknown | Stepping into an untemplated room that the AI must furnish itself | regressions
+> I step through a side door into <<the rooftop observatory|the photo darkroom|the clockmaker's attic|the wine vault>>. ||
+? moved
+? room-furnished
+? no-cloned-room
+> I look slowly around the room. || Well, look at this place.
+? room-furnished
+> I head back to where I came from. ||
+? back
+
+# r-outside-together | Asking first, then stepping outside together and returning | regressions
+> I turn to {other}. || Do you want to step outside for a minute?
+? stayed
+> {other} and I step out through the door to {outside}. ||
+? moved
+? outdoor-clean
+? here {other}
+> {other} and I head back inside together. ||
+? back
+? here {other}
+? room-furnished
+
+# r-sit-beside-other | Walking over and sitting down near the second character | regressions
+> I walk over and sit down beside {other}. || Mind if I join you?
+? near {other}
+? seated
+
+# r-two-voice-banter | Getting both characters speaking to verify multi-voice attribution | regressions
+> I look from {host} to {other}. || How did you two end up here tonight? Tell me both sides.
+? voice-cast-ok
+> I grin and look straight at {other}. || Is that really how it happened?
+? facing {other}
+? voice-cast-ok
+
+# r-return-intact | Leaving alone and verifying the opening room is intact on return | regressions
+> I step out to {outside} by myself to get some air. ||
+? moved
+? outdoor-clean
+> I stand quietly for a minute, then go back inside. ||
+? back
+? room-furnished
+? here {host}
+"""#
+
     static let wide = #"""
 # w-newcomer-any | Someone new arrives, described every which way | wide
 > <<An old man with a cane|A girl with a basket of flowers|A tall man in a wet hat|A woman carrying a sleeping baby|A boy with a dog on a rope|A sailor with a duffel bag|A nurse still in her uniform>> comes in from outside. ||
@@ -183,6 +261,7 @@ enum TestScenarios {
 
 # w-two-at-once | Talking to two people at once | wide
 > I look from {host} to {other}. || <<How do you two know each other?|Have you two been friends long?|Which of you has been here longer?>>
+? voice-cast-ok
 > || <<And what about you, {other}?|What do you think, {other}?>>
 > I turn back to {host}. || <<Is that true?|Do you agree?|Is that how you remember it?>>
 ? facing {host}
@@ -191,10 +270,13 @@ enum TestScenarios {
 > I turn to {host}. || <<Tell me about your family.|Where did you grow up?|What did you do before this?>>
 > || Huh. Go on.
 > || <<Sorry, what was that you said a minute ago about where you grew up?|Wait, say that first part again?|What was it you told me earlier?>>
+? recalls 2
 
 # w-order | Ordering, waiting and getting it | wide
 > I catch {hostposs} eye. || <<Could I get something hot to drink?|What do you have to eat?|Can I have a glass of water?|Anything warm to eat around here?>>
+? stayed
 > I wait for it, drumming my fingers. ||
+? clock 0 20
 > || <<Thanks, that looks good.|Thank you.|Perfect.>>
 > || <<What did I order again?|Remind me what this was?>>
 
@@ -213,20 +295,25 @@ enum TestScenarios {
 
 # w-speech | Rambling, half-finished speech | wide
 > || <<So, um, I was wondering, like, do you ever, you know, think about leaving?|Okay this is kind of a weird question but, uh, are you happy here?|I mean, I guess what I'm asking is, what's the best part of your day?>>
+? stayed
 > || <<Sorry, that came out wrong.|Never mind, forget I asked.|No, really, I want to know.>>
 
 # w-lean | A small physical action while talking | wide
 > <<I lean on the counter.|I rub my hands together to warm them.|I take off my hat.|I stretch my back.|I fold my arms.>> || <<Long day?|Quiet tonight, huh?|What's the story with this place?>>
+? stayed
 > || <<Really?|No kidding.|Huh, I didn't know that.>>
 
 # w-wrong-thing | Asking for something the place doesn't have | wide
 > || <<Do you have a telephone I could use?|Can I pay with a card?|Is there a television around here?|Got any of those new radios?>>
+? stayed
 > || <<Never mind then.|That's all right.>>
 
 # w-outside-with | Going outside with someone and coming back | wide
 > I turn to {other}. || <<Want to step outside for some air with me?|Come out with me for a minute?>>
+? stayed
 > {other} and I go out to {outside}. ||
 ? moved
+? outdoor-clean
 ? here {other}
 > We come back inside together. ||
 ? back
@@ -239,6 +326,7 @@ enum TestScenarios {
 
 # w-time-question | Asking the time and the date | wide
 > || <<What time is it?|How late is it getting?|Is it morning yet?>>
+? clock 0 15
 > || <<What day is it today?|What's the date?|What year did you say it was?>>
 
 # w-wait-short | Different short waits | wide
@@ -310,11 +398,22 @@ enum TestScenarios {
         var id: String
         var title: String
         var lines: [Line]
-        /// "core" (the fixed set, compared run to run) or "wide" (the broader set).
+        /// "core" (fixed baseline), "regressions" (room transitions, voices, movement), or "wide".
         var set = "core"
     }
 
-    static let all: [Scenario] = parse(bank) + parse(wide)
+    static let coreScenarios: [Scenario] = parse(bank)
+    static let regressionScenarios: [Scenario] = parse(regressions)
+    static let wideScenarios: [Scenario] = parse(wide)
+    static let all: [Scenario] = coreScenarios + regressionScenarios + wideScenarios
+
+    static func scenarios(for suite: String) -> [Scenario] {
+        switch suite {
+        case "regressions": return regressionScenarios
+        case "core": return coreScenarios
+        default: return all
+        }
+    }
 
     /// Which set a scenario belongs to, by id ("improvised" for the simulated player's turns).
     static func set(of id: String) -> String {

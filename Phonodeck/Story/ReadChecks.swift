@@ -120,6 +120,48 @@ enum ReadChecks {
         let elias = Continuity.pronounCounts(in: "Elias sets down the tool. \"Fine,\" he says, and he turns back.", for: "Elias Crane", others: ["Elias"])
         check(elias.he == 2, "Elias's own \"he says\" should count (\(elias.he))")
 
+        // VoiceCast clause-aware speaker attribution & distinct voice assignment.
+        let vcCast = [
+            LoreEntry(name: "Walter Pruitt", kind: .person, role: "the bartender"),
+            LoreEntry(name: "Dolores Reyes", kind: .person, role: "the friendly regular"),
+        ]
+        let vcFacts = ["Walter Pruitt uses he/him.", "Dolores Reyes uses she/her."]
+        let vc = VoiceCast.build(cast: vcCast, facts: vcFacts, narratorKokoro: "am_michael", narratorAppleID: nil, defaultSpeaker: "Walter Pruitt")
+        check(vc.characters.allSatisfy { $0.kokoroVoice != "am_michael" }, "VoiceCast should not collide with narrator am_michael")
+        check(Set(vc.characters.map(\.kokoroVoice)).count == 2, "VoiceCast should give distinct Kokoro voices to Walter and Dolores")
+        let s1 = vc.matchSpeaker(in: "He turns to the neighbor stools where the friendly regular hums, then back to you.")
+        check(s1?.name == "Walter Pruitt", "subordinate mention of regular should not steal speaker from Walter (got \(s1?.name ?? "nil"))")
+        var inQ = false
+        var curSp: String? = "Walter Pruitt"
+        let segs = vc.segment("\"My name's Dolores,\" the friendly regular says.", inQuote: &inQ, currentSpeaker: &curSp)
+        check(segs.first(where: \.isDialogue)?.speaker?.name == "Dolores Reyes", "post-quote tag should attribute quote to Dolores")
+
+        // RoomBuilder room-type library & unknown-room fallback detection.
+        for (place, wantType) in [
+            ("La Boulangerie", "bakery"), ("The Little Bakery", "bakery"),
+            ("The Corner Café", "café"), ("The Dining Room", "dining room"),
+            ("The Public Library", "library"), ("The Clockmaker's Workshop", "workshop"),
+            ("The Grand Lobby", "lobby"), ("The Stone Chapel", "chapel"),
+            ("The Train Car", "train car"), ("The Back Porch", "porch"),
+            ("The Rooftop Observatory", "other"), ("The Photo Darkroom", "other"),
+        ] {
+            let got = RoomBuilder.type(for: place)
+            check(got == wantType, "RoomBuilder.type(for: \"\(place)\") gave \"\(got)\", wanted \"\(wantType)\"")
+        }
+
+        // All 6 curated PrebuiltWorlds load with valid maps, casts, doors, and clocks.
+        for exp in CuratedExperiences.all {
+            let built = PrebuiltWorlds.adventure(for: exp, player: PlayerDetails(name: "", age: 0, gender: "", interest: ""))
+            check(built != nil, "PrebuiltWorlds missing for \(exp.title)")
+            if let a = built, let r = a.room {
+                check(r.player != nil, "Prebuilt \(exp.title) missing player on map")
+                check(a.cast.count >= 2, "Prebuilt \(exp.title) has fewer than 2 cast (\(a.cast.count))")
+                check(r.objects.count >= 3, "Prebuilt \(exp.title) has too few objects (\(r.objects.count))")
+                check(!r.doors.isEmpty, "Prebuilt \(exp.title) missing doors")
+                check(a.clock != nil, "Prebuilt \(exp.title) missing clock")
+            }
+        }
+
         count = n
         failures = bad
         for b in bad { print("ReadChecks failed: " + b) }

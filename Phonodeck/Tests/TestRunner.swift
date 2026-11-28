@@ -18,8 +18,26 @@ final class TestRunner {
     /// isn't, and doesn't lock itself.
     nonisolated(unsafe) static var running = false
 
+    enum Suite: String, CaseIterable, Identifiable {
+        case all
+        case regressions
+        case core
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .all: return "Everything (core + regressions + wide)"
+            case .regressions: return "Regressions (rooms, voices, movement)"
+            case .core: return "Core only"
+            }
+        }
+    }
+
     var turnsPerBlock = 10
     var stopAt: Date = TestRunner.nextMorning()
+    var suite: Suite = .all
+    /// Load prebuilt opening rooms (~3s each) instead of building all 6 baselines from scratch (~20 min).
+    var usePrebuilt = true
     /// Improvised turns from the simulated player between scenarios (0 to 2 each time).
     var improvise = true
     /// One extra yes/no question per turn: did the reply answer what the player did and said?
@@ -35,6 +53,7 @@ final class TestRunner {
     private(set) var runFolder: URL?
     private(set) var lastReport: URL?
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var activeModelName = ""
 
     struct Result: Codable {
         var block: Int
@@ -49,6 +68,8 @@ final class TestRunner {
         var pass: Bool
         /// What the player did and said this turn (nil in older runs).
         var input: String? = nil
+        /// Wall-clock seconds for this turn (set on the "replied" check; nil in older runs).
+        var seconds: Double? = nil
         var line: String {
             (pass ? "PASS" : "FAIL") + "  b\(block) t\(turn)  \(story)  \(scenario)  \(check)  want: \(expected)  got: \(got)"
                 + (pass || step.isEmpty ? "" : "  step: \(step)" + (evidence.isEmpty ? "" : " → \(evidence)"))
@@ -72,6 +93,7 @@ final class TestRunner {
         isRunning = true
         Self.running = true
         blocks = 0; turns = 0; passed = 0; failed = 0; recent = []; lastReport = nil
+        activeModelName = app.store.language?.name ?? app.store.languageID ?? "Unknown model"
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd-HHmm"
         let folder = Self.testsFolder.appending(path: f.string(from: Date()), directoryHint: .isDirectory)
@@ -112,17 +134,16 @@ final class TestRunner {
         }
         let began = Date()
 
-        // 1. The baseline rooms: each sample story built once.
+        // 1. The baseline rooms: each sample story loaded (prebuilt ~3s, or built fresh if toggled off).
         var baselines: [Adventure] = []
         for (i, e) in CuratedExperiences.all.enumerated() {
-            // A baseline that fails its own checks (one person instead of two, someone on the map
-            // with no card) would fail every room started from it, so it is built again, up to 3 times.
             var tries = 0
             while tries < 3, !Task.isCancelled, Date() < stopAt {
                 tries += 1
-                status = "Building baseline \(i + 1) of \(CuratedExperiences.all.count): \(e.title)" + (tries > 1 ? " (try \(tries))" : "")
+                let mode = usePrebuilt ? "Loading prebuilt" : "Building baseline"
+                status = "\(mode) \(i + 1) of \(CuratedExperiences.all.count): \(e.title)" + (tries > 1 ? " (try \(tries))" : "")
                 if let old = engine.adventure { engine.close(); app.library.delete(old) }
-                engine.create(e, player: PlayerDetails(name: "", age: 0, gender: "", interest: ""))
+                engine.create(e, player: PlayerDetails(name: "", age: 0, gender: "", interest: ""), usePrebuilt: usePrebuilt)
                 let ok = await waitIdle(limit: 1200)
                 await engine.settle()
                 guard ok, let a = engine.adventure, a.transcript.contains(where: { $0.role == .gm }) else {
@@ -144,6 +165,7 @@ final class TestRunner {
 
         // 2. Blocks of turns from fresh copies of the baselines, until the stop time.
         var rng = SystemRandomNumberGenerator()
+        let pool = TestScenarios.scenarios(for: suite.rawValue)
         var queue: [TestScenarios.Scenario] = []
         while !Task.isCancelled, Date() < stopAt, !baselines.isEmpty {
             blocks += 1
@@ -154,27 +176,32 @@ final class TestRunner {
             _ = await waitIdle(limit: 600)
             let ctx = Context(base)
             var played = 0
-            // A failure ends the room: what follows would build on the slip and fail with it, so the
-            // next room starts fresh from a baseline instead.
-            var slipped = false
-            while played < turnsPerBlock, !slipped, !Task.isCancelled, Date() < stopAt {
-                if improvise, played > 0, Int.random(in: 0..<3, using: &rng) == 0 {
+            var hardAbort = false
+            while played < turnsPerBlock, !hardAbort, !Task.isCancelled, Date() < stopAt {
+                if improvise, suite != .regressions, played > 0, Int.random(in: 0..<3, using: &rng) == 0 {
                     status = "Block \(blocks), turn \(played + 1): the simulated player improvises"
                     let (d, s) = await improvisedTurn()
                     if Task.isCancelled { break }
-                    slipped = !(await play(d, s, checks: [], scenario: "improvised", ctx: ctx, block: blocks))
+                    let outcome = await play(d, s, checks: [], scenario: "improvised", ctx: ctx, block: blocks)
+                    hardAbort = outcome.hardAbort
                     played += 1
                     continue
                 }
-                if queue.isEmpty { queue = TestScenarios.all.shuffled(using: &rng) }
+                if queue.isEmpty { queue = pool.shuffled(using: &rng) }
                 let sc = queue.removeFirst()
                 guard let lines = ctx.fill(sc) else { continue }   // this room hasn't what it needs
                 for l in lines {
                     guard played < turnsPerBlock, !Task.isCancelled, Date() < stopAt else { break }
                     status = "Block \(blocks), turn \(played + 1): \(sc.title)"
-                    let ok = await play(l.did, l.said, checks: l.checks, scenario: sc.id, ctx: ctx, block: blocks)
+                    let outcome = await play(l.did, l.said, checks: l.checks, scenario: sc.id, ctx: ctx, block: blocks)
                     played += 1
-                    if !ok { slipped = true; break }
+                    if outcome.hardAbort { hardAbort = true; break }
+                    // A failed step ends this scenario (so later steps like `back` don't cascade),
+                    // but keeps the block alive when the player is still in the opening room.
+                    if !outcome.passed {
+                        if engine.adventure?.roomID != base.roomID { hardAbort = true }
+                        break
+                    }
                 }
             }
             if let a = engine.adventure { engine.close(); app.library.delete(a) }
@@ -198,12 +225,12 @@ final class TestRunner {
 
     // MARK: One turn
 
-    /// Plays one turn and checks it. Returns false when a check failed.
+    /// Plays one turn and checks it. `hardAbort` is true only when the engine timed out or corrupted the map.
     @discardableResult
-    private func play(_ did: String, _ said: String, checks: [String], scenario: String, ctx: Context, block: Int) async -> Bool {
-        guard let before = engine.adventure else { return true }
+    private func play(_ did: String, _ said: String, checks: [String], scenario: String, ctx: Context, block: Int) async -> (passed: Bool, hardAbort: Bool) {
+        guard let before = engine.adventure else { return (true, false) }
         let d = did.trimmingCharacters(in: .whitespaces), s = said.trimmingCharacters(in: .whitespaces)
-        guard !d.isEmpty || !s.isEmpty else { return true }
+        guard !d.isEmpty || !s.isEmpty else { return (true, false) }
         turns += 1
         let turnNo = before.playerTurns + 1
         let traceFrom = engine.traceCount
@@ -216,20 +243,20 @@ final class TestRunner {
         let finished = await waitIdle(limit: 600)
         await engine.settle()
         let secs = Date().timeIntervalSince(t0)
-        guard let after = engine.adventure else { return false }
+        guard let after = engine.adventure else { return (false, true) }
         let reply = after.transcript.last.map { $0.role == .gm ? $0.text : "" } ?? ""
         let gotReply = after.transcript.count > before.transcript.count && !reply.isEmpty
         let asked = Array(engine.questionsAsked.dropFirst(asksFrom))
         let story = short(after.setup.title)
         let input = [d.isEmpty ? "" : d, s.isEmpty ? "" : "\"" + s + "\""].filter { !$0.isEmpty }.joined(separator: " ")
         var results: [Result] = []
-        func add(_ check: String, _ step: String, _ want: String, _ got: String, _ pass: Bool) {
+        func add(_ check: String, _ step: String, _ want: String, _ got: String, _ pass: Bool, seconds: Double? = nil) {
             let ev = pass ? "" : evidence(step, in: asked)
             results.append(Result(block: block, turn: turnNo, story: story, scenario: scenario, check: check, step: step,
-                                  expected: want, got: got, evidence: ev, pass: pass, input: input))
+                                  expected: want, got: got, evidence: ev, pass: pass, input: input, seconds: seconds))
         }
 
-        add("replied", "The reply", "a reply within 10 minutes", gotReply ? String(format: "replied in %.0fs", secs) : (engine.error ?? (finished ? "no reply" : "timed out")), gotReply)
+        add("replied", "The reply", "a reply within 10 minutes", gotReply ? String(format: "replied in %.0fs", secs) : (engine.error ?? (finished ? "no reply" : "timed out")), gotReply, seconds: secs)
         if gotReply {
             for r in universal(before: before, after: after, reply: reply, scenarioChecks: checks) { add(r.0, r.1, r.2, r.3, r.4) }
             for c in checks where c != "long-turn" {
@@ -253,7 +280,10 @@ final class TestRunner {
             text += "\n\nTRACE:\n" + engine.traceEntries(from: traceFrom).joined(separator: "\n")
             try? text.write(to: folder.appending(path: "traces/" + safe(key) + "-\(n + 1).txt"), atomically: true, encoding: .utf8)
         }
-        return results.allSatisfy(\.pass)
+        let hard = !gotReply || results.contains { $0.check == "player-on-map" && !$0.pass }
+        // Ignore a flaky judge-only failure when deciding whether to keep playing the current scenario.
+        let scenarioFailed = results.contains { !$0.pass && $0.check != "answers-the-player" }
+        return (!scenarioFailed, hard)
     }
 
     // MARK: Checks every turn
@@ -292,6 +322,29 @@ final class TestRunner {
         let onMap = room?.player != nil
         out.append(("player-on-map", "Where are you now?", "you are on the map", onMap ? "yes, in " + (room?.name ?? "") : "not on the map", onMap))
 
+        if let room, !RoomBuilder.outdoor.contains(room.type) {
+            let furnished = room.objects.count >= 2
+            out.append(("indoor-furnished", "Build the room", "indoor room has furniture (≥2 objects)", "\(room.objects.count) object(s) in \(room.name) (\(room.type))", furnished))
+        }
+
+        // Spatial & reality check (speaking for the player, or an absent NPC acting in this room).
+        let focus = after.whereabouts.first(where: { $0.engaged == true })?.name ?? ""
+        let grid = GridCheck.check(reply: reply, in: after, focus: focus)
+        out.append(("grid-hard", "The reply", "no reality breaks (speaking for player / absent NPC acting here)",
+                    grid.hardIssues.isEmpty ? "clean" : grid.hardIssues.joined(separator: "; "), grid.hardIssues.isEmpty))
+
+        // Multi-voice cast check (0ms, pure Swift): quoted dialogue with NPCs present gets character voices.
+        let presentNPCs = room?.people.filter { $0.kind == .person } ?? []
+        if !presentNPCs.isEmpty {
+            let vc = Self.evaluateVoiceCast(reply: reply, adventure: after, focus: focus)
+            if vc.dialogueCount > 0 {
+                let ok = vc.unassigned == 0 && !vc.collidesWithNarrator
+                let detail = ok ? "\(vc.dialogueCount) line(s), \(vc.distinctSpeakers) voice(s)"
+                    : (vc.unassigned > 0 ? "\(vc.unassigned) of \(vc.dialogueCount) quote(s) fell back to narrator" : "character voice collided with narrator am_michael")
+                out.append(("voice-cast", "VoiceCast", "quoted dialogue gets distinct character voices", detail, ok))
+            }
+        }
+
         // Only a copy that appears this turn counts, so one slip isn't counted again every turn after.
         func doubled(_ a: Adventure) -> Set<String> {
             var seen: [String: Int] = [:]
@@ -318,7 +371,34 @@ final class TestRunner {
         return out
     }
 
-    /// Checks on a newly built story.
+    private static func evaluateVoiceCast(reply: String, adventure a: Adventure, focus: String) -> (dialogueCount: Int, unassigned: Int, distinctSpeakers: Int, collidesWithNarrator: Bool) {
+        let narratorVoice = "am_michael"
+        let cast = VoiceCast.build(cast: a.cast, facts: a.facts, narratorKokoro: narratorVoice, narratorAppleID: nil, defaultSpeaker: focus)
+        var inQuote = false
+        var currentSpeaker: String? = nil
+        var dialogueCount = 0
+        var unassigned = 0
+        var speakers = Set<String>()
+        for para in reply.components(separatedBy: "\n\n") {
+            let trimmed = para.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if !inQuote { currentSpeaker = nil }
+            for seg in cast.segment(trimmed, inQuote: &inQuote, currentSpeaker: &currentSpeaker) where seg.isDialogue {
+                let letters = seg.text.filter(\.isLetter)
+                guard letters.count >= 2 else { continue }
+                dialogueCount += 1
+                if let sp = seg.speaker {
+                    speakers.insert(sp.name)
+                } else {
+                    unassigned += 1
+                }
+            }
+        }
+        let maleCount = cast.characters.filter { $0.gender == .male }.count
+        let collides = maleCount <= 3 && cast.characters.contains { $0.kokoroVoice == narratorVoice }
+        return (dialogueCount, unassigned, speakers.count, collides)
+    }
+
     /// Checks on a newly built story. Returns false when one failed.
     @discardableResult
     private func buildChecks(_ a: Adventure) -> Bool {
@@ -374,9 +454,49 @@ final class TestRunner {
         case "moved":
             let moved = after.roomID != ctx.base.roomID
             return ("left-for-another-place", "Where are you now?", "you are somewhere else", moved ? "in " + (room?.name ?? "?") : "still in " + (room?.name ?? "?"), moved)
+        case "stayed":
+            let stayed = after.roomID == before.roomID
+            return ("stayed-in-room", "Where are you now?", "still in " + (before.room?.name ?? "this room"), stayed ? "stayed in " + (room?.name ?? "?") : "moved to " + (room?.name ?? "?"), stayed)
         case "back":
             let back = after.roomID == ctx.base.roomID
             return ("back-in-the-first-room", "Where are you now?", "back in " + (ctx.base.room?.name ?? "the first room"), back ? "back" : "in " + (room?.name ?? "?"), back)
+        case "room-furnished":
+            guard let room else { return ("room-furnished", "Build the room", "a built room with furniture", "no room", false) }
+            if RoomBuilder.outdoor.contains(room.type) {
+                return ("room-furnished", "Build the room", "outdoor area built", room.built ? "built (\(room.objects.count) items)" : "not built", room.built)
+            }
+            let ok = room.objects.count >= 2
+            return ("room-furnished", "Build the room", "at least 2 placed objects in \(room.name) (\(room.type))", "\(room.objects.count) object(s): " + room.objects.prefix(5).map(\.name).joined(separator: ", "), ok)
+        case "no-cloned-room":
+            guard let room, let baseRoom = ctx.base.room else { return ("no-cloned-room", "Build the room", "a distinct new room", "missing room", false) }
+            let diffName = room.name.caseInsensitiveCompare(baseRoom.name) != .orderedSame
+            let curObjs = Set(room.objects.map { $0.name.lowercased() })
+            let baseObjs = Set(baseRoom.objects.map { $0.name.lowercased() })
+            let clonedObjs = !curObjs.isEmpty && curObjs == baseObjs
+            let ok = diffName && !clonedObjs
+            let got = !diffName ? "same name as opening room (\(room.name))"
+                : clonedObjs ? "exact same furniture as \(baseRoom.name)"
+                : "\(room.name) (\(room.type), \(room.objects.count) objects)"
+            return ("no-cloned-room", "Build the room", "different room & furniture from \(baseRoom.name)", got, ok)
+        case "outdoor-clean":
+            guard let room else { return ("outdoor-clean", "Build the room", "clean outdoor place", "no room", false) }
+            let isOutdoor = RoomBuilder.outdoor.contains(room.type)
+            let indoorOnly: Set<String> = ["bar", "counter", "bed", "stove", "fireplace", "piano", "desk"]
+            let badObjs = room.objects.filter { indoorOnly.contains($0.icon) }.map(\.name)
+            let ok = isOutdoor && badObjs.isEmpty
+            let got = !isOutdoor ? "built as indoor type '\(room.type)'"
+                : !badObjs.isEmpty ? "indoor fixtures outside: " + badObjs.joined(separator: ", ")
+                : "outdoor (\(room.type), \(room.objects.count) items)"
+            return ("outdoor-clean", "Build the room", "open air with no indoor-only fixtures", got, ok)
+        case "voice-cast-ok":
+            let focus = after.whereabouts.first(where: { $0.engaged == true })?.name ?? ""
+            let vc = Self.evaluateVoiceCast(reply: reply, adventure: after, focus: focus)
+            let ok = vc.dialogueCount > 0 && vc.unassigned == 0 && !vc.collidesWithNarrator
+            let got = vc.dialogueCount == 0 ? "no quoted dialogue in reply"
+                : vc.unassigned > 0 ? "\(vc.unassigned) of \(vc.dialogueCount) quote(s) unassigned"
+                : vc.collidesWithNarrator ? "character voice collided with narrator"
+                : "\(vc.dialogueCount) quote(s) across \(vc.distinctSpeakers) character voice(s)"
+            return ("voice-cast-ok", "VoiceCast", "quoted dialogue mapped to character voice(s)", got, ok)
         case "holding", "not-holding":
             let words = ctx.words(arg)
             // "a pair of tongs" is "the tongs": any word of four letters or more in common counts.
@@ -531,7 +651,8 @@ final class TestRunner {
     }
 
     func writeReport(folder: URL, began: Date) {
-        let url = TestReport.write(folder: folder, began: began, blocks: blocks, turns: turns)
+        let url = TestReport.write(folder: folder, began: began, blocks: blocks, turns: turns,
+                                   model: activeModelName, suite: suite.rawValue, usePrebuilt: usePrebuilt)
         lastReport = url
     }
 }
